@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { admin, getUser } from '@/lib/supabase'
 import { generateImage } from '@/lib/images'
-import { X_RUBRIC } from '@/lib/rubric'
+import { X_RUBRIC, CHAT_STYLE } from '@/lib/rubric'
 import { recentFeedback, feedbackBlock } from '@/lib/feedback'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -223,6 +223,8 @@ export async function POST(req) {
 
 Current date and time (America/Los_Angeles): ${now}
 ${accountsLine}
+
+${CHAT_STYLE}
 
 Whenever you write or rewrite a post, follow this rubric:
 ${X_RUBRIC}${feedbackBlock(fb)}

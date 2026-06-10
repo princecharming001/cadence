@@ -522,6 +522,7 @@ function App({ session }) {
   const [compose, setCompose] = useState(null); const [composeBusy, setComposeBusy] = useState(false)
   const [analyzing, setAnalyzing] = useState(false); const [generating, setGenerating] = useState(false)
   const [upgrade, setUpgrade] = useState(false); const [settings, setSettings] = useState(false)
+  const [xConnect, setXConnect] = useState(false)
   const inputRef = useRef(null); const bottomRef = useRef(null)
 
   const loadQueue = useCallback(async () => { const { data } = await supabase.from('posts').select('*').order('scheduled_for', { ascending: true }); if (data) setPosts(data) }, [])
@@ -553,7 +554,10 @@ function App({ session }) {
   const collapseQueue = queue.length > 4
   const hasPhotos = photos.length > 0
 
-  async function connectX() { const r = await authed('/api/x/connect', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Could not start X connection.') }
+  // Opens a short guide first — X authorizes whichever account is active on x.com,
+  // and OAuth 2.0 has no force-login, so we let the user switch accounts before authorizing.
+  function connectX() { setXConnect(true) }
+  async function startXConnect() { setXConnect(false); const r = await authed('/api/x/connect', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Could not start X connection.') }
   async function disconnectX(id) { const target = id || xConns[0]?.id; if (!target) return; await authed('/api/x/status', { method: 'DELETE', body: JSON.stringify({ id: target }) }); setBanner('Disconnected X account'); loadX() }
   async function openPortal() { const r = await authed('/api/stripe/portal', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Billing portal unavailable.') }
 
@@ -691,9 +695,17 @@ function App({ session }) {
                     </div>
                     <div className="persona-summary">{persona.summary}</div>
                   </div>
-                  <div className="row" style={{ gap: 10, margin: '14px 0', flexWrap: 'wrap' }}>
-                    <motion.button className="btn-primary row" style={{ gap: 7 }} disabled={generating} onClick={() => generate(5)} whileTap={{ scale: 0.97 }}>{generating ? <span className="dots"><i/><i/><i/></span> : <><Sparkles size={15} /> Generate 5 posts</>}</motion.button>
-                    <span className="muted tiny">in your voice → review below</span>
+                  <div className="card gen-panel">
+                    <div className="gen-head">
+                      <span className="gen-ic"><Sparkles size={17} /></span>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="gen-title">Generate posts in your voice</div>
+                        <div className="gen-sub">Studies your best-performing LinkedIn posts and what&apos;s landing on X right now, then writes 5 fresh tweets — each on a different topic in your niche.</div>
+                      </div>
+                    </div>
+                    <motion.button className="btn-primary gen-btn" disabled={generating} onClick={() => generate(5)} whileTap={{ scale: 0.98 }}>
+                      {generating ? <span className="row" style={{ gap: 8 }}><span className="dots"><i/><i/><i/></span> Writing your posts…</span> : <span className="row" style={{ gap: 8 }}><Wand2 size={15} /> Generate 5 posts</span>}
+                    </motion.button>
                   </div>
                   {drafts.length === 0 && <Empty icon={<FileText size={26} />}>No drafts yet. Generate a batch — they land here to review.</Empty>}
                   <div><AnimatePresence>{drafts.map((p, i) => (
@@ -842,7 +854,46 @@ function App({ session }) {
       <AnimatePresence>
         {settings && <SettingsModal me={me} session={session} authed={authed} conns={xConns} photos={photos} onUploadPhoto={uploadPhoto} onDeletePhoto={deletePhoto} onConnect={connectX} onClose={() => setSettings(false)} onSaved={() => { setSettings(false); loadMe() }} onDisconnect={disconnectX} onUpgrade={() => { setSettings(false); setUpgrade(true) }} onPortal={openPortal} />}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {xConnect && <XConnectModal hasAccounts={connected} onClose={() => setXConnect(false)} onContinue={startXConnect} />}
+      </AnimatePresence>
     </div>
+  )
+}
+
+// ── X connect guide — X authorizes whichever account is active on x.com, and
+// OAuth 2.0 has no force-login, so to add a DIFFERENT account the user switches
+// on X first. This walks them through it. ─────────────────────────────────────
+function XConnectModal({ hasAccounts, onClose, onContinue }) {
+  const [switched, setSwitched] = useState(false)
+  return (
+    <motion.div className="overlay" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.div className="card modal xc" onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.96 }} transition={spring}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+          <span className="row" style={{ gap: 9, fontWeight: 700, fontSize: 15.5 }}><span className="xc-glyph"><XGlyph /></span>{hasAccounts ? 'Add another X account' : 'Connect your X account'}</span>
+          <button className="x-close" onClick={onClose}><LX size={18} /></button>
+        </div>
+        <p className="xc-lead">X connects whichever account you&apos;re <b>currently signed into on x.com</b>. {hasAccounts ? 'To add a different one, switch accounts on X first — otherwise it&apos;ll just re-authorize the same account.' : 'Make sure the account showing on x.com is the one you want to post from.'}</p>
+
+        {hasAccounts && (
+          <div className="xc-steps">
+            <div className="xc-step"><span className="xc-num">1</span><div>Open X and <b>switch to (or log into) the account</b> you want to add — use “Add an existing account” or log out and back in.</div></div>
+            <div className="xc-step"><span className="xc-num">2</span><div>Come back here and continue — you&apos;ll just tap <b>Authorize</b> for that account.</div></div>
+          </div>
+        )}
+
+        <div className="xc-actions">
+          {hasAccounts && (
+            <a className="btn-ghost row xc-open" href="https://x.com/logout" target="_blank" rel="noreferrer" onClick={() => setSwitched(true)}>
+              <Refresh /> Log out / switch on X
+            </a>
+          )}
+          <button className="btn-primary xc-go" onClick={onContinue}>{hasAccounts ? (switched ? 'I switched — Continue' : 'Continue to X') : 'Continue to X'}</button>
+        </div>
+        <div className="muted tiny" style={{ marginTop: 12, textAlign: 'center' }}>Tip: a private/incognito window is the most reliable way to authorize a different account.</div>
+      </motion.div>
+    </motion.div>
   )
 }
 
@@ -1064,4 +1115,21 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .photo-del:hover { background: rgba(20,24,30,0.85); }
 .photo-add { width: 62px; height: 62px; border-radius: 11px; border: 1.5px dashed #cfd2da; color: #9aa1ad; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: .15s; }
 .photo-add:hover { color: #4f63d8; border-color: #a9b6ff; background: #f6f8ff; }
+/* generate-posts panel */
+.gen-panel { padding: 16px; margin: 14px 0; background: linear-gradient(180deg, #fbfaff 0%, #fff 70%); border-color: #e7ddfb; }
+.gen-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+.gen-ic { width: 36px; height: 36px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center; color: #fff; background: linear-gradient(135deg, #6f8cff, #8b5cf6); box-shadow: 0 4px 12px -4px rgba(124,108,246,0.5); }
+.gen-title { font-weight: 700; font-size: 14.5px; color: #16181d; }
+.gen-sub { font-size: 12.5px; line-height: 1.55; color: #6b7280; margin-top: 3px; }
+.gen-btn { width: 100%; padding: 11px; font-size: 13.5px; }
+/* X connect guide modal */
+.xc { width: 440px; }
+.xc-glyph { width: 30px; height: 30px; border-radius: 9px; background: #16181d; color: #fff; display: inline-flex; align-items: center; justify-content: center; }
+.xc-lead { font-size: 13.5px; line-height: 1.6; color: #4a5260; margin: 6px 0 16px; }
+.xc-steps { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+.xc-step { display: flex; gap: 11px; font-size: 13px; line-height: 1.55; color: #2a2f3a; }
+.xc-num { width: 22px; height: 22px; border-radius: 50%; flex: none; background: #eef1fe; color: #4f63d8; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.xc-actions { display: flex; gap: 10px; }
+.xc-open { flex: 1; justify-content: center; gap: 7px; text-decoration: none; }
+.xc-go { flex: 1; padding: 9px 15px; }
 `
