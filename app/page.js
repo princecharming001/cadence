@@ -10,6 +10,7 @@ import {
   ThumbsUp, ThumbsDown, Megaphone, Upload, Play, Pause as LPause, MessageCircle, Star, Loader2,
 } from 'lucide-react'
 import { COMMENT_STYLES } from '@/lib/comment-styles'
+import { SLIDESHOW_FORMATS, SLIDE_STYLE_LIST } from '@/lib/slideshow-styles'
 
 function LIcon({ size = 18 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.55V9h3.57v11.45zM22.22 0H1.77C.8 0 0 .78 0 1.74v20.52C0 23.22.8 24 1.77 24h20.45c.98 0 1.78-.78 1.78-1.74V1.74C24 .78 23.2 0 22.22 0z"/></svg> }
 
@@ -790,6 +791,134 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
   )
 }
 
+// ── Slideshow studio (AI Instagram carousels) ───────────────────────────────────
+const PLATFORMS = [
+  { key: 'instagram', label: 'Instagram' }, { key: 'tiktok', label: 'TikTok' },
+  { key: 'linkedin', label: 'LinkedIn' }, { key: 'facebook', label: 'Facebook' },
+]
+function platformDot(p) { return ({ instagram: '#E1306C', tiktok: '#111', linkedin: '#0A66C2', facebook: '#1877F2' }[p] || '#888') }
+
+function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, onGenerate, onSave, onDelete }) {
+  const [topic, setTopic] = useState('')
+  const [format, setFormat] = useState('listicle'); const [style, setStyle] = useState('bold')
+  const [count, setCount] = useState(6)
+  const [busy, setBusy] = useState(false); const [deck, setDeck] = useState(null) // {slides,caption,image_urls,style,format}
+  const [pickedAccts, setPickedAccts] = useState([]); const [when, setWhen] = useState('')
+
+  const igLike = accounts.filter(a => ['instagram', 'tiktok', 'facebook'].includes(a.platform))
+  const toggleAcct = id => setPickedAccts(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
+
+  async function gen() {
+    if (!topic.trim()) return
+    setBusy(true); setDeck(null)
+    const d = await onGenerate({ topic: topic.trim(), format, style, slides: Number(count) })
+    setBusy(false)
+    if (d.error) return
+    setDeck({ ...d, topic: topic.trim() })
+  }
+  async function schedule(post) {
+    if (!deck) return
+    const ok = await onSave({
+      action: 'schedule', topic: deck.topic, format: deck.format, style: deck.style,
+      slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls,
+      account_ids: pickedAccts, scheduled_for: post && when ? new Date(when).toISOString() : null,
+    })
+    if (ok) { setDeck(null); setTopic(''); setPickedAccts([]); setWhen('') }
+  }
+  async function saveDraft() {
+    if (!deck) return
+    const ok = await onSave({ topic: deck.topic, format: deck.format, style: deck.style, slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls })
+    if (ok) setDeck(null)
+  }
+
+  return (
+    <>
+      {/* Connected accounts */}
+      <div className="conn-sec row" style={{ gap: 7, marginTop: 2 }}>Connected accounts
+        <button className="mini" style={{ marginLeft: 'auto' }} onClick={onSync}><RefreshCw size={11} /> Refresh</button>
+      </div>
+      {!configured && <div className="notice" style={{ marginBottom: 10 }}>Posting isn&apos;t connected yet. Create a <b>Zernio</b> account (zernio.com), then set <code>ZERNIO_API_KEY</code> on the server. You can still generate and preview slideshows below now.</div>}
+      {accounts.length === 0
+        ? <div className="muted tiny" style={{ marginBottom: 8 }}>No accounts linked yet.</div>
+        : <div className="acct-row">{accounts.map(a => (
+            <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</span>
+          ))}</div>}
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+        {PLATFORMS.map(p => <button key={p.key} className="chip" disabled={!configured} onClick={() => onConnect(p.key)}><Plus size={11} /> {p.label}</button>)}
+      </div>
+
+      {/* Generator */}
+      <div className="conn-sec">Create a slideshow</div>
+      <div className="card camp-form">
+        <textarea className="field" rows={2} placeholder="What's the slideshow about? e.g. how small creators grow on Instagram in 2026" value={topic} onChange={e => setTopic(e.target.value)} />
+        <label className="ob-label">Format</label>
+        <div className="ss-grid">
+          {SLIDESHOW_FORMATS.map(f => (
+            <button key={f.key} type="button" className={'style-opt' + (format === f.key ? ' on' : '')} onClick={() => setFormat(f.key)}>
+              <span><span className="style-name">{f.label}</span><span className="style-desc">{f.desc}</span></span>
+            </button>
+          ))}
+        </div>
+        <label className="ob-label">Style</label>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          {SLIDE_STYLE_LIST.map(s => (
+            <button key={s.key} type="button" className={'sw-chip' + (style === s.key ? ' on' : '')} onClick={() => setStyle(s.key)} title={s.ai ? 'AI-generated backgrounds' : 'Typographic template'}>
+              <span className="sw" style={{ background: s.swatch.startsWith('linear') ? undefined : s.swatch, backgroundImage: s.swatch.startsWith('linear') ? s.swatch : undefined, color: s.fg }}>Aa</span>
+              {s.label}{s.ai ? ' ✨' : ''}
+            </button>
+          ))}
+        </div>
+        <div className="row" style={{ gap: 10, marginTop: 12, justifyContent: 'space-between' }}>
+          <label className="camp-num"><input type="number" min={3} max={10} className="field" value={count} onChange={e => setCount(e.target.value)} /> slides</label>
+          <button className="btn-primary btn-sm" disabled={busy || !topic.trim()} onClick={gen}>{busy ? <span className="dots"><i/><i/><i/></span> : <><Wand2 size={13} /> Generate</>}</button>
+        </div>
+      </div>
+
+      {/* Preview + schedule */}
+      {deck && (
+        <motion.div className="card camp-form" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+          <div className="ss-preview">
+            {deck.imageUrls.map((u, i) => <img key={i} src={u} alt={`slide ${i + 1}`} className="ss-slide" />)}
+          </div>
+          <div className="muted tiny" style={{ whiteSpace: 'pre-wrap', marginTop: 10, lineHeight: 1.5 }}>{deck.caption}</div>
+          {igLike.length > 0 && <>
+            <div className="muted tiny" style={{ margin: '12px 0 6px' }}>Post to:</div>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {igLike.map(a => <button key={a.id} type="button" className={'chip' + (pickedAccts.includes(a.id) ? ' on' : '')} onClick={() => toggleAcct(a.id)}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</button>)}
+            </div>
+            <input type="datetime-local" className="field" style={{ marginTop: 10 }} value={when} onChange={e => setWhen(e.target.value)} />
+          </>}
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button className="mini" onClick={() => setDeck(null)}>Discard</button>
+            <button className="btn-ghost btn-sm" onClick={saveDraft}>Save draft</button>
+            {igLike.length > 0 && configured && <>
+              <button className="btn-ghost btn-sm" disabled={!pickedAccts.length || !when} onClick={() => schedule(true)}>Schedule</button>
+              <button className="btn-primary btn-sm" disabled={!pickedAccts.length} onClick={() => schedule(false)}>Post now</button>
+            </>}
+          </div>
+        </motion.div>
+      )}
+
+      {/* Saved decks */}
+      {slideshows.length > 0 && <>
+        <div className="conn-sec">Your slideshows</div>
+        {slideshows.map(s => (
+          <div className="card camp-card" key={s.id}>
+            <div className="row" style={{ gap: 10 }}>
+              {s.image_urls?.[0] && <img src={s.image_urls[0]} className="ss-thumb" alt="" />}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="conn-title row" style={{ gap: 7 }}>{s.topic}<span className={'camp-state' + (s.status === 'posted' || s.status === 'scheduled' ? ' on' : '')}>{s.status}</span></div>
+                <div className="muted tiny" style={{ marginTop: 3 }}>{s.image_urls?.length || 0} slides · {s.style} · {s.format}{s.scheduled_for ? ` · ${fmt(s.scheduled_for)}` : ''}{s.error ? ` · ${s.error}` : ''}</div>
+              </div>
+              <button className="mini danger" onClick={() => onDelete(s.id)}><Trash2 size={12} /></button>
+            </div>
+          </div>
+        ))}
+      </>}
+    </>
+  )
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 function App({ session }) {
   const token = session.access_token
@@ -800,6 +929,8 @@ function App({ session }) {
   const [liSelf, setLiSelf] = useState([]); const [liMentors, setLiMentors] = useState([]); const [liPosts, setLiPosts] = useState([])
   const [campaigns, setCampaigns] = useState([]); const [photos, setPhotos] = useState([])
   const [engRules, setEngRules] = useState([])
+  const [socialAccounts, setSocialAccounts] = useState([]); const [socialConfigured, setSocialConfigured] = useState(false)
+  const [slideshows, setSlideshows] = useState([])
   const [me, setMe] = useState(null)
   const [messages, setMessages] = useState([]); const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
@@ -816,8 +947,10 @@ function App({ session }) {
   const loadCampaigns = useCallback(async () => { const r = await authed('/api/campaigns'); const d = await r.json(); setCampaigns(d.campaigns || []) }, [authed])
   const loadPhotos = useCallback(async () => { const r = await authed('/api/photos'); const d = await r.json(); setPhotos(d.photos || []) }, [authed])
   const loadEngagement = useCallback(async () => { const r = await authed('/api/engagement'); const d = await r.json(); setEngRules(d.rules || []) }, [authed])
+  const loadSocial = useCallback(async (sync) => { const r = await authed(`/api/social${sync ? '?sync=1' : ''}`); const d = await r.json(); setSocialAccounts(d.accounts || []); setSocialConfigured(!!d.configured) }, [authed])
+  const loadSlideshows = useCallback(async () => { const r = await authed('/api/slideshow'); const d = await r.json(); setSlideshows(d.slideshows || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows])
 
   // While any campaign or rule is mid-run, keep its live status fresh.
   const anyRunning = campaigns.some(c => c.running) || engRules.some(r => r.running)
@@ -892,6 +1025,29 @@ function App({ session }) {
     if (note) setBanner(note); loadEngagement(); loadQueue(); if (patch.active) setTimeout(loadQueue, 2500)
   }
   async function deleteEngagement(id) { await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); loadQueue() }
+
+  // Social (Instagram/TikTok/LinkedIn via Zernio)
+  async function connectSocial(platform) {
+    const r = await authed('/api/social', { method: 'POST', body: JSON.stringify({ action: 'connect', platform }) })
+    const d = await r.json()
+    if (d.authUrl) { window.open(d.authUrl, '_blank', 'noopener'); setBanner('Finish connecting in the new tab, then hit Refresh') }
+    else setBanner(d.error || 'Could not start connection')
+  }
+  async function syncSocial() { setBanner('Refreshing connected accounts…'); await loadSocial(true) }
+  async function deleteSlideshow(id) { await authed('/api/slideshow', { method: 'DELETE', body: JSON.stringify({ id }) }); loadSlideshows() }
+  async function generateSlideshow(payload) {
+    const r = await authed('/api/slideshow/generate', { method: 'POST', body: JSON.stringify(payload) })
+    const d = await r.json()
+    if (d.error) setBanner(d.error)
+    return d
+  }
+  async function saveSlideshow(payload) {
+    const r = await authed('/api/slideshow', { method: 'POST', body: JSON.stringify(payload) })
+    const d = await r.json()
+    if (d.error) setBanner(d.error)
+    else { setBanner(payload.action === 'schedule' ? (payload.scheduled_for ? 'Slideshow scheduled' : 'Slideshow posted') : 'Slideshow saved'); loadSlideshows() }
+    return !d.error
+  }
 
   // Personal photos (multipart — don't send the JSON content-type header)
   async function uploadPhoto(file) {
@@ -980,10 +1136,10 @@ function App({ session }) {
         <section className="pane left">
           <div className="left-head">
             <div className="seg">
-              {['queue', 'brain', 'connections'].map(t => (
+              {['queue', 'brain', 'slideshows', 'connections'].map(t => (
                 <button key={t} onClick={() => setTab(t)} className={'seg-btn' + (tab === t ? ' on' : '')}>
                   {tab === t && <motion.span layoutId="seg-pill" className="seg-pill" transition={spring} />}
-                  <span style={{ position: 'relative', zIndex: 1 }}>{t === 'queue' ? 'Queue' : t === 'brain' ? 'Brain' : 'Connections'}{t === 'brain' && drafts.length > 0 && <span className="dot-badge">{drafts.length}</span>}</span>
+                  <span style={{ position: 'relative', zIndex: 1 }}>{t === 'queue' ? 'Queue' : t === 'brain' ? 'Brain' : t === 'slideshows' ? 'Slideshows' : 'Connections'}{t === 'brain' && drafts.length > 0 && <span className="dot-badge">{drafts.length}</span>}</span>
                 </button>
               ))}
             </div>
@@ -1051,6 +1207,11 @@ function App({ session }) {
                     </motion.div>
                   ))}</AnimatePresence></div>
                 </>)
+              )}
+
+              {tab === 'slideshows' && (
+                <SlideshowStudio accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows}
+                  onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} />
               )}
 
               {tab === 'connections' && (<>
@@ -1508,4 +1669,14 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .live-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* slideshow studio */
+.acct-row { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 10px; }
+.acct-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 20px; background: #f1f2f5; border: 1px solid #e4e5ea; }
+.ss-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sw-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; padding: 5px 11px 5px 5px; border-radius: 22px; background: #fff; border: 1px solid #e2e3e9; cursor: pointer; font-family: inherit; }
+.sw-chip.on { border-color: #8aa0ff; background: #f3f5ff; }
+.sw-chip .sw { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 16px; font-size: 13px; font-weight: 800; border: 1px solid rgba(0,0,0,.08); }
+.ss-preview { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
+.ss-slide { width: 152px; height: 190px; flex: none; border-radius: 12px; object-fit: cover; border: 1px solid #e8e9ee; scroll-snap-align: start; }
+.ss-thumb { width: 46px; height: 58px; border-radius: 8px; object-fit: cover; flex: none; border: 1px solid #e8e9ee; }
 `
