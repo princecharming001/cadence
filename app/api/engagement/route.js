@@ -1,7 +1,7 @@
 // Engagement rules CRUD + manual run, scoped to the authenticated user.
 // Mirrors /api/campaigns.
 import { admin, getUser } from '@/lib/supabase'
-import { runDueEngagement } from '@/lib/engagement'
+import { runDueEngagement, runEngagementById } from '@/lib/engagement'
 
 const FIELDS = ['name', 'target_keywords', 'target_handles', 'comment_styles', 'instructions', 'connection_ids', 'interval_hours', 'replies_per_run', 'auto_post', 'active']
 const STYLE_KEYS = new Set(['add_value', 'question', 'agree_build', 'counter', 'witty', 'experience'])
@@ -68,6 +68,7 @@ export async function POST(req) {
     }
     const user = await getUser(req)
     if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
+    if (body.id) return Response.json(await runEngagementById(body.id, user.id))
     return Response.json(await runDueEngagement())
   }
 

@@ -1,6 +1,6 @@
 // Marketing campaigns CRUD + manual run, scoped to the authenticated user.
 import { admin, getUser } from '@/lib/supabase'
-import { runDueCampaigns } from '@/lib/campaigns'
+import { runDueCampaigns, runCampaignById } from '@/lib/campaigns'
 
 const FIELDS = ['name', 'topic', 'link', 'connection_ids', 'interval_hours', 'posts_per_run', 'include_image', 'active']
 
@@ -33,6 +33,8 @@ export async function POST(req) {
     }
     const user = await getUser(req)
     if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
+    // "Run now" on one campaign, or all due ones for this user.
+    if (body.id) return Response.json(await runCampaignById(body.id, user.id))
     return Response.json(await runDueCampaigns())
   }
 

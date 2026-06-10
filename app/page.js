@@ -7,7 +7,7 @@ import dynamic from 'next/dynamic'
 import {
   Check as LCheck, X as LX, RefreshCw, Sparkles, Send, Plus,
   Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, FileText, Image as LImage,
-  ThumbsUp, ThumbsDown, Megaphone, Upload, Play, Pause as LPause, MessageCircle,
+  ThumbsUp, ThumbsDown, Megaphone, Upload, Play, Pause as LPause, MessageCircle, Star, Loader2,
 } from 'lucide-react'
 import { COMMENT_STYLES } from '@/lib/comment-styles'
 
@@ -508,21 +508,57 @@ function PostedSection({ posted }) {
   )
 }
 
+// Live "what's it doing now" line: a spinner + step text while running, or the
+// last activity when idle. Shared by post + engagement campaign cards.
+function LiveStatus({ running, detail, lastAt }) {
+  if (!detail && !running) return null
+  return (
+    <div className={'live-status' + (running ? ' on' : '')}>
+      {running
+        ? <Loader2 size={12} className="spin" />
+        : <span className="status-dot" style={{ background: '#cbd0d8', width: 7, height: 7 }} />}
+      <span className="live-text">{detail || 'Idle'}</span>
+      {!running && lastAt && <span className="muted tiny" style={{ marginLeft: 'auto', flex: 'none' }}>{fmt(lastAt)}</span>}
+    </div>
+  )
+}
+
+// "Run now" button with a busy state while its run is in flight.
+function RunNow({ running, onRun }) {
+  return (
+    <button className="mini" disabled={running} onClick={onRun} title="Run this now and watch it work">
+      {running ? <Loader2 size={12} className="spin" /> : <Play size={12} />}
+    </button>
+  )
+}
+
 // ── Marketing campaigns ─────────────────────────────────────────────────────────
-function CampaignManager({ campaigns, xConns, posts = [], onSave, onToggle, onDelete }) {
+function CampaignManager({ campaigns, xConns, posts = [], onSave, onToggle, onDelete, onRun }) {
   const [adding, setAdding] = useState(false)
+  const [editingId, setEditingId] = useState(null)
   const [openId, setOpenId] = useState(null)
   const [name, setName] = useState(''); const [topic, setTopic] = useState(''); const [link, setLink] = useState('')
   const [connIds, setConnIds] = useState([]); const [every, setEvery] = useState(24); const [perRun, setPerRun] = useState(1)
   const [img, setImg] = useState(false); const [busy, setBusy] = useState(false)
+  const formOpen = adding || editingId
+  const primaryId = xConns.find(c => c.is_primary)?.id
 
-  function reset() { setName(''); setTopic(''); setLink(''); setConnIds([]); setEvery(24); setPerRun(1); setImg(false) }
+  function reset() { setName(''); setTopic(''); setLink(''); setConnIds([]); setEvery(24); setPerRun(1); setImg(false); setAdding(false); setEditingId(null) }
   function toggleConn(id) { setConnIds(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]) }
+  function startNew() { reset(); setConnIds(primaryId ? [primaryId] : []); setAdding(true) } // post campaigns default to primary
+  function startEdit(c) {
+    setName(c.name || ''); setTopic(c.topic || ''); setLink(c.link || '')
+    setConnIds(Array.isArray(c.connection_ids) ? c.connection_ids : [])
+    setEvery(c.interval_hours || 24); setPerRun(c.posts_per_run || 1); setImg(!!c.include_image)
+    setAdding(false); setEditingId(c.id)
+  }
   async function submit(active) {
     if (!name.trim() || !topic.trim()) return
     setBusy(true)
-    const ok = await onSave({ name: name.trim(), topic: topic.trim(), link: link.trim() || null, connection_ids: connIds, interval_hours: Number(every), posts_per_run: Number(perRun), include_image: img, active })
-    setBusy(false); if (ok) { reset(); setAdding(false) }
+    const payload = { name: name.trim(), topic: topic.trim(), link: link.trim() || null, connection_ids: connIds, interval_hours: Number(every), posts_per_run: Number(perRun), include_image: img }
+    if (editingId) payload.id = editingId; else payload.active = active
+    const ok = await onSave(payload)
+    setBusy(false); if (ok) reset()
   }
 
   return (
@@ -540,11 +576,14 @@ function CampaignManager({ campaigns, xConns, posts = [], onSave, onToggle, onDe
                 <div className="muted tiny" style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.topic}</div>
               </div>
               <div className="row" style={{ gap: 6, flex: 'none' }}>
+                {onRun && <RunNow running={c.running} onRun={() => onRun(c.id)} />}
+                <button className="mini" onClick={() => startEdit(c)} title="Edit"><Pencil size={12} /></button>
                 <button className="mini" onClick={() => onToggle(c)} title={c.active ? 'Pause' : 'Start'}>{c.active ? <LPause size={12} /> : <Play size={12} />}</button>
                 <button className="mini danger" onClick={() => onDelete(c.id)}><Trash2 size={12} /></button>
               </div>
             </div>
             <div className="muted tiny" style={{ marginTop: 7 }}>{c.posts_per_run} post{c.posts_per_run > 1 ? 's' : ''} every {c.interval_hours}h · {names.length ? '@' + names.join(', @') : 'all accounts'}{c.include_image ? ' · with image' : ''}</div>
+            <LiveStatus running={c.running} detail={c.status_detail} lastAt={c.last_activity_at} />
             <button className="act-toggle" onClick={() => setOpenId(open ? null : c.id)}>
               <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
               {live.length} posted · {pending.length} coming up
@@ -560,15 +599,15 @@ function CampaignManager({ campaigns, xConns, posts = [], onSave, onToggle, onDe
         )
       })}
 
-      {adding ? (
+      {formOpen ? (
         <div className="card camp-form">
           <input className="field" placeholder="Campaign name (e.g. Launch week)" value={name} onChange={e => setName(e.target.value)} />
           <textarea className="field" rows={3} style={{ marginTop: 8 }} placeholder="What do you want to promote? Describe the product/idea, the key points, and the vibe." value={topic} onChange={e => setTopic(e.target.value)} />
           <input className="field" style={{ marginTop: 8 }} placeholder="Link (optional)" value={link} onChange={e => setLink(e.target.value)} />
           <div className="camp-accts">
-            <div className="muted tiny" style={{ marginBottom: 6 }}>Post from{xConns.length ? '' : ' (connect an X account first)'}:</div>
+            <div className="muted tiny" style={{ marginBottom: 6 }}>Post from{xConns.length ? ' (defaults to your primary)' : ' (connect an X account first)'}:</div>
             {xConns.map(c => (
-              <button type="button" key={c.id} className={'chip' + (connIds.includes(c.id) ? ' on' : '')} onClick={() => toggleConn(c.id)}>@{c.username}</button>
+              <button type="button" key={c.id} className={'chip' + (connIds.includes(c.id) ? ' on' : '')} onClick={() => toggleConn(c.id)}>@{c.username}{c.is_primary ? ' ★' : ''}</button>
             ))}
             {xConns.length > 0 && <span className="muted tiny" style={{ marginLeft: 4 }}>{connIds.length ? '' : '(none = all)'}</span>}
           </div>
@@ -578,48 +617,68 @@ function CampaignManager({ campaigns, xConns, posts = [], onSave, onToggle, onDe
             <Toggle on={img} onChange={setImg} label="image" />
           </div>
           <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-            <button className="mini" onClick={() => { reset(); setAdding(false) }}>Cancel</button>
-            <button className="btn-ghost btn-sm" disabled={busy || !name.trim() || !topic.trim()} onClick={() => submit(false)}>Save</button>
-            <button className="btn-primary btn-sm" disabled={busy || !name.trim() || !topic.trim()} onClick={() => submit(true)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Launch'}</button>
+            <button className="mini" onClick={reset}>Cancel</button>
+            {editingId
+              ? <button className="btn-primary btn-sm" disabled={busy || !name.trim() || !topic.trim()} onClick={() => submit(false)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Save changes'}</button>
+              : <>
+                  <button className="btn-ghost btn-sm" disabled={busy || !name.trim() || !topic.trim()} onClick={() => submit(false)}>Save</button>
+                  <button className="btn-primary btn-sm" disabled={busy || !name.trim() || !topic.trim()} onClick={() => submit(true)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Launch'}</button>
+                </>}
           </div>
         </div>
       ) : (
-        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => setAdding(true)}><Plus size={14} /> New campaign</button>
+        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={startNew}><Plus size={14} /> New post campaign</button>
       )}
     </div>
   )
 }
 
 // ── X engagement rules (auto-commenting) ────────────────────────────────────────
-function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, onPatch, onDelete }) {
+function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, onPatch, onDelete, onRun }) {
   const [adding, setAdding] = useState(false)
+  const [editingId, setEditingId] = useState(null)
   const [openId, setOpenId] = useState(null)
   const [name, setName] = useState('')
   const [keywords, setKeywords] = useState(''); const [handles, setHandles] = useState('')
   const [styles, setStyles] = useState(['add_value']); const [instructions, setInstructions] = useState('')
-  const [connId, setConnId] = useState(xConns[0]?.id || '')
+  const [connId, setConnId] = useState('')
   const [every, setEvery] = useState(24); const [perRun, setPerRun] = useState(3)
   const [autoPost, setAutoPost] = useState(false); const [busy, setBusy] = useState(false)
 
-  useEffect(() => { if (!connId && xConns[0]?.id) setConnId(xConns[0].id) }, [xConns, connId])
+  // Engagement runs on a feeder by default (the non-primary you reserve for it).
+  const firstFeeder = xConns.find(c => !c.is_primary)?.id || xConns[0]?.id || ''
+  useEffect(() => { if (!connId && firstFeeder) setConnId(firstFeeder) }, [firstFeeder, connId])
   const csv = s => s.split(',').map(x => x.trim()).filter(Boolean)
   const lines = s => s.split('\n').map(x => x.trim()).filter(Boolean)
   const watchedCount = lines(handles).length
   const toggleStyle = k => setStyles(s => s.includes(k) ? s.filter(x => x !== k) : [...s, k])
+  const formOpen = adding || editingId
 
-  function reset() { setName(''); setKeywords(''); setHandles(''); setStyles(['add_value']); setInstructions(''); setEvery(24); setPerRun(3); setAutoPost(false) }
+  function reset() { setName(''); setKeywords(''); setHandles(''); setStyles(['add_value']); setInstructions(''); setConnId(firstFeeder); setEvery(24); setPerRun(3); setAutoPost(false); setAdding(false); setEditingId(null) }
+  function startNew() { reset(); setAdding(true) }
+  function startEdit(r) {
+    setName(r.name || '')
+    setKeywords((r.target_keywords || []).join(', '))
+    setHandles((r.target_handles || []).map(h => `https://x.com/${String(h).replace(/^@/, '')}`).join('\n'))
+    setStyles(Array.isArray(r.comment_styles) && r.comment_styles.length ? r.comment_styles : [r.comment_style || 'add_value'])
+    setInstructions(r.instructions || ''); setConnId(r.connection_ids?.[0] || firstFeeder)
+    setEvery(r.interval_hours || 24); setPerRun(r.replies_per_run || 3); setAutoPost(!!r.auto_post)
+    setAdding(false); setEditingId(r.id)
+  }
   async function submit(active) {
     if (!name.trim()) return
     setBusy(true)
-    const ok = await onSave({
+    const payload = {
       name: name.trim(),
       target_keywords: csv(keywords), target_handles: lines(handles).slice(0, 3),
       comment_styles: styles.length ? styles : ['add_value'], instructions: instructions.trim() || null,
       connection_ids: connId ? [connId] : [],
       interval_hours: Number(every), replies_per_run: Number(perRun),
-      auto_post: autoPost, active,
-    })
-    setBusy(false); if (ok) { reset(); setAdding(false) }
+      auto_post: autoPost,
+    }
+    if (editingId) payload.id = editingId; else payload.active = active
+    const ok = editingId ? await onPatch(editingId, payload, 'Engagement rule updated') : await onSave(payload)
+    setBusy(false); if (ok !== false) reset()
   }
 
   const styleLabels = r => {
@@ -648,6 +707,8 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
                 <div className="muted tiny" style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{styleLabels(r)} · {targets || 'no targets yet'}</div>
               </div>
               <div className="row" style={{ gap: 6, flex: 'none' }}>
+                {onRun && <RunNow running={r.running} onRun={() => onRun(r.id)} />}
+                <button className="mini" onClick={() => startEdit(r)} title="Edit"><Pencil size={12} /></button>
                 <button className="mini" onClick={() => onPatch(r.id, { active: !r.active }, !r.active ? 'Engagement agent running' : 'Engagement agent paused')} title={r.active ? 'Pause' : 'Start'}>{r.active ? <LPause size={12} /> : <Play size={12} />}</button>
                 <button className="mini danger" onClick={() => onDelete(r.id)}><Trash2 size={12} /></button>
               </div>
@@ -656,6 +717,7 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
               <span className="muted tiny">{r.replies_per_run} repl{r.replies_per_run > 1 ? 'ies' : 'y'} every {r.interval_hours}h{acct ? ` as @${acct}` : ''}</span>
               <Toggle on={!!r.auto_post} onChange={v => onPatch(r.id, { auto_post: v }, v ? 'Auto-posting replies is ON for this rule' : 'Back to approve-first')} label="auto-post" />
             </div>
+            <LiveStatus running={r.running} detail={r.status_detail} lastAt={r.last_activity_at} />
             <button className="act-toggle" onClick={() => setOpenId(open ? null : r.id)}>
               <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
               {live.length} repl{live.length === 1 ? 'y' : 'ies'} made · {pending.length} pending
@@ -671,7 +733,7 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
         )
       })}
 
-      {adding ? (
+      {formOpen ? (
         <div className="card camp-form">
           <input className="field" placeholder="Rule name (e.g. Engage AI founders)" value={name} onChange={e => setName(e.target.value)} />
 
@@ -696,9 +758,9 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
 
           {xConns.length > 1 && (
             <div className="camp-accts">
-              <div className="muted tiny" style={{ marginBottom: 6 }}>Reply as:</div>
+              <div className="muted tiny" style={{ marginBottom: 6 }}>Reply as <span style={{ color: '#9aa1ad' }}>(a feeder is recommended, not your primary)</span>:</div>
               {xConns.map(c => (
-                <button type="button" key={c.id} className={'chip' + (connId === c.id ? ' on' : '')} onClick={() => setConnId(c.id)}>@{c.username}</button>
+                <button type="button" key={c.id} className={'chip' + (connId === c.id ? ' on' : '')} onClick={() => setConnId(c.id)}>@{c.username}{c.is_primary ? ' ★' : ''}</button>
               ))}
             </div>
           )}
@@ -712,13 +774,17 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
             <div className="muted tiny" style={{ marginTop: 6 }}>{autoPost ? 'Cadence will reply on your behalf on this cadence. Heavy auto-replying can get an X account flagged, so keep volume low.' : 'Off: every reply lands in your drafts for approval first. Recommended.'}</div>
           </div>
           <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-            <button className="mini" onClick={() => { reset(); setAdding(false) }}>Cancel</button>
-            <button className="btn-ghost btn-sm" disabled={busy || !name.trim()} onClick={() => submit(false)}>Save</button>
-            <button className="btn-primary btn-sm" disabled={busy || !name.trim()} onClick={() => submit(true)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start engaging'}</button>
+            <button className="mini" onClick={reset}>Cancel</button>
+            {editingId
+              ? <button className="btn-primary btn-sm" disabled={busy || !name.trim()} onClick={() => submit(false)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Save changes'}</button>
+              : <>
+                  <button className="btn-ghost btn-sm" disabled={busy || !name.trim()} onClick={() => submit(false)}>Save</button>
+                  <button className="btn-primary btn-sm" disabled={busy || !name.trim()} onClick={() => submit(true)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start engaging'}</button>
+                </>}
           </div>
         </div>
       ) : (
-        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => setAdding(true)}><Plus size={14} /> New engagement rule</button>
+        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={startNew}><Plus size={14} /> New engagement campaign</button>
       )}
     </div>
   )
@@ -752,6 +818,14 @@ function App({ session }) {
   const loadEngagement = useCallback(async () => { const r = await authed('/api/engagement'); const d = await r.json(); setEngRules(d.rules || []) }, [authed])
 
   useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement])
+
+  // While any campaign or rule is mid-run, keep its live status fresh.
+  const anyRunning = campaigns.some(c => c.running) || engRules.some(r => r.running)
+  useEffect(() => {
+    if (!anyRunning) return
+    const t = setInterval(() => { loadCampaigns(); loadEngagement() }, 2000)
+    return () => clearInterval(t)
+  }, [anyRunning, loadCampaigns, loadEngagement])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
@@ -778,12 +852,28 @@ function App({ session }) {
   function connectX() { setXConnect(true) }
   async function startXConnect() { setXConnect(false); const r = await authed('/api/x/connect', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Could not start X connection.') }
   async function disconnectX(id) { const target = id || xConns[0]?.id; if (!target) return; await authed('/api/x/status', { method: 'DELETE', body: JSON.stringify({ id: target }) }); setBanner('Disconnected X account'); loadX() }
+  async function makePrimary(id) { await authed('/api/x/status', { method: 'PATCH', body: JSON.stringify({ id, is_primary: true }) }); setBanner('Primary account updated'); loadX() }
+
+  // "Run now" — trigger one campaign/rule and poll its live status until it
+  // finishes, so the user watches it work. The engine writes status_detail at
+  // each step; we reload until running flips back to false.
+  async function runCampaignNow(id) {
+    setBanner('Running campaign…'); loadCampaigns()
+    const poll = setInterval(loadCampaigns, 1400)
+    try { await authed('/api/campaigns', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }) } finally { clearInterval(poll); loadCampaigns(); loadQueue() }
+  }
+  async function runEngagementNow(id) {
+    setBanner('Running engagement…'); loadEngagement()
+    const poll = setInterval(loadEngagement, 1400)
+    try { await authed('/api/engagement', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }) } finally { clearInterval(poll); loadEngagement(); loadQueue() }
+  }
   async function openPortal() { const r = await authed('/api/stripe/portal', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Billing portal unavailable.') }
 
-  // Campaigns
+  // Campaigns (PATCH when editing an existing one, POST to create)
   async function saveCampaign(payload) {
-    const r = await authed('/api/campaigns', { method: 'POST', body: JSON.stringify(payload) })
-    const d = await r.json(); if (d.error) setBanner(d.error); else { setBanner(payload.active ? 'Campaign launched' : 'Campaign saved'); loadCampaigns(); if (payload.active) setTimeout(loadQueue, 1500) }
+    const editing = !!payload.id
+    const r = await authed('/api/campaigns', { method: editing ? 'PATCH' : 'POST', body: JSON.stringify(payload) })
+    const d = await r.json(); if (d.error) setBanner(d.error); else { setBanner(editing ? 'Campaign updated' : payload.active ? 'Campaign launched' : 'Campaign saved'); loadCampaigns(); if (payload.active) setTimeout(loadQueue, 1500) }
     return !d.error
   }
   async function toggleCampaign(c) { await authed('/api/campaigns', { method: 'PATCH', body: JSON.stringify({ id: c.id, active: !c.active }) }); setBanner(!c.active ? 'Campaign running' : 'Campaign paused'); loadCampaigns(); loadQueue(); if (!c.active) setTimeout(loadQueue, 1500) }
@@ -964,24 +1054,29 @@ function App({ session }) {
               )}
 
               {tab === 'connections' && (<>
-                <div className="conn-sec" style={{ marginTop: 2 }}>X accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· post from any of these</span></div>
+                <div className="conn-sec" style={{ marginTop: 2 }}>X accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· your primary is where you post; feeders drive engagement</span></div>
                 {xConns.map(c => (
-                  <div className="conn-card card" key={c.id}>
+                  <div className={'conn-card card' + (c.is_primary ? ' primary' : '')} key={c.id}>
                     <div className="conn-icon x-icon"><XGlyph /></div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="conn-title">@{c.username}</div>
+                      <div className="conn-title row" style={{ gap: 6 }}>@{c.username}
+                        {c.is_primary
+                          ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span>
+                          : <span className="role-badge">Feeder</span>}
+                      </div>
                       <div className="muted tiny">{c.name || 'Connected'}</div>
                     </div>
+                    {!c.is_primary && <button className="mini" onClick={() => makePrimary(c.id)} title="Make this your primary account">Make primary</button>}
                     <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
                   </div>
                 ))}
-                <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account' : 'Connect X'}</button>
+                <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account (feeder)' : 'Connect X'}</button>
 
-                <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> Marketing campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· auto-post about something you want to promote</span></div>
-                <CampaignManager campaigns={campaigns} xConns={xConns} posts={posts} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} />
+                <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> Post campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· keep an account posting about something you want to promote</span></div>
+                <CampaignManager campaigns={campaigns} xConns={xConns} posts={posts} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} onRun={runCampaignNow} />
 
-                <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Engagement <span className="muted tiny" style={{ fontWeight: 400 }}>· reply to relevant posts in your voice</span></div>
-                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} />
+                <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Engagement campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· feeder accounts auto-reply to relevant posts in your voice</span></div>
+                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
 
                 <div className="conn-sec">Your LinkedIn</div>
                 <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
@@ -1403,4 +1498,14 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .src-legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 2px 2px 10px; }
 .src-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: #757b88; }
 .src-leg .dot { width: 9px; height: 9px; border-radius: 3px; }
+/* account roles */
+.conn-card.primary { border-color: #e8d28a; background: linear-gradient(0deg, #fffdf6, #fff); }
+.role-badge { font-size: 9.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 2px 7px; border-radius: 20px; color: #757b88; background: #f1f2f5; border: 1px solid #e4e5ea; display: inline-flex; align-items: center; gap: 3px; }
+.role-badge.primary { color: #9a7a10; background: #fbf3d6; border-color: #efe0a6; }
+/* live status */
+.live-status { display: flex; align-items: center; gap: 7px; margin-top: 8px; padding: 7px 9px; border-radius: 9px; background: #f6f7f9; font-size: 11.5px; color: #6b7280; }
+.live-status.on { background: #eef1fe; color: #4351b8; }
+.live-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 `
