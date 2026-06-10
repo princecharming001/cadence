@@ -37,9 +37,12 @@ export async function POST(req) {
     const { data: accts } = await admin.from('social_accounts').select('*').eq('user_id', user.id).in('id', row.account_ids)
     if (!accts?.length) return Response.json({ error: 'Those accounts are not connected.' }, { status: 400 })
     try {
+      // The cover slide's hook is the natural short title (used for TikTok's
+      // 90-char slideshow title and LinkedIn's document title).
+      const title = row.slides?.[0]?.heading || row.topic
       const r = await createPost({
         userId: user.id, accounts: accts, content: row.caption || '',
-        mediaUrls: row.image_urls, scheduledFor: row.scheduled_for || undefined,
+        mediaUrls: row.image_urls, scheduledFor: row.scheduled_for || undefined, title,
       })
       row.status = row.scheduled_for ? 'scheduled' : 'posted'
       row.zernio_post_id = r.id

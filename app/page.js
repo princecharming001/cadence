@@ -805,7 +805,8 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
   const [busy, setBusy] = useState(false); const [deck, setDeck] = useState(null) // {slides,caption,image_urls,style,format}
   const [pickedAccts, setPickedAccts] = useState([]); const [when, setWhen] = useState('')
 
-  const igLike = accounts.filter(a => ['instagram', 'tiktok', 'facebook'].includes(a.platform))
+  // Every platform that takes an image carousel — Instagram, TikTok, LinkedIn, Facebook.
+  const igLike = accounts.filter(a => ['instagram', 'tiktok', 'linkedin', 'facebook'].includes(a.platform))
   const toggleAcct = id => setPickedAccts(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
 
   async function gen() {
