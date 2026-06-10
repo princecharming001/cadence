@@ -952,6 +952,17 @@ function App({ session }) {
 
   useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows])
 
+  // Returning from a Zernio account-link (Zernio redirects to /?connected=<platform>):
+  // land the user back on Slideshows, pull in the freshly connected account, and tidy the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get('connected')
+    if (!connected) return
+    setTab('slideshows')
+    loadSocial(true).then(() => setBanner(`${connected[0].toUpperCase() + connected.slice(1)} connected`))
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [loadSocial])
+
   // While any campaign or rule is mid-run, keep its live status fresh.
   const anyRunning = campaigns.some(c => c.running) || engRules.some(r => r.running)
   useEffect(() => {
@@ -1030,7 +1041,7 @@ function App({ session }) {
   async function connectSocial(platform) {
     const r = await authed('/api/social', { method: 'POST', body: JSON.stringify({ action: 'connect', platform }) })
     const d = await r.json()
-    if (d.authUrl) { window.open(d.authUrl, '_blank', 'noopener'); setBanner('Finish connecting in the new tab, then hit Refresh') }
+    if (d.authUrl) { window.location.href = d.authUrl } // full-page redirect; Zernio returns the user to /?connected=<platform>
     else setBanner(d.error || 'Could not start connection')
   }
   async function syncSocial() { setBanner('Refreshing connected accounts…'); await loadSocial(true) }

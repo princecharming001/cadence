@@ -31,7 +31,10 @@ export async function POST(req) {
     if (!zernioEnabled()) return Response.json({ error: 'Connect a Zernio account first (set ZERNIO_API_KEY).' }, { status: 400 })
     const allowed = ['instagram', 'tiktok', 'linkedin', 'facebook', 'youtube', 'threads', 'pinterest']
     if (!allowed.includes(platform)) return Response.json({ error: 'Unsupported platform' }, { status: 400 })
-    try { return Response.json({ authUrl: await connectUrl(user.id, platform) }) }
+    // Return the customer to OUR app after they finish the platform OAuth.
+    const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
+    const back = `${base}/?connected=${platform}`
+    try { return Response.json({ authUrl: await connectUrl(user.id, platform, back) }) }
     catch (e) { return Response.json({ error: e.message }, { status: 500 }) }
   }
   return Response.json({ error: 'Unknown action' }, { status: 400 })
