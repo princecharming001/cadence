@@ -26,6 +26,18 @@ const STATUS = {
   failed: { c: '#ef4444', label: 'failed' },
 }
 const MAX = 280
+
+// Where a post came from, color-coded so you can tell at a glance whether you
+// scheduled it, a campaign made it, or it's a reply to someone else's post.
+function sourceMeta(p) {
+  if (p.reply_to_tweet_id || p.source === 'engagement') return { label: 'Reply', c: '#7c3aed', bg: '#f3eefe', bd: '#e2d4fb' }
+  if (p.source === 'campaign') return { label: 'Campaign', c: '#c2740a', bg: '#fdf3e3', bd: '#f5dcae' }
+  return { label: 'You', c: '#4f63d8', bg: '#eef1fe', bd: '#dde3fb' }
+}
+function SourceTag({ p }) {
+  const m = sourceMeta(p)
+  return <span className="src-tag" style={{ color: m.c, background: m.bg, borderColor: m.bd }}>{m.label}</span>
+}
 const TZS = ['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Kolkata', 'Asia/Singapore', 'Australia/Sydney']
 
 function fmt(ts) {
@@ -371,10 +383,11 @@ function QueueCard({ p, i, connected, defaultCollapsed, onSaveEdit, onPostNow, o
   const [busy, setBusy] = useState(false)
   async function save() { setBusy(true); await onSaveEdit(p.id, draft); setBusy(false); setEditing(false); setOpen(true) }
   return (
-    <motion.div className={'card qcard' + (open ? ' open' : '')} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03, ...spring }} layout>
+    <motion.div className={'card qcard' + (open ? ' open' : '')} style={{ borderLeft: `3px solid ${sourceMeta(p).c}` }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03, ...spring }} layout>
       <button className="qhead" onClick={() => !editing && setOpen(o => !o)}>
         <span className="status-dot" style={{ background: s.c }} />
         <span className="qtitle">{open ? <span className="muted tiny">{fmt(p.scheduled_for)} · {s.label}</span> : titleOf(p.content)}</span>
+        <SourceTag p={p} />
         <ChevronDown size={15} className="qchev" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', color: '#9aa1ad', flex: 'none' }} />
       </button>
       <AnimatePresence initial={false}>
@@ -479,9 +492,10 @@ function PostedSection({ posted }) {
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
             {posted.map(p => (
-              <div className="card posted-card" key={p.id}>
+              <div className="card posted-card" key={p.id} style={{ borderLeft: `3px solid ${sourceMeta(p).c}` }}>
                 {p.image_url && <img src={p.image_url} className="posted-thumb" alt="" />}
                 <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="row" style={{ justifyContent: 'space-between', gap: 8, marginBottom: 4 }}><SourceTag p={p} /></div>
                   <div className="card-body" style={{ fontSize: 12.5 }}>{p.content}</div>
                   <div className="muted tiny" style={{ marginTop: 5 }}>Posted {fmt(p.posted_at || p.scheduled_for)}{p.external_id ? <> · <a className="link" href={`https://x.com/i/web/status/${p.external_id}`} target="_blank" rel="noreferrer">view</a></> : ''}</div>
                 </div>
@@ -772,8 +786,8 @@ function App({ session }) {
     const d = await r.json(); if (d.error) setBanner(d.error); else { setBanner(payload.active ? 'Campaign launched' : 'Campaign saved'); loadCampaigns(); if (payload.active) setTimeout(loadQueue, 1500) }
     return !d.error
   }
-  async function toggleCampaign(c) { await authed('/api/campaigns', { method: 'PATCH', body: JSON.stringify({ id: c.id, active: !c.active }) }); setBanner(!c.active ? 'Campaign running' : 'Campaign paused'); loadCampaigns(); if (!c.active) setTimeout(loadQueue, 1500) }
-  async function deleteCampaign(id) { await authed('/api/campaigns', { method: 'DELETE', body: JSON.stringify({ id }) }); loadCampaigns() }
+  async function toggleCampaign(c) { await authed('/api/campaigns', { method: 'PATCH', body: JSON.stringify({ id: c.id, active: !c.active }) }); setBanner(!c.active ? 'Campaign running' : 'Campaign paused'); loadCampaigns(); loadQueue(); if (!c.active) setTimeout(loadQueue, 1500) }
+  async function deleteCampaign(id) { await authed('/api/campaigns', { method: 'DELETE', body: JSON.stringify({ id }) }); loadCampaigns(); loadQueue() }
 
   // Engagement rules
   async function saveEngagement(payload) {
@@ -785,9 +799,9 @@ function App({ session }) {
   }
   async function patchEngagement(id, patch, note) {
     await authed('/api/engagement', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) })
-    if (note) setBanner(note); loadEngagement(); if (patch.active) setTimeout(loadQueue, 2500)
+    if (note) setBanner(note); loadEngagement(); loadQueue(); if (patch.active) setTimeout(loadQueue, 2500)
   }
-  async function deleteEngagement(id) { await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement() }
+  async function deleteEngagement(id) { await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); loadQueue() }
 
   // Personal photos (multipart — don't send the JSON content-type header)
   async function uploadPhoto(file) {
@@ -891,6 +905,13 @@ function App({ session }) {
 
               {tab === 'queue' && (<>
                 {!connected && <div className="hint">Connect X in <b>Connections</b> so queued posts can publish.</div>}
+                {queue.length > 0 && (
+                  <div className="src-legend">
+                    <span className="src-leg"><span className="dot" style={{ background: '#4f63d8' }} /> You</span>
+                    <span className="src-leg"><span className="dot" style={{ background: '#c2740a' }} /> Campaign</span>
+                    <span className="src-leg"><span className="dot" style={{ background: '#7c3aed' }} /> Reply</span>
+                  </div>
+                )}
                 {queue.length === 0 && <Empty icon={<Clock size={26} />}>Your queue is empty. Write a post, or generate from your Brain.</Empty>}
                 <div>{queue.map((p, i) => <QueueCard key={p.id} p={p} i={i} connected={connected} defaultCollapsed={collapseQueue} onSaveEdit={saveEdit} onPostNow={postNow} onDelete={delPost} onSchedule={openSchedule} />)}</div>
                 {posted.length > 0 && <PostedSection posted={posted} />}
@@ -928,7 +949,8 @@ function App({ session }) {
                   </div>
                   {drafts.length === 0 && <Empty icon={<FileText size={26} />}>No drafts yet. Generate a batch and they&apos;ll show up here to review.</Empty>}
                   <div><AnimatePresence>{drafts.map((p, i) => (
-                    <motion.div key={p.id} className="card draft-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04, ...spring }} layout exit={{ opacity: 0, scale: 0.95 }}>
+                    <motion.div key={p.id} className="card draft-card" style={{ borderLeft: `3px solid ${sourceMeta(p).c}` }} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04, ...spring }} layout exit={{ opacity: 0, scale: 0.95 }}>
+                      <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 7 }}><SourceTag p={p} /></div>
                       <ReplyContext p={p} />
                       <div className="card-body">{p.content}</div>
                       <div className="dp-actions" style={{ marginTop: 11 }}>
@@ -1376,4 +1398,9 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .style-opt .mini-check { margin-top: 1px; }
 .style-name { display: block; font-size: 13px; font-weight: 600; color: #16181d; }
 .style-desc { display: block; font-size: 11.5px; color: #757b88; margin-top: 1px; line-height: 1.4; }
+/* source tag + legend */
+.src-tag { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; padding: 2px 7px; border-radius: 20px; border: 1px solid; white-space: nowrap; }
+.src-legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 2px 2px 10px; }
+.src-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: #757b88; }
+.src-leg .dot { width: 9px; height: 9px; border-radius: 3px; }
 `
