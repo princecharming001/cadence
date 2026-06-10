@@ -413,6 +413,46 @@ function QueueCard({ p, i, connected, defaultCollapsed, onSaveEdit, onPostNow, o
 
 function Empty({ icon, children }) { return <motion.div className="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div className="empty-icon">{icon}</div><div>{children}</div></motion.div> }
 
+// Activity monitor shared by campaigns and engagement rules: everything that
+// has gone out, is due, or is coming up for one campaign/rule.
+function activityFor(posts, key, id) {
+  const mine = posts.filter(p => p[key] === id)
+  const live = mine.filter(p => p.status === 'posted')
+    .sort((a, b) => new Date(b.posted_at || b.scheduled_for) - new Date(a.posted_at || a.scheduled_for))
+  const pending = mine.filter(p => p.status !== 'posted')
+    .sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))
+  return { pending, live }
+}
+
+function ActivityList({ pending, live }) {
+  const rows = [...pending, ...live]
+  if (!rows.length) return <div className="muted tiny" style={{ padding: '8px 2px 2px' }}>Nothing yet. Posts will show up here as the agent creates them.</div>
+  return (
+    <div className="act-list">
+      {rows.map(p => {
+        const s = STATUS[p.status] || { c: '#9ca3af', label: p.status }
+        const when = p.status === 'posted' ? `posted ${fmt(p.posted_at || p.scheduled_for)}`
+          : p.status === 'draft' ? 'waiting for your approval'
+          : p.status === 'queued' ? (new Date(p.scheduled_for) > new Date() ? `going out ${fmt(p.scheduled_for)}` : 'due now')
+          : p.status === 'failed' ? 'failed' : s.label
+        return (
+          <div className="act-row" key={p.id}>
+            <span className="status-dot" style={{ background: s.c, marginTop: 5 }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="act-text">{p.content}</div>
+              <div className="muted tiny" style={{ marginTop: 3 }}>
+                {when}
+                {p.status === 'posted' && p.external_id && <> · <a className="link" href={`https://x.com/i/web/status/${p.external_id}`} target="_blank" rel="noreferrer">view on X</a></>}
+                {p.reply_to_tweet_id && <> · <a className="link" href={p.target_tweet_url || `https://x.com/i/web/status/${p.reply_to_tweet_id}`} target="_blank" rel="noreferrer">replying to</a></>}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // What an engagement reply is replying TO — shown on drafts/queue cards so the
 // user always knows the context they're approving.
 function ReplyContext({ p }) {
@@ -455,8 +495,9 @@ function PostedSection({ posted }) {
 }
 
 // ── Marketing campaigns ─────────────────────────────────────────────────────────
-function CampaignManager({ campaigns, xConns, onSave, onToggle, onDelete }) {
+function CampaignManager({ campaigns, xConns, posts = [], onSave, onToggle, onDelete }) {
   const [adding, setAdding] = useState(false)
+  const [openId, setOpenId] = useState(null)
   const [name, setName] = useState(''); const [topic, setTopic] = useState(''); const [link, setLink] = useState('')
   const [connIds, setConnIds] = useState([]); const [every, setEvery] = useState(24); const [perRun, setPerRun] = useState(1)
   const [img, setImg] = useState(false); const [busy, setBusy] = useState(false)
@@ -475,6 +516,8 @@ function CampaignManager({ campaigns, xConns, onSave, onToggle, onDelete }) {
       {campaigns.map(c => {
         const accts = (c.connection_ids?.length ? c.connection_ids : xConns.map(x => x.id))
         const names = accts.map(id => xConns.find(x => x.id === id)?.username).filter(Boolean)
+        const { pending, live } = activityFor(posts, 'campaign_id', c.id)
+        const open = openId === c.id
         return (
           <div className="card camp-card" key={c.id}>
             <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
@@ -488,6 +531,17 @@ function CampaignManager({ campaigns, xConns, onSave, onToggle, onDelete }) {
               </div>
             </div>
             <div className="muted tiny" style={{ marginTop: 7 }}>{c.posts_per_run} post{c.posts_per_run > 1 ? 's' : ''} every {c.interval_hours}h · {names.length ? '@' + names.join(', @') : 'all accounts'}{c.include_image ? ' · with image' : ''}</div>
+            <button className="act-toggle" onClick={() => setOpenId(open ? null : c.id)}>
+              <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+              {live.length} posted · {pending.length} coming up
+            </button>
+            <AnimatePresence initial={false}>
+              {open && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
+                  <ActivityList pending={pending} live={live} />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )
       })}
@@ -523,8 +577,9 @@ function CampaignManager({ campaigns, xConns, onSave, onToggle, onDelete }) {
 }
 
 // ── X engagement rules (auto-commenting) ────────────────────────────────────────
-function EngagementManager({ rules, xConns, xReadEnabled, onSave, onPatch, onDelete }) {
+function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, onPatch, onDelete }) {
   const [adding, setAdding] = useState(false)
+  const [openId, setOpenId] = useState(null)
   const [name, setName] = useState(''); const [links, setLinks] = useState('')
   const [keywords, setKeywords] = useState(''); const [handles, setHandles] = useState('')
   const [style, setStyle] = useState('add_value'); const [instructions, setInstructions] = useState('')
@@ -534,6 +589,8 @@ function EngagementManager({ rules, xConns, xReadEnabled, onSave, onPatch, onDel
 
   useEffect(() => { if (!connId && xConns[0]?.id) setConnId(xConns[0].id) }, [xConns, connId])
   const csv = s => s.split(',').map(x => x.trim()).filter(Boolean)
+  const lines = s => s.split('\n').map(x => x.trim()).filter(Boolean)
+  const watchedCount = lines(handles).length
 
   function reset() { setName(''); setLinks(''); setKeywords(''); setHandles(''); setStyle('add_value'); setInstructions(''); setEvery(24); setPerRun(1); setAutoPost(false) }
   async function submit(active) {
@@ -541,8 +598,8 @@ function EngagementManager({ rules, xConns, xReadEnabled, onSave, onPatch, onDel
     setBusy(true)
     const ok = await onSave({
       name: name.trim(),
-      target_tweet_urls: links.split('\n').map(l => l.trim()).filter(Boolean),
-      target_keywords: csv(keywords), target_handles: csv(handles),
+      target_tweet_urls: lines(links),
+      target_keywords: csv(keywords), target_handles: lines(handles).slice(0, 3),
       comment_style: style, instructions: instructions.trim() || null,
       connection_ids: connId ? [connId] : [],
       interval_hours: Number(every), replies_per_run: Number(perRun),
@@ -557,6 +614,8 @@ function EngagementManager({ rules, xConns, xReadEnabled, onSave, onPatch, onDel
     <div style={{ marginBottom: 10 }}>
       {rules.map(r => {
         const acct = xConns.find(x => x.id === (r.connection_ids?.[0]))?.username || xConns[0]?.username
+        const { pending, live } = activityFor(posts, 'engagement_rule_id', r.id)
+        const open = openId === r.id
         const targets = [
           (r.target_tweet_urls?.length ? `${r.target_tweet_urls.length} link${r.target_tweet_urls.length > 1 ? 's' : ''}` : null),
           (r.target_keywords?.length ? r.target_keywords.join(', ') : null),
@@ -581,6 +640,17 @@ function EngagementManager({ rules, xConns, xReadEnabled, onSave, onPatch, onDel
               <span className="muted tiny">{r.replies_per_run} repl{r.replies_per_run > 1 ? 'ies' : 'y'} every {r.interval_hours}h{acct ? ` as @${acct}` : ''}</span>
               <Toggle on={!!r.auto_post} onChange={v => onPatch(r.id, { auto_post: v }, v ? 'Auto-posting replies is ON for this rule' : 'Back to approve-first')} label="auto-post" />
             </div>
+            <button className="act-toggle" onClick={() => setOpenId(open ? null : r.id)}>
+              <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+              {live.length} repl{live.length === 1 ? 'y' : 'ies'} made · {pending.length} pending
+            </button>
+            <AnimatePresence initial={false}>
+              {open && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
+                  <ActivityList pending={pending} live={live} />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )
       })}
@@ -590,7 +660,8 @@ function EngagementManager({ rules, xConns, xReadEnabled, onSave, onPatch, onDel
           <input className="field" placeholder="Rule name (e.g. Engage AI founders)" value={name} onChange={e => setName(e.target.value)} />
           <textarea className="field" rows={3} style={{ marginTop: 8 }} placeholder={'Tweet links to reply to, one per line.\nTip: paste the tweet’s text after the link so the AI has full context.'} value={links} onChange={e => setLinks(e.target.value)} />
           <input className="field" style={{ marginTop: 8 }} placeholder="Keywords to watch (comma-separated)" value={keywords} onChange={e => setKeywords(e.target.value)} />
-          <input className="field" style={{ marginTop: 8 }} placeholder="Accounts to watch, e.g. @naval, @sama" value={handles} onChange={e => setHandles(e.target.value)} />
+          <textarea className="field" rows={3} style={{ marginTop: 8 }} placeholder={'Accounts to watch and respond to: paste profile links, one per line, up to 3.\ne.g. https://x.com/naval'} value={handles} onChange={e => setHandles(e.target.value)} />
+          {watchedCount > 3 && <div className="notice" style={{ marginTop: 6 }}>You can watch up to 3 accounts. Only the first 3 will be used.</div>}
           {!xReadEnabled && (keywords.trim() || handles.trim()) && <div className="muted tiny" style={{ marginTop: 6 }}>Watching keywords and accounts needs X read access (paid API credits). They&apos;re saved, but until reads are enabled only pasted tweet links get replies.</div>}
 
           <label className="ob-label">How should it comment?</label>
@@ -875,10 +946,10 @@ function App({ session }) {
                 <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account' : 'Connect X'}</button>
 
                 <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> Marketing campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· auto-post about something you want to promote</span></div>
-                <CampaignManager campaigns={campaigns} xConns={xConns} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} />
+                <CampaignManager campaigns={campaigns} xConns={xConns} posts={posts} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} />
 
                 <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Engagement <span className="muted tiny" style={{ fontWeight: 400 }}>· reply to relevant posts in your voice</span></div>
-                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} />
+                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} />
 
                 <div className="conn-sec">Your LinkedIn</div>
                 <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
@@ -1281,4 +1352,10 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .reply-ctx:hover { background: #ece2fd; }
 .reply-ctx svg { flex: none; margin-top: 1px; }
 .reply-ctx-text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* campaign / engagement activity monitor */
+.act-toggle { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 9px; padding: 6px 0 0; background: none; border: none; border-top: 1px solid #f0f0f4; cursor: pointer; font-family: inherit; font-size: 11.5px; font-weight: 600; color: #757b88; }
+.act-toggle:hover { color: #16181d; }
+.act-list { padding-top: 8px; display: flex; flex-direction: column; gap: 9px; max-height: 260px; overflow-y: auto; }
+.act-row { display: flex; gap: 9px; align-items: flex-start; }
+.act-text { font-size: 12.5px; line-height: 1.5; color: #2a2f3a; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 `

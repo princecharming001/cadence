@@ -7,6 +7,20 @@ const FIELDS = ['name', 'target_keywords', 'target_handles', 'target_tweet_urls'
 
 const arr = v => (Array.isArray(v) ? v.filter(Boolean) : [])
 
+// Not usernames: x.com paths that the profile-URL regex would otherwise match.
+const RESERVED = new Set(['i', 'home', 'search', 'explore', 'notifications', 'messages', 'intent', 'status', 'hashtag', 'settings', 'compose'])
+
+// Accept a pasted profile link (x.com/handle, twitter.com/handle) or a bare
+// @handle and normalize to the username.
+function toHandle(s) {
+  const str = String(s || '').trim()
+  const m = str.match(/(?:x|twitter)\.com\/(@?[A-Za-z0-9_]{1,15})(?:[/?#]|$)/) || str.match(/^@?([A-Za-z0-9_]{1,15})$/)
+  const h = m ? m[1].replace(/^@/, '') : null
+  return h && !RESERVED.has(h.toLowerCase()) ? h : null
+}
+
+const MAX_WATCHED = 3 // accounts a rule can watch
+
 function clean(body) {
   const patch = {}
   for (const k of FIELDS) if (body[k] !== undefined) patch[k] = body[k]
@@ -14,6 +28,13 @@ function clean(body) {
   if (patch.replies_per_run !== undefined) patch.replies_per_run = Math.min(5, Math.max(1, Number(patch.replies_per_run) || 1))
   for (const k of ['target_keywords', 'target_handles', 'target_tweet_urls', 'connection_ids']) {
     if (patch[k] !== undefined) patch[k] = arr(patch[k])
+  }
+  if (patch.target_handles !== undefined) {
+    const seen = new Set()
+    patch.target_handles = patch.target_handles
+      .map(toHandle).filter(Boolean)
+      .filter(h => !seen.has(h.toLowerCase()) && seen.add(h.toLowerCase()))
+      .slice(0, MAX_WATCHED)
   }
   if (patch.auto_post !== undefined) patch.auto_post = !!patch.auto_post
   if (patch.active !== undefined) patch.active = !!patch.active
