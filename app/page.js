@@ -580,27 +580,27 @@ function CampaignManager({ campaigns, xConns, posts = [], onSave, onToggle, onDe
 function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, onPatch, onDelete }) {
   const [adding, setAdding] = useState(false)
   const [openId, setOpenId] = useState(null)
-  const [name, setName] = useState(''); const [links, setLinks] = useState('')
+  const [name, setName] = useState('')
   const [keywords, setKeywords] = useState(''); const [handles, setHandles] = useState('')
-  const [style, setStyle] = useState('add_value'); const [instructions, setInstructions] = useState('')
+  const [styles, setStyles] = useState(['add_value']); const [instructions, setInstructions] = useState('')
   const [connId, setConnId] = useState(xConns[0]?.id || '')
-  const [every, setEvery] = useState(24); const [perRun, setPerRun] = useState(1)
+  const [every, setEvery] = useState(24); const [perRun, setPerRun] = useState(3)
   const [autoPost, setAutoPost] = useState(false); const [busy, setBusy] = useState(false)
 
   useEffect(() => { if (!connId && xConns[0]?.id) setConnId(xConns[0].id) }, [xConns, connId])
   const csv = s => s.split(',').map(x => x.trim()).filter(Boolean)
   const lines = s => s.split('\n').map(x => x.trim()).filter(Boolean)
   const watchedCount = lines(handles).length
+  const toggleStyle = k => setStyles(s => s.includes(k) ? s.filter(x => x !== k) : [...s, k])
 
-  function reset() { setName(''); setLinks(''); setKeywords(''); setHandles(''); setStyle('add_value'); setInstructions(''); setEvery(24); setPerRun(1); setAutoPost(false) }
+  function reset() { setName(''); setKeywords(''); setHandles(''); setStyles(['add_value']); setInstructions(''); setEvery(24); setPerRun(3); setAutoPost(false) }
   async function submit(active) {
     if (!name.trim()) return
     setBusy(true)
     const ok = await onSave({
       name: name.trim(),
-      target_tweet_urls: lines(links),
       target_keywords: csv(keywords), target_handles: lines(handles).slice(0, 3),
-      comment_style: style, instructions: instructions.trim() || null,
+      comment_styles: styles.length ? styles : ['add_value'], instructions: instructions.trim() || null,
       connection_ids: connId ? [connId] : [],
       interval_hours: Number(every), replies_per_run: Number(perRun),
       auto_post: autoPost, active,
@@ -608,7 +608,10 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
     setBusy(false); if (ok) { reset(); setAdding(false) }
   }
 
-  const styleLabel = k => COMMENT_STYLES.find(s => s.key === k)?.label || k
+  const styleLabels = r => {
+    const keys = (Array.isArray(r.comment_styles) && r.comment_styles.length ? r.comment_styles : [r.comment_style || 'add_value'])
+    return keys.map(k => COMMENT_STYLES.find(s => s.key === k)?.label || k).join(', ')
+  }
 
   return (
     <div style={{ marginBottom: 10 }}>
@@ -617,9 +620,8 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
         const { pending, live } = activityFor(posts, 'engagement_rule_id', r.id)
         const open = openId === r.id
         const targets = [
-          (r.target_tweet_urls?.length ? `${r.target_tweet_urls.length} link${r.target_tweet_urls.length > 1 ? 's' : ''}` : null),
-          (r.target_keywords?.length ? r.target_keywords.join(', ') : null),
           (r.target_handles?.length ? r.target_handles.map(h => '@' + String(h).replace(/^@/, '')).join(', ') : null),
+          (r.target_keywords?.length ? r.target_keywords.join(', ') : null),
         ].filter(Boolean).join(' · ')
         return (
           <div className="card camp-card" key={r.id}>
@@ -629,7 +631,7 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
                   <span className={'camp-state' + (r.active ? ' on' : '')}>{r.active ? 'Running' : 'Paused'}</span>
                   {r.auto_post && <span className="camp-state auto">Auto</span>}
                 </div>
-                <div className="muted tiny" style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{styleLabel(r.comment_style)} · {targets || 'no targets yet'}</div>
+                <div className="muted tiny" style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{styleLabels(r)} · {targets || 'no targets yet'}</div>
               </div>
               <div className="row" style={{ gap: 6, flex: 'none' }}>
                 <button className="mini" onClick={() => onPatch(r.id, { active: !r.active }, !r.active ? 'Engagement agent running' : 'Engagement agent paused')} title={r.active ? 'Pause' : 'Start'}>{r.active ? <LPause size={12} /> : <Play size={12} />}</button>
@@ -658,17 +660,25 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
       {adding ? (
         <div className="card camp-form">
           <input className="field" placeholder="Rule name (e.g. Engage AI founders)" value={name} onChange={e => setName(e.target.value)} />
-          <textarea className="field" rows={3} style={{ marginTop: 8 }} placeholder={'Tweet links to reply to, one per line.\nTip: paste the tweet’s text after the link so the AI has full context.'} value={links} onChange={e => setLinks(e.target.value)} />
-          <input className="field" style={{ marginTop: 8 }} placeholder="Keywords to watch (comma-separated)" value={keywords} onChange={e => setKeywords(e.target.value)} />
-          <textarea className="field" rows={3} style={{ marginTop: 8 }} placeholder={'Accounts to watch and respond to: paste profile links, one per line, up to 3.\ne.g. https://x.com/naval'} value={handles} onChange={e => setHandles(e.target.value)} />
-          {watchedCount > 3 && <div className="notice" style={{ marginTop: 6 }}>You can watch up to 3 accounts. Only the first 3 will be used.</div>}
-          {!xReadEnabled && (keywords.trim() || handles.trim()) && <div className="muted tiny" style={{ marginTop: 6 }}>Watching keywords and accounts needs X read access (paid API credits). They&apos;re saved, but until reads are enabled only pasted tweet links get replies.</div>}
 
-          <label className="ob-label">How should it comment?</label>
-          <select className="field" value={style} onChange={e => setStyle(e.target.value)}>
-            {COMMENT_STYLES.map(s => <option key={s.key} value={s.key}>{s.label} · {s.description}</option>)}
-          </select>
-          <textarea className="field" rows={2} style={{ marginTop: 8 }} placeholder="Your own commenting instructions (optional). E.g. mention my water-tech background when it fits, keep it under 120 chars, never use slang." value={instructions} onChange={e => setInstructions(e.target.value)} />
+          <label className="ob-label">Accounts to watch <span style={{ fontWeight: 400, color: '#9aa1ad' }}>· up to 3, one profile link per line</span></label>
+          <textarea className="field" rows={3} placeholder={'https://x.com/naval\nhttps://x.com/sama'} value={handles} onChange={e => setHandles(e.target.value)} />
+          {watchedCount > 3 && <div className="notice" style={{ marginTop: 6 }}>Up to 3 accounts. Only the first 3 will be used.</div>}
+          <label className="ob-label">Keywords / topics <span style={{ fontWeight: 400, color: '#9aa1ad' }}>· optional, comma-separated</span></label>
+          <input className="field" placeholder="e.g. AI agents, water infrastructure" value={keywords} onChange={e => setKeywords(e.target.value)} />
+          <div className="muted tiny" style={{ marginTop: 8 }}>Cadence automatically finds recent, high-engagement tweets from these accounts and topics, and skews toward the most viral and relevant ones.</div>
+          {!xReadEnabled && <div className="notice" style={{ marginTop: 6 }}>Automatic discovery needs X API read access turned on (it&apos;s pay-per-use). Until then this rule has nothing to find. Set <code>X_READ_ENABLED=true</code> on the server once you&apos;ve added X read credits.</div>}
+
+          <label className="ob-label">How should it comment? <span style={{ fontWeight: 400, color: '#9aa1ad' }}>· pick one or more</span></label>
+          <div className="style-grid">
+            {COMMENT_STYLES.map(s => (
+              <button type="button" key={s.key} className={'style-opt' + (styles.includes(s.key) ? ' on' : '')} onClick={() => toggleStyle(s.key)} title={s.description}>
+                <span className={'mini-check' + (styles.includes(s.key) ? ' on' : '')}>{styles.includes(s.key) && <LCheck size={10} strokeWidth={4} />}</span>
+                <span><span className="style-name">{s.label}</span><span className="style-desc">{s.description}</span></span>
+              </button>
+            ))}
+          </div>
+          <textarea className="field" rows={2} style={{ marginTop: 10 }} placeholder="Your own commenting instructions (optional). E.g. mention my water-tech background when it fits, keep it under 120 chars, never use slang." value={instructions} onChange={e => setInstructions(e.target.value)} />
 
           {xConns.length > 1 && (
             <div className="camp-accts">
@@ -681,7 +691,7 @@ function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, on
 
           <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
             <label className="camp-num">Every <input type="number" min={1} className="field" value={every} onChange={e => setEvery(e.target.value)} /> h</label>
-            <label className="camp-num"><input type="number" min={1} max={5} className="field" value={perRun} onChange={e => setPerRun(e.target.value)} /> per run</label>
+            <label className="camp-num"><input type="number" min={1} className="field" value={perRun} onChange={e => setPerRun(e.target.value)} /> replies per run</label>
           </div>
           <div className="card eng-auto">
             <Toggle on={autoPost} onChange={setAutoPost} label="Auto-post replies (no per-reply approval)" />
@@ -1358,4 +1368,12 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .act-list { padding-top: 8px; display: flex; flex-direction: column; gap: 9px; max-height: 260px; overflow-y: auto; }
 .act-row { display: flex; gap: 9px; align-items: flex-start; }
 .act-text { font-size: 12.5px; line-height: 1.5; color: #2a2f3a; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+/* comment-style checkboxes */
+.style-grid { display: flex; flex-direction: column; gap: 6px; }
+.style-opt { display: flex; align-items: flex-start; gap: 9px; text-align: left; background: #fff; border: 1px solid #e2e3e9; border-radius: 10px; padding: 9px 11px; cursor: pointer; font-family: inherit; transition: .15s; }
+.style-opt:hover { border-color: #c6cefb; background: #f8f9ff; }
+.style-opt.on { border-color: #8aa0ff; background: #f3f5ff; }
+.style-opt .mini-check { margin-top: 1px; }
+.style-name { display: block; font-size: 13px; font-weight: 600; color: #16181d; }
+.style-desc { display: block; font-size: 11.5px; color: #757b88; margin-top: 1px; line-height: 1.4; }
 `
