@@ -34,6 +34,9 @@ async function runCron() {
     } else {
       console.log(`[${t}] — nothing due`)
     }
+    if (data.engagement?.drafted || data.engagement?.queued) {
+      console.log(`[${t}] 💬 Engagement: drafted ${data.engagement.drafted || 0} repl(ies), auto-queued ${data.engagement.queued || 0}`)
+    }
   } catch (err) {
     console.error(`[${t}] ❌ cron error: ${err.message} (is the dev server running?)`)
   }

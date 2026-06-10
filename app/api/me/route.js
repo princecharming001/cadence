@@ -20,5 +20,6 @@ export async function GET(req) {
     stats,
     billingConfigured: billingConfigured(),
     proPrice: process.env.NEXT_PUBLIC_PRO_PRICE || '19',
+    xReadEnabled: process.env.X_READ_ENABLED === 'true',
   })
 }

@@ -4,6 +4,7 @@
 import { admin } from '@/lib/supabase'
 import { postOne } from '@/lib/posting'
 import { runDueCampaigns } from '@/lib/campaigns'
+import { runDueEngagement } from '@/lib/engagement'
 
 export async function GET(req) {
   const auth = req.headers.get('authorization') || ''
@@ -11,9 +12,13 @@ export async function GET(req) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // First, let active campaigns queue fresh promo posts that are now due.
+  // First, let active campaigns queue fresh promo posts that are now due,
+  // and let engagement rules draft/queue replies. Each is isolated so a
+  // failure can't block posting.
   let campaigns = null
   try { campaigns = await runDueCampaigns() } catch (e) { campaigns = { error: e.message } }
+  let engagement = null
+  try { engagement = await runDueEngagement() } catch (e) { engagement = { error: e.message } }
 
   const now = new Date().toISOString()
   const { data: duePosts, error } = await admin
@@ -23,11 +28,11 @@ export async function GET(req) {
     .lte('scheduled_for', now)
     .order('scheduled_for', { ascending: true })
 
-  if (error) return Response.json({ error: error.message, campaigns }, { status: 500 })
-  if (!duePosts?.length) return Response.json({ posted: 0, message: 'No posts due.', campaigns })
+  if (error) return Response.json({ error: error.message, campaigns, engagement }, { status: 500 })
+  if (!duePosts?.length) return Response.json({ posted: 0, message: 'No posts due.', campaigns, engagement })
 
   const results = []
   for (const post of duePosts) results.push(await postOne(post))
 
-  return Response.json({ posted: results.filter(r => r.status === 'posted').length, results, campaigns })
+  return Response.json({ posted: results.filter(r => r.status === 'posted').length, results, campaigns, engagement })
 }

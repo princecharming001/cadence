@@ -7,8 +7,9 @@ import dynamic from 'next/dynamic'
 import {
   Check as LCheck, X as LX, RefreshCw, Sparkles, Send, Plus,
   Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, FileText, Image as LImage,
-  ThumbsUp, ThumbsDown, Megaphone, Upload, Play, Pause as LPause,
+  ThumbsUp, ThumbsDown, Megaphone, Upload, Play, Pause as LPause, MessageCircle,
 } from 'lucide-react'
+import { COMMENT_STYLES } from '@/lib/comment-styles'
 
 function LIcon({ size = 18 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.55V9h3.57v11.45zM22.22 0H1.77C.8 0 0 .78 0 1.74v20.52C0 23.22.8 24 1.77 24h20.45c.98 0 1.78-.78 1.78-1.74V1.74C24 .78 23.2 0 22.22 0z"/></svg> }
 
@@ -380,6 +381,7 @@ function QueueCard({ p, i, connected, defaultCollapsed, onSaveEdit, onPostNow, o
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
             <div className="qbody">
+              <ReplyContext p={p} />
               {p.image_url && <img src={p.image_url} className="qcard-img" alt="" />}
               {editing
                 ? <textarea className="field" rows={5} value={draft} maxLength={400} onChange={e => setDraft(e.target.value)} autoFocus />
@@ -410,6 +412,19 @@ function QueueCard({ p, i, connected, defaultCollapsed, onSaveEdit, onPostNow, o
 }
 
 function Empty({ icon, children }) { return <motion.div className="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div className="empty-icon">{icon}</div><div>{children}</div></motion.div> }
+
+// What an engagement reply is replying TO — shown on drafts/queue cards so the
+// user always knows the context they're approving.
+function ReplyContext({ p }) {
+  if (!p.reply_to_tweet_id) return null
+  const t = p.target_tweet_text || ''
+  return (
+    <a className="reply-ctx" href={p.target_tweet_url || `https://x.com/i/web/status/${p.reply_to_tweet_id}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
+      <MessageCircle size={12} />
+      <span className="reply-ctx-text">Replying to {t ? `“${t.slice(0, 110)}${t.length > 110 ? '…' : ''}”` : 'this post'}</span>
+    </a>
+  )
+}
 
 // ── Posted history (no longer in the active queue) ──────────────────────────────
 function PostedSection({ posted }) {
@@ -507,6 +522,113 @@ function CampaignManager({ campaigns, xConns, onSave, onToggle, onDelete }) {
   )
 }
 
+// ── X engagement rules (auto-commenting) ────────────────────────────────────────
+function EngagementManager({ rules, xConns, xReadEnabled, onSave, onPatch, onDelete }) {
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState(''); const [links, setLinks] = useState('')
+  const [keywords, setKeywords] = useState(''); const [handles, setHandles] = useState('')
+  const [style, setStyle] = useState('add_value'); const [instructions, setInstructions] = useState('')
+  const [connId, setConnId] = useState(xConns[0]?.id || '')
+  const [every, setEvery] = useState(24); const [perRun, setPerRun] = useState(1)
+  const [autoPost, setAutoPost] = useState(false); const [busy, setBusy] = useState(false)
+
+  useEffect(() => { if (!connId && xConns[0]?.id) setConnId(xConns[0].id) }, [xConns, connId])
+  const csv = s => s.split(',').map(x => x.trim()).filter(Boolean)
+
+  function reset() { setName(''); setLinks(''); setKeywords(''); setHandles(''); setStyle('add_value'); setInstructions(''); setEvery(24); setPerRun(1); setAutoPost(false) }
+  async function submit(active) {
+    if (!name.trim()) return
+    setBusy(true)
+    const ok = await onSave({
+      name: name.trim(),
+      target_tweet_urls: links.split('\n').map(l => l.trim()).filter(Boolean),
+      target_keywords: csv(keywords), target_handles: csv(handles),
+      comment_style: style, instructions: instructions.trim() || null,
+      connection_ids: connId ? [connId] : [],
+      interval_hours: Number(every), replies_per_run: Number(perRun),
+      auto_post: autoPost, active,
+    })
+    setBusy(false); if (ok) { reset(); setAdding(false) }
+  }
+
+  const styleLabel = k => COMMENT_STYLES.find(s => s.key === k)?.label || k
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      {rules.map(r => {
+        const acct = xConns.find(x => x.id === (r.connection_ids?.[0]))?.username || xConns[0]?.username
+        const targets = [
+          (r.target_tweet_urls?.length ? `${r.target_tweet_urls.length} link${r.target_tweet_urls.length > 1 ? 's' : ''}` : null),
+          (r.target_keywords?.length ? r.target_keywords.join(', ') : null),
+          (r.target_handles?.length ? r.target_handles.map(h => '@' + String(h).replace(/^@/, '')).join(', ') : null),
+        ].filter(Boolean).join(' · ')
+        return (
+          <div className="card camp-card" key={r.id}>
+            <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="conn-title row" style={{ gap: 7 }}>{r.name}
+                  <span className={'camp-state' + (r.active ? ' on' : '')}>{r.active ? 'Running' : 'Paused'}</span>
+                  {r.auto_post && <span className="camp-state auto">Auto</span>}
+                </div>
+                <div className="muted tiny" style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{styleLabel(r.comment_style)} · {targets || 'no targets yet'}</div>
+              </div>
+              <div className="row" style={{ gap: 6, flex: 'none' }}>
+                <button className="mini" onClick={() => onPatch(r.id, { active: !r.active }, !r.active ? 'Engagement agent running' : 'Engagement agent paused')} title={r.active ? 'Pause' : 'Start'}>{r.active ? <LPause size={12} /> : <Play size={12} />}</button>
+                <button className="mini danger" onClick={() => onDelete(r.id)}><Trash2 size={12} /></button>
+              </div>
+            </div>
+            <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
+              <span className="muted tiny">{r.replies_per_run} repl{r.replies_per_run > 1 ? 'ies' : 'y'} every {r.interval_hours}h{acct ? ` as @${acct}` : ''}</span>
+              <Toggle on={!!r.auto_post} onChange={v => onPatch(r.id, { auto_post: v }, v ? 'Auto-posting replies is ON for this rule' : 'Back to approve-first')} label="auto-post" />
+            </div>
+          </div>
+        )
+      })}
+
+      {adding ? (
+        <div className="card camp-form">
+          <input className="field" placeholder="Rule name (e.g. Engage AI founders)" value={name} onChange={e => setName(e.target.value)} />
+          <textarea className="field" rows={3} style={{ marginTop: 8 }} placeholder={'Tweet links to reply to, one per line.\nTip: paste the tweet’s text after the link so the AI has full context.'} value={links} onChange={e => setLinks(e.target.value)} />
+          <input className="field" style={{ marginTop: 8 }} placeholder="Keywords to watch (comma-separated)" value={keywords} onChange={e => setKeywords(e.target.value)} />
+          <input className="field" style={{ marginTop: 8 }} placeholder="Accounts to watch, e.g. @naval, @sama" value={handles} onChange={e => setHandles(e.target.value)} />
+          {!xReadEnabled && (keywords.trim() || handles.trim()) && <div className="muted tiny" style={{ marginTop: 6 }}>Watching keywords and accounts needs X read access (paid API credits). They&apos;re saved, but until reads are enabled only pasted tweet links get replies.</div>}
+
+          <label className="ob-label">How should it comment?</label>
+          <select className="field" value={style} onChange={e => setStyle(e.target.value)}>
+            {COMMENT_STYLES.map(s => <option key={s.key} value={s.key}>{s.label} · {s.description}</option>)}
+          </select>
+          <textarea className="field" rows={2} style={{ marginTop: 8 }} placeholder="Your own commenting instructions (optional). E.g. mention my water-tech background when it fits, keep it under 120 chars, never use slang." value={instructions} onChange={e => setInstructions(e.target.value)} />
+
+          {xConns.length > 1 && (
+            <div className="camp-accts">
+              <div className="muted tiny" style={{ marginBottom: 6 }}>Reply as:</div>
+              {xConns.map(c => (
+                <button type="button" key={c.id} className={'chip' + (connId === c.id ? ' on' : '')} onClick={() => setConnId(c.id)}>@{c.username}</button>
+              ))}
+            </div>
+          )}
+
+          <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+            <label className="camp-num">Every <input type="number" min={1} className="field" value={every} onChange={e => setEvery(e.target.value)} /> h</label>
+            <label className="camp-num"><input type="number" min={1} max={5} className="field" value={perRun} onChange={e => setPerRun(e.target.value)} /> per run</label>
+          </div>
+          <div className="card eng-auto">
+            <Toggle on={autoPost} onChange={setAutoPost} label="Auto-post replies (no per-reply approval)" />
+            <div className="muted tiny" style={{ marginTop: 6 }}>{autoPost ? 'Cadence will reply on your behalf on this cadence. Heavy auto-replying can get an X account flagged, so keep volume low.' : 'Off: every reply lands in your drafts for approval first. Recommended.'}</div>
+          </div>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button className="mini" onClick={() => { reset(); setAdding(false) }}>Cancel</button>
+            <button className="btn-ghost btn-sm" disabled={busy || !name.trim()} onClick={() => submit(false)}>Save</button>
+            <button className="btn-primary btn-sm" disabled={busy || !name.trim()} onClick={() => submit(true)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start engaging'}</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={() => setAdding(true)}><Plus size={14} /> New engagement rule</button>
+      )}
+    </div>
+  )
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 function App({ session }) {
   const token = session.access_token
@@ -516,6 +638,7 @@ function App({ session }) {
   const [posts, setPosts] = useState([]); const [xConns, setXConns] = useState([])
   const [liSelf, setLiSelf] = useState([]); const [liMentors, setLiMentors] = useState([]); const [liPosts, setLiPosts] = useState([])
   const [campaigns, setCampaigns] = useState([]); const [photos, setPhotos] = useState([])
+  const [engRules, setEngRules] = useState([])
   const [me, setMe] = useState(null)
   const [messages, setMessages] = useState([]); const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
@@ -531,8 +654,9 @@ function App({ session }) {
   const loadMe = useCallback(async () => { const r = await authed('/api/me'); const d = await r.json(); setMe(d) }, [authed])
   const loadCampaigns = useCallback(async () => { const r = await authed('/api/campaigns'); const d = await r.json(); setCampaigns(d.campaigns || []) }, [authed])
   const loadPhotos = useCallback(async () => { const r = await authed('/api/photos'); const d = await r.json(); setPhotos(d.photos || []) }, [authed])
+  const loadEngagement = useCallback(async () => { const r = await authed('/api/engagement'); const d = await r.json(); setEngRules(d.rules || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
@@ -569,6 +693,20 @@ function App({ session }) {
   }
   async function toggleCampaign(c) { await authed('/api/campaigns', { method: 'PATCH', body: JSON.stringify({ id: c.id, active: !c.active }) }); setBanner(!c.active ? 'Campaign running' : 'Campaign paused'); loadCampaigns(); if (!c.active) setTimeout(loadQueue, 1500) }
   async function deleteCampaign(id) { await authed('/api/campaigns', { method: 'DELETE', body: JSON.stringify({ id }) }); loadCampaigns() }
+
+  // Engagement rules
+  async function saveEngagement(payload) {
+    const r = await authed('/api/engagement', { method: 'POST', body: JSON.stringify(payload) })
+    const d = await r.json()
+    if (d.error) setBanner(d.error)
+    else { setBanner(payload.active ? 'Engagement agent running' : 'Engagement rule saved'); loadEngagement(); if (payload.active) setTimeout(loadQueue, 2500) }
+    return !d.error
+  }
+  async function patchEngagement(id, patch, note) {
+    await authed('/api/engagement', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) })
+    if (note) setBanner(note); loadEngagement(); if (patch.active) setTimeout(loadQueue, 2500)
+  }
+  async function deleteEngagement(id) { await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement() }
 
   // Personal photos (multipart — don't send the JSON content-type header)
   async function uploadPhoto(file) {
@@ -710,6 +848,7 @@ function App({ session }) {
                   {drafts.length === 0 && <Empty icon={<FileText size={26} />}>No drafts yet. Generate a batch and they&apos;ll show up here to review.</Empty>}
                   <div><AnimatePresence>{drafts.map((p, i) => (
                     <motion.div key={p.id} className="card draft-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04, ...spring }} layout exit={{ opacity: 0, scale: 0.95 }}>
+                      <ReplyContext p={p} />
                       <div className="card-body">{p.content}</div>
                       <div className="dp-actions" style={{ marginTop: 11 }}>
                         <button className="icon-btn x" title="Discard" onClick={() => delPost(p.id)}><Ex /></button>
@@ -737,6 +876,9 @@ function App({ session }) {
 
                 <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> Marketing campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· auto-post about something you want to promote</span></div>
                 <CampaignManager campaigns={campaigns} xConns={xConns} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} />
+
+                <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Engagement <span className="muted tiny" style={{ fontWeight: 400 }}>· reply to relevant posts in your voice</span></div>
+                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} />
 
                 <div className="conn-sec">Your LinkedIn</div>
                 <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
@@ -1132,4 +1274,11 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .xc-actions { display: flex; gap: 10px; }
 .xc-open { flex: 1; justify-content: center; gap: 7px; text-decoration: none; }
 .xc-go { flex: 1; padding: 9px 15px; }
+/* engagement */
+.camp-state.auto { color: #6d3bd0; background: #f3eefe; }
+.eng-auto { padding: 11px 13px; margin-top: 10px; background: #fbfaff; border-color: #e7ddfb; }
+.reply-ctx { display: flex; align-items: flex-start; gap: 7px; font-size: 11.5px; color: #6d3bd0; background: #f3eefe; border: 1px solid #e2d4fb; border-radius: 9px; padding: 7px 10px; margin-bottom: 9px; text-decoration: none; line-height: 1.45; }
+.reply-ctx:hover { background: #ece2fd; }
+.reply-ctx svg { flex: none; margin-top: 1px; }
+.reply-ctx-text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 `
