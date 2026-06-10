@@ -1,6 +1,6 @@
 export const metadata = {
   title: 'Cadence',
-  description: 'X post scheduler',
+  description: 'Turn how you write on LinkedIn into tweets that post themselves.',
 }
 
 export default function RootLayout({ children }) {

@@ -28,7 +28,7 @@ const MAX = 280
 const TZS = ['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Kolkata', 'Asia/Singapore', 'Australia/Sydney']
 
 function fmt(ts) {
-  if (!ts) return '—'
+  if (!ts) return 'not set'
   return new Date(ts).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
 }
 function titleOf(content) {
@@ -75,7 +75,7 @@ function AuthScreen() {
     <div className="auth-wrap">
       <motion.form onSubmit={submit} className="card auth-card" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
         <div className="wordmark" style={{ fontSize: 30 }}>Cadence</div>
-        <div className="muted" style={{ marginTop: 8, marginBottom: 28, fontSize: 14 }}>Turn your LinkedIn into a scheduled X presence.</div>
+        <div className="muted" style={{ marginTop: 8, marginBottom: 28, fontSize: 14 }}>You write on LinkedIn. Cadence turns it into tweets and posts them for you.</div>
         <input className="field" type="email" required placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
         <input className="field" type="password" required placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} style={{ marginTop: 12 }} />
         <motion.button type="submit" disabled={busy} className="btn-primary" style={{ width: '100%', marginTop: 20, padding: 12 }} whileTap={{ scale: 0.98 }}>
@@ -101,7 +101,7 @@ function Paywall({ me, authed, onSignOut }) {
   }
   const perks = [
     [Brain, 'Learns your voice from your LinkedIn'],
-    [Sparkles, 'Unlimited AI posts in your style'],
+    [Sparkles, 'Unlimited posts written in your voice'],
     [Clock, 'Auto-scheduling & auto-posting to X'],
     [LImage, 'AI images on your posts'],
   ]
@@ -109,13 +109,13 @@ function Paywall({ me, authed, onSignOut }) {
     <div className="auth-wrap">
       <motion.div className="card pay-card" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
         <div className="row" style={{ gap: 9, marginBottom: 6 }}><span className="wordmark" style={{ fontSize: 24 }}>Cadence</span><span className="pro-pill"><Crown size={12} /> Pro</span></div>
-        <div className="muted" style={{ fontSize: 14, marginBottom: 18 }}>Subscribe to start turning your LinkedIn into a scheduled X presence.</div>
+        <div className="muted" style={{ fontSize: 14, marginBottom: 18 }}>Subscribe and Cadence writes your tweets in your voice, then posts them on schedule.</div>
         <div className="pay-price">$17<span className="muted" style={{ fontSize: 15, fontWeight: 500 }}>/month</span></div>
         <div className="pay-perks">
           {perks.map(([Ic, t], i) => <div key={i} className="pay-perk"><span className="pay-ic"><Ic size={15} /></span>{t}</div>)}
         </div>
         <motion.button className="btn-primary" style={{ width: '100%', padding: 13, marginTop: 18 }} disabled={busy} onClick={subscribe} whileTap={{ scale: 0.98 }}>
-          {busy ? <span className="dots"><i/><i/><i/></span> : 'Subscribe — $17/mo'}
+          {busy ? <span className="dots"><i/><i/><i/></span> : 'Subscribe for $17/mo'}
         </motion.button>
         {msg && <div className="notice" style={{ marginTop: 12 }}>{msg}</div>}
         <div className="muted" style={{ marginTop: 16, textAlign: 'center', fontSize: 12.5 }}>Cancel anytime · <span className="link" onClick={onSignOut}>Sign out</span></div>
@@ -158,7 +158,7 @@ function Onboarding({ session, me, authed, onDone }) {
 
   const steps = [
     { title: 'Welcome to Cadence', body: (<>
-      <p className="ob-lead">Cadence learns how you write on LinkedIn and turns it into a scheduled X presence — drafted, scheduled, and auto-posted in your voice.</p>
+      <p className="ob-lead">Cadence learns how you write on LinkedIn, then drafts tweets in your voice and posts them on a schedule. You approve every one before it goes out.</p>
       <button className="btn-primary" style={{ marginTop: 20, padding: 12, width: '100%' }} onClick={() => setStep(1)}>Get started</button>
     </>)},
     { title: 'About you', body: (<>
@@ -177,7 +177,7 @@ function Onboarding({ session, me, authed, onDone }) {
       <div className="ob-nav"><span className="link" onClick={() => setStep(1)}>Back</span><button className="btn-primary" onClick={() => setStep(3)}>{connected ? 'Next' : 'Skip for now'}</button></div>
     </>)},
     { title: 'Add your LinkedIn', body: (<>
-      <p className="ob-lead">Paste your LinkedIn profile URL — Cadence reads up to your 50 recent posts to learn your voice. No login needed.</p>
+      <p className="ob-lead">Paste your LinkedIn profile URL. Cadence reads your last 50 posts to learn how you write. No login needed.</p>
       <input className="field" style={{ marginTop: 14 }} value={liUrl} onChange={e => setLiUrl(e.target.value)} placeholder="linkedin.com/in/your-handle" />
       {liDone && <div className="ob-ok" style={{ marginTop: 10 }}><Check /> Posts pulled</div>}
       <div className="ob-nav"><span className="link" onClick={() => setStep(2)}>Back</span><button className="btn-primary" disabled={busy} onClick={scrapeLi}>{busy ? <span className="dots"><i/><i/><i/></span> : liUrl.trim() ? 'Pull posts' : 'Skip'}</button></div>
@@ -317,7 +317,7 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
     if (postNow && d.post?.id) { const pr = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id: d.post.id, action: 'post_now' }) }); const pd = await pr.json(); result = pd.status === 'posted' ? 'posted' : 'failed' }
     setBusy(false); setDone(result); onResolved && onResolved()
   }
-  if (done) return <div className={'dp-done ' + done}>{done === 'posted' ? 'Posted to X' : done === 'failed' ? 'Post failed — reconnect X' : done === 'discarded' ? 'Discarded' : `Scheduled · ${fmt(new Date(when).toISOString())}`}</div>
+  if (done) return <div className={'dp-done ' + done}>{done === 'posted' ? 'Posted to X' : done === 'failed' ? 'Post failed, reconnect X' : done === 'discarded' ? 'Discarded' : `Scheduled · ${fmt(new Date(when).toISOString())}`}</div>
   return (
     <motion.div className="card dp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
       <div className="dp-head">
@@ -483,7 +483,7 @@ function CampaignManager({ campaigns, xConns, onSave, onToggle, onDelete }) {
           <textarea className="field" rows={3} style={{ marginTop: 8 }} placeholder="What do you want to promote? Describe the product/idea, the key points, and the vibe." value={topic} onChange={e => setTopic(e.target.value)} />
           <input className="field" style={{ marginTop: 8 }} placeholder="Link (optional)" value={link} onChange={e => setLink(e.target.value)} />
           <div className="camp-accts">
-            <div className="muted tiny" style={{ marginBottom: 6 }}>Post from{xConns.length ? '' : ' — connect an X account first'}:</div>
+            <div className="muted tiny" style={{ marginBottom: 6 }}>Post from{xConns.length ? '' : ' (connect an X account first)'}:</div>
             {xConns.map(c => (
               <button type="button" key={c.id} className={'chip' + (connIds.includes(c.id) ? ' on' : '')} onClick={() => toggleConn(c.id)}>@{c.username}</button>
             ))}
@@ -538,7 +538,7 @@ function App({ session }) {
     const q = new URLSearchParams(window.location.search)
     if (q.get('x') === 'connected') { setBanner(`Connected @${q.get('handle') || 'your X account'}`); loadX() }
     else if (q.get('x') === 'denied') setBanner('X connection cancelled.')
-    else if (q.get('x')) setBanner('X connection failed — try again.')
+    else if (q.get('x')) setBanner('Couldn\'t connect to X. Try again.')
     if (q.get('billing') === 'success') { setBanner('Welcome to Pro'); loadMe() }
     if (q.get('x') || q.get('billing')) window.history.replaceState({}, '', '/')
   }, [loadX, loadMe])
@@ -682,7 +682,7 @@ function App({ session }) {
                   <div className="brain-empty">
                     <div className="brain-stage muted-stage"><motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 3, repeat: Infinity }} style={{ color: '#0a66c2' }}><Brain size={48} /></motion.div></div>
                     <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6, marginTop: 14 }}>Learn your voice</div>
-                    <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.65, maxWidth: 360, margin: '0 auto 18px' }}>Cadence reads your LinkedIn posts and maps your voice into an interactive mind — then writes X posts that sound like you.</div>
+                    <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.65, maxWidth: 360, margin: '0 auto 18px' }}>Cadence reads your LinkedIn posts to learn how you write, then writes X posts that actually sound like you.</div>
                     <motion.button className="btn-primary row" style={{ gap: 7 }} disabled={analyzing} onClick={analyzeVoice} whileTap={{ scale: 0.97 }}>{analyzing ? <span className="dots"><i/><i/><i/></span> : <><Wand2 size={15} /> Analyze my voice</>}</motion.button>
                     {liPosts.length === 0 && <div className="muted tiny" style={{ marginTop: 12 }}>Add your LinkedIn in Connections first.</div>}
                   </div>
@@ -700,14 +700,14 @@ function App({ session }) {
                       <span className="gen-ic"><Sparkles size={17} /></span>
                       <div style={{ minWidth: 0 }}>
                         <div className="gen-title">Generate posts in your voice</div>
-                        <div className="gen-sub">Studies your best-performing LinkedIn posts and what&apos;s landing on X right now, then writes 5 fresh tweets — each on a different topic in your niche.</div>
+                        <div className="gen-sub">Looks at your best LinkedIn posts and what&apos;s working on X right now, then writes 5 tweets for you. Each one covers a different topic in your niche.</div>
                       </div>
                     </div>
                     <motion.button className="btn-primary gen-btn" disabled={generating} onClick={() => generate(5)} whileTap={{ scale: 0.98 }}>
                       {generating ? <span className="row" style={{ gap: 8 }}><span className="dots"><i/><i/><i/></span> Writing your posts…</span> : <span className="row" style={{ gap: 8 }}><Wand2 size={15} /> Generate 5 posts</span>}
                     </motion.button>
                   </div>
-                  {drafts.length === 0 && <Empty icon={<FileText size={26} />}>No drafts yet. Generate a batch — they land here to review.</Empty>}
+                  {drafts.length === 0 && <Empty icon={<FileText size={26} />}>No drafts yet. Generate a batch and they&apos;ll show up here to review.</Empty>}
                   <div><AnimatePresence>{drafts.map((p, i) => (
                     <motion.div key={p.id} className="card draft-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04, ...spring }} layout exit={{ opacity: 0, scale: 0.95 }}>
                       <div className="card-body">{p.content}</div>
@@ -757,7 +757,7 @@ function App({ session }) {
             {messages.length === 0 && (
               <div className="chat-welcome">
                 <div className="wordmark" style={{ fontSize: 19, marginBottom: 4 }}>How can I help?</div>
-                <div className="muted" style={{ fontSize: 13 }}>Draft, schedule, repurpose, and post to X — just ask.</div>
+                <div className="muted" style={{ fontSize: 13 }}>Draft, schedule, repurpose, post to X. Just ask.</div>
               </div>
             )}
             <AnimatePresence initial={false}>
@@ -838,13 +838,13 @@ function App({ session }) {
               <div className="row" style={{ justifyContent: 'space-between' }}><span className="wordmark" style={{ fontSize: 21 }}>Cadence Pro</span><button className="x-close" onClick={() => setUpgrade(false)}><LX size={18} /></button></div>
               <div className="price">${me?.proPrice || 17}<span className="muted" style={{ fontSize: 15, fontWeight: 500 }}>/mo</span></div>
               <ul className="perks">
-                <li><Brain size={15} /> Voice engine — learn your style & auto-write posts</li>
-                <li><Sparkles size={15} /> Unlimited AI generations in your voice</li>
+                <li><Brain size={15} /> A voice engine that learns your style and writes posts for you</li>
+                <li><Sparkles size={15} /> Unlimited posts generated in your voice</li>
                 <li><LImage size={15} /> AI images on your posts</li>
                 <li><Clock size={15} /> Unlimited scheduling & auto-posting</li>
               </ul>
               {me && !me.billingConfigured
-                ? <div className="notice" style={{ marginTop: 4 }}>Billing isn&apos;t configured on this instance yet — all Pro features are currently unlocked.</div>
+                ? <div className="notice" style={{ marginTop: 4 }}>Billing isn&apos;t set up on this instance yet, so all Pro features are unlocked.</div>
                 : <motion.button className="btn-primary" style={{ width: '100%', marginTop: 8, padding: 13 }} onClick={startUpgrade} whileTap={{ scale: 0.98 }}>Upgrade to Pro</motion.button>}
             </motion.div>
           </motion.div>
@@ -874,12 +874,12 @@ function XConnectModal({ hasAccounts, onClose, onContinue }) {
           <span className="row" style={{ gap: 9, fontWeight: 700, fontSize: 15.5 }}><span className="xc-glyph"><XGlyph /></span>{hasAccounts ? 'Add another X account' : 'Connect your X account'}</span>
           <button className="x-close" onClick={onClose}><LX size={18} /></button>
         </div>
-        <p className="xc-lead">X connects whichever account you&apos;re <b>currently signed into on x.com</b>. {hasAccounts ? 'To add a different one, switch accounts on X first — otherwise it&apos;ll just re-authorize the same account.' : 'Make sure the account showing on x.com is the one you want to post from.'}</p>
+        <p className="xc-lead">X connects whichever account you&apos;re <b>currently signed into on x.com</b>. {hasAccounts ? 'To add a different one, switch accounts on X first, or it&apos;ll just reconnect the same account.' : 'Make sure the account showing on x.com is the one you want to post from.'}</p>
 
         {hasAccounts && (
           <div className="xc-steps">
-            <div className="xc-step"><span className="xc-num">1</span><div>Open X and <b>switch to (or log into) the account</b> you want to add — use “Add an existing account” or log out and back in.</div></div>
-            <div className="xc-step"><span className="xc-num">2</span><div>Come back here and continue — you&apos;ll just tap <b>Authorize</b> for that account.</div></div>
+            <div className="xc-step"><span className="xc-num">1</span><div>Open X and <b>switch to (or log into) the account</b> you want to add. Use “Add an existing account” or log out and back in.</div></div>
+            <div className="xc-step"><span className="xc-num">2</span><div>Come back here and hit continue. Then just tap <b>Authorize</b> for that account.</div></div>
           </div>
         )}
 
@@ -889,7 +889,7 @@ function XConnectModal({ hasAccounts, onClose, onContinue }) {
               <Refresh /> Log out / switch on X
             </a>
           )}
-          <button className="btn-primary xc-go" onClick={onContinue}>{hasAccounts ? (switched ? 'I switched — Continue' : 'Continue to X') : 'Continue to X'}</button>
+          <button className="btn-primary xc-go" onClick={onContinue}>{hasAccounts ? (switched ? 'I switched, continue' : 'Continue to X') : 'Continue to X'}</button>
         </div>
         <div className="muted tiny" style={{ marginTop: 12, textAlign: 'center' }}>Tip: a private/incognito window is the most reliable way to authorize a different account.</div>
       </motion.div>
