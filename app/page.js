@@ -920,6 +920,57 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
   )
 }
 
+// A brand-themed brain animation header for each tab.
+function BrainBanner({ theme }) {
+  return <div className="brain-stage" style={{ height: 190 }}><BrainViz theme={theme} /></div>
+}
+
+// Per-platform auto-reply (comment engagement) controls + drafted replies.
+function ReplyToggles({ platforms, settings, replies, accounts, configured, onToggle, onRun, onPostDraft }) {
+  const byPlat = Object.fromEntries((settings || []).map(s => [s.platform, s]))
+  const label = { instagram: 'Instagram', tiktok: 'TikTok', linkedin: 'LinkedIn' }
+  return (
+    <>
+      <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Auto-replies <span className="muted tiny" style={{ fontWeight: 400 }}>· reply to comments on your posts in your voice</span></div>
+      {!configured && <div className="notice" style={{ marginBottom: 10 }}>Connect publishing (Zernio) to enable auto-replies.</div>}
+      {platforms.map(pl => {
+        const s = byPlat[pl] || { platform: pl, enabled: false, auto_post: false }
+        const has = accounts.some(a => a.platform === pl)
+        const drafts = (replies || []).filter(r => r.platform === pl && r.status === 'draft')
+        return (
+          <div className={'card camp-card' + (s.enabled ? ' on' : '')} key={pl} style={{ display: 'block' }}>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="conn-title row" style={{ gap: 7 }}><span className="status-dot" style={{ background: platformDot(pl) }} />{label[pl]} replies {s.running && <span className="live-status"><Loader2 size={11} className="spin" /> {s.status_detail}</span>}</div>
+              <Toggle on={!!s.enabled} onChange={v => onToggle(pl, { enabled: v })} />
+            </div>
+            {!has && <div className="muted tiny" style={{ marginTop: 4 }}>No {label[pl]} account connected yet.</div>}
+            {s.enabled && (
+              <div style={{ marginTop: 8 }}>
+                <label className="row" style={{ gap: 8, fontSize: 12.5, justifyContent: 'space-between' }}>
+                  <span className="muted">Auto-post replies <span className="tiny">(off = draft for review)</span></span>
+                  <Toggle on={!!s.auto_post} onChange={v => onToggle(pl, { auto_post: v })} />
+                </label>
+                <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+                  <button className="mini" disabled={!has} onClick={() => onRun(pl)}><RefreshCw size={11} /> Check comments now</button>
+                </div>
+                {drafts.length > 0 && <div style={{ marginTop: 8 }}>
+                  {drafts.slice(0, 5).map(d => (
+                    <div className="card" key={d.id} style={{ padding: 10, marginBottom: 6 }}>
+                      <div className="muted tiny">@{d.comment_author}: {(d.comment_text || '').slice(0, 90)}</div>
+                      <div style={{ fontSize: 13, margin: '5px 0' }}>{d.reply_text}</div>
+                      <div className="row" style={{ justifyContent: 'flex-end' }}><button className="btn-primary btn-sm" onClick={() => onPostDraft(d.id)}>Post reply</button></div>
+                    </div>
+                  ))}
+                </div>}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 function App({ session }) {
   const token = session.access_token
@@ -932,6 +983,8 @@ function App({ session }) {
   const [engRules, setEngRules] = useState([])
   const [socialAccounts, setSocialAccounts] = useState([]); const [socialConfigured, setSocialConfigured] = useState(false)
   const [slideshows, setSlideshows] = useState([])
+  const [engSettings, setEngSettings] = useState([]); const [socialReplies, setSocialReplies] = useState([])
+  const [qPlatform, setQPlatform] = useState('all')
   const [me, setMe] = useState(null)
   const [messages, setMessages] = useState([]); const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
@@ -950,8 +1003,9 @@ function App({ session }) {
   const loadEngagement = useCallback(async () => { const r = await authed('/api/engagement'); const d = await r.json(); setEngRules(d.rules || []) }, [authed])
   const loadSocial = useCallback(async (sync) => { const r = await authed(`/api/social${sync ? '?sync=1' : ''}`); const d = await r.json(); setSocialAccounts(d.accounts || []); setSocialConfigured(!!d.configured) }, [authed])
   const loadSlideshows = useCallback(async () => { const r = await authed('/api/slideshow'); const d = await r.json(); setSlideshows(d.slideshows || []) }, [authed])
+  const loadSocialEng = useCallback(async () => { const r = await authed('/api/social-engagement'); const d = await r.json(); setEngSettings(d.settings || []); setSocialReplies(d.replies || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng])
 
   // Returning from a Zernio account-link (Zernio redirects to /?connected=<platform>):
   // land the user back on Slideshows, pull in the freshly connected account, and tidy the URL.
@@ -959,7 +1013,7 @@ function App({ session }) {
     const params = new URLSearchParams(window.location.search)
     const connected = params.get('connected')
     if (!connected) return
-    setTab('slideshows')
+    setTab(connected === 'linkedin' ? 'linkedin' : 'social')
     loadSocial(true).then(() => setBanner(`${connected[0].toUpperCase() + connected.slice(1)} connected`))
     window.history.replaceState({}, '', window.location.pathname)
   }, [loadSocial])
@@ -1046,6 +1100,13 @@ function App({ session }) {
     else setBanner(d.error || 'Could not start connection')
   }
   async function syncSocial() { setBanner('Refreshing connected accounts…'); await loadSocial(true) }
+  async function toggleReplies(platform, patch) { await authed('/api/social-engagement', { method: 'PATCH', body: JSON.stringify({ platform, ...patch }) }); loadSocialEng() }
+  async function runReplies(platform) {
+    setBanner(`Checking ${platform} comments…`)
+    const r = await authed('/api/social-engagement', { method: 'POST', body: JSON.stringify({ action: 'run', platform }) }); const d = await r.json()
+    setBanner(d.error ? d.error : d.skipped ? `${platform}: ${d.skipped}` : `${platform}: ${d.posted || 0} posted, ${d.drafted || 0} drafted`); loadSocialEng()
+  }
+  async function postReplyDraft(id) { const r = await authed('/api/social-engagement', { method: 'POST', body: JSON.stringify({ action: 'post-draft', id }) }); const d = await r.json(); setBanner(d.error || 'Reply posted'); loadSocialEng() }
   async function deleteSlideshow(id) { await authed('/api/slideshow', { method: 'DELETE', body: JSON.stringify({ id }) }); loadSlideshows() }
   async function generateSlideshow(payload) {
     const r = await authed('/api/slideshow/generate', { method: 'POST', body: JSON.stringify(payload) })
@@ -1127,7 +1188,7 @@ function App({ session }) {
 
   const persona = me?.persona; const stats = me?.stats || {}
   const initials = (me?.profile?.full_name || session.user.email || '?').trim()[0]?.toUpperCase()
-  const PRESETS = ['Draft a post with an image', 'Generate 5 posts in my voice', 'Repurpose my best LinkedIn post', 'Make this punchier', 'Schedule my drafts daily at 9am']
+  const PRESETS = ['Make an Instagram carousel about my niche', 'Generate 5 posts in my voice', 'Turn on TikTok auto-replies', 'Repurpose my best LinkedIn post', "What's my whole setup right now?"]
 
   return (
     <div className="app">
@@ -1148,10 +1209,10 @@ function App({ session }) {
         <section className="pane left">
           <div className="left-head">
             <div className="seg">
-              {['queue', 'brain', 'slideshows', 'connections'].map(t => (
+              {['queue', 'x', 'linkedin', 'social', 'campaigns'].map(t => (
                 <button key={t} onClick={() => setTab(t)} className={'seg-btn' + (tab === t ? ' on' : '')}>
                   {tab === t && <motion.span layoutId="seg-pill" className="seg-pill" transition={spring} />}
-                  <span style={{ position: 'relative', zIndex: 1 }}>{t === 'queue' ? 'Queue' : t === 'brain' ? 'Brain' : t === 'slideshows' ? 'Slideshows' : 'Connections'}{t === 'brain' && drafts.length > 0 && <span className="dot-badge">{drafts.length}</span>}</span>
+                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', social: 'IG/TikTok', campaigns: 'Campaigns' })[t]}{t === 'x' && drafts.length > 0 && <span className="dot-badge">{drafts.length}</span>}</span>
                 </button>
               ))}
             </div>
@@ -1161,22 +1222,59 @@ function App({ session }) {
           <div className="scroll-wrap">
             <motion.div key={tab} className="scroll" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
 
-              {tab === 'queue' && (<>
-                {!connected && <div className="hint">Connect X in <b>Connections</b> so queued posts can publish.</div>}
-                {queue.length > 0 && (
-                  <div className="src-legend">
-                    <span className="src-leg"><span className="dot" style={{ background: '#4f63d8' }} /> You</span>
-                    <span className="src-leg"><span className="dot" style={{ background: '#c2740a' }} /> Campaign</span>
-                    <span className="src-leg"><span className="dot" style={{ background: '#7c3aed' }} /> Reply</span>
+              {tab === 'queue' && (() => {
+                const matchP = it => qPlatform === 'all' || (it.platform || 'x') === qPlatform
+                const fQueue = queue.filter(matchP)
+                const schedShows = slideshows.filter(s => ['scheduled', 'posted'].includes(s.status) && (qPlatform === 'all' || qPlatform === 'instagram' || qPlatform === 'tiktok'))
+                const chips = [['all', 'All'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']]
+                return (<>
+                  <div className="qfilter">
+                    {chips.map(([k, l]) => <button key={k} className={'qchip' + (qPlatform === k ? ' on' : '')} onClick={() => setQPlatform(k)}>{k !== 'all' && <span className="status-dot" style={{ background: platformDot(k) }} />}{l}</button>)}
                   </div>
-                )}
-                {queue.length === 0 && <Empty icon={<Clock size={26} />}>Your queue is empty. Write a post, or generate from your Brain.</Empty>}
-                <div>{queue.map((p, i) => <QueueCard key={p.id} p={p} i={i} connected={connected} defaultCollapsed={collapseQueue} onSaveEdit={saveEdit} onPostNow={postNow} onDelete={delPost} onSchedule={openSchedule} />)}</div>
-                {posted.length > 0 && <PostedSection posted={posted} />}
-              </>)}
+                  {fQueue.length > 0 && (
+                    <div className="src-legend">
+                      <span className="src-leg"><span className="dot" style={{ background: '#4f63d8' }} /> You</span>
+                      <span className="src-leg"><span className="dot" style={{ background: '#c2740a' }} /> Campaign</span>
+                      <span className="src-leg"><span className="dot" style={{ background: '#7c3aed' }} /> Reply</span>
+                    </div>
+                  )}
+                  {fQueue.length === 0 && schedShows.length === 0 && <Empty icon={<Clock size={26} />}>Nothing queued{qPlatform !== 'all' ? ` for ${qPlatform}` : ''}. Write a post, generate from Chat, or make a slideshow.</Empty>}
+                  <div>{fQueue.map((p, i) => <QueueCard key={p.id} p={p} i={i} connected={connected} defaultCollapsed={collapseQueue} onSaveEdit={saveEdit} onPostNow={postNow} onDelete={delPost} onSchedule={openSchedule} />)}</div>
+                  {schedShows.map(s => (
+                    <div className="card camp-card" key={s.id}>
+                      <div className="row" style={{ gap: 10 }}>
+                        {s.image_urls?.[0] && <img src={s.image_urls[0]} className="ss-thumb" alt="" />}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="conn-title row" style={{ gap: 7 }}>{s.topic}<span className="camp-state on">{s.status}</span></div>
+                          <div className="muted tiny">{s.image_urls?.length || 0}-slide carousel · {s.style}{s.scheduled_for ? ` · ${fmt(s.scheduled_for)}` : ''}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {posted.filter(matchP).length > 0 && qPlatform !== 'instagram' && qPlatform !== 'tiktok' && <PostedSection posted={posted.filter(matchP)} />}
+                </>)
+              })()}
 
-              {tab === 'brain' && (
-                !persona ? (
+              {tab === 'x' && (<>
+                <BrainBanner theme="x" />
+                <div className="conn-sec" style={{ marginTop: 2 }}>X accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· your primary is where you post; feeders drive engagement</span></div>
+                {xConns.map(c => (
+                  <div className={'conn-card card' + (c.is_primary ? ' primary' : '')} key={c.id}>
+                    <div className="conn-icon x-icon"><XGlyph /></div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="conn-title row" style={{ gap: 6 }}>@{c.username}
+                        {c.is_primary ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span> : <span className="role-badge">Feeder</span>}
+                      </div>
+                      <div className="muted tiny">{c.name || 'Connected'}</div>
+                    </div>
+                    {!c.is_primary && <button className="mini" onClick={() => makePrimary(c.id)} title="Make this your primary account">Make primary</button>}
+                    <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
+                  </div>
+                ))}
+                <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account (feeder)' : 'Connect X'}</button>
+
+                <div className="conn-sec">Your voice & posts</div>
+                {!persona ? (
                   <div className="brain-empty">
                     <div className="brain-stage muted-stage"><motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 3, repeat: Infinity }} style={{ color: '#0a66c2' }}><Brain size={48} /></motion.div></div>
                     <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6, marginTop: 14 }}>Learn your voice</div>
@@ -1218,46 +1316,48 @@ function App({ session }) {
                       </div>
                     </motion.div>
                   ))}</AnimatePresence></div>
-                </>)
-              )}
+                </>)}
+              </>)}
 
-              {tab === 'slideshows' && (
+              {tab === 'social' && (<>
+                <BrainBanner theme="instagram" />
                 <SlideshowStudio accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows}
                   onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} />
-              )}
+                <ReplyToggles platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+              </>)}
 
-              {tab === 'connections' && (<>
-                <div className="conn-sec" style={{ marginTop: 2 }}>X accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· your primary is where you post; feeders drive engagement</span></div>
-                {xConns.map(c => (
-                  <div className={'conn-card card' + (c.is_primary ? ' primary' : '')} key={c.id}>
-                    <div className="conn-icon x-icon"><XGlyph /></div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="conn-title row" style={{ gap: 6 }}>@{c.username}
-                        {c.is_primary
-                          ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span>
-                          : <span className="role-badge">Feeder</span>}
-                      </div>
-                      <div className="muted tiny">{c.name || 'Connected'}</div>
-                    </div>
-                    {!c.is_primary && <button className="mini" onClick={() => makePrimary(c.id)} title="Make this your primary account">Make primary</button>}
-                    <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
+              {tab === 'linkedin' && (<>
+                <BrainBanner theme="linkedin" />
+                {socialAccounts.filter(a => a.platform === 'linkedin').map(a => (
+                  <div className="conn-card card" key={a.id}>
+                    <div className="conn-icon" style={{ background: '#eaf3fb', color: '#0a66c2' }}><LIcon size={16} /></div>
+                    <div style={{ flex: 1, minWidth: 0 }}><div className="conn-title">@{a.username || 'LinkedIn'}</div><div className="muted tiny">Publishing account</div></div>
                   </div>
                 ))}
-                <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account (feeder)' : 'Connect X'}</button>
+                <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('linkedin')} style={{ marginBottom: 12 }}><Plus size={11} /> Connect LinkedIn to publish</button>
 
-                <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> Post campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· keep an account posting about something you want to promote</span></div>
-                <CampaignManager campaigns={campaigns} xConns={xConns} posts={posts} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} onRun={runCampaignNow} />
-
-                <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Engagement campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· feeder accounts auto-reply to relevant posts in your voice</span></div>
-                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
-
-                <div className="conn-sec">Your LinkedIn</div>
+                <div className="conn-sec">Your voice source</div>
                 <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
-
                 <div className="conn-sec">Creators to study <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 styles to mimic</span></div>
                 {[0, 1, 2].map(i => (
                   <LinkedInSlot key={i} account={liMentors[i]} onAdd={(url) => addLinkedIn(url, true)} onRemove={removeLinkedIn} />
                 ))}
+
+                <ReplyToggles platforms={['linkedin']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+              </>)}
+
+              {tab === 'campaigns' && (<>
+                <BrainBanner theme="campaigns" />
+                <div className="muted tiny" style={{ margin: '0 2px 12px', lineHeight: 1.6 }}>Run feeder-account campaigns across all your platforms to promote your brand — in one voice.</div>
+
+                <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> X post campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· keep an account posting about something you want to promote</span></div>
+                <CampaignManager campaigns={campaigns} xConns={xConns} posts={posts} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} onRun={runCampaignNow} />
+
+                <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> X engagement campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· feeder accounts auto-reply to relevant posts in your voice</span></div>
+                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
+
+                <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> Slideshow campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· auto-generate + post carousels on a cadence</span></div>
+                {slideshows.filter(s => s.campaign_id).length === 0 && <div className="muted tiny" style={{ marginBottom: 10 }}>Create carousels in the <b>IG/TikTok</b> tab; recurring slideshow campaigns are coming next. For now ask Chat to “make and schedule a carousel about …”.</div>}
               </>)}
 
             </motion.div>
@@ -1270,7 +1370,7 @@ function App({ session }) {
             {messages.length === 0 && (
               <div className="chat-welcome">
                 <div className="wordmark" style={{ fontSize: 19, marginBottom: 4 }}>How can I help?</div>
-                <div className="muted" style={{ fontSize: 13 }}>Draft, schedule, repurpose, post to X. Just ask.</div>
+                <div className="muted" style={{ fontSize: 13 }}>Post, schedule, make carousels, run replies — across X, LinkedIn, Instagram & TikTok. Just ask.</div>
               </div>
             )}
             <AnimatePresence initial={false}>
@@ -1691,4 +1791,8 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .ss-preview { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
 .ss-slide { width: 152px; height: 190px; flex: none; border-radius: 12px; object-fit: cover; border: 1px solid #e8e9ee; scroll-snap-align: start; }
 .ss-thumb { width: 46px; height: 58px; border-radius: 8px; object-fit: cover; flex: none; border: 1px solid #e8e9ee; }
+.qfilter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.qchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 20px; background: #fff; border: 1px solid #e3e4ea; color: #4a4f5a; cursor: pointer; font-family: inherit; }
+.qchip.on { background: #111113; border-color: #111113; color: #fff; }
+.camp-card.on { border-color: #cbb46a; background: #fffdf6; }
 `
