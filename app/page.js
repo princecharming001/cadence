@@ -1032,12 +1032,12 @@ const CLIP_FORMAT_LIST = [
   { key: 'original', label: 'Original', desc: 'keep aspect ratio' },
 ]
 // Edit styles applied on top of clips. Pick one or several — clips rotate
-// through the chosen set. Titles are AI-written; watermark is your handle.
+// through the chosen set. Captions are word-by-word with a yellow highlight;
+// titles are AI-written from the transcript; watermark is your handle.
 const EDIT_FORMAT_LIST = [
-  { key: 'meme_bar', label: 'Meme bar', desc: 'white headline bar on top' },
-  { key: 'hook', label: 'Hook flash', desc: 'big title for the first 3.5s' },
-  { key: 'banner', label: 'Lower banner', desc: 'podcast-style bottom bar' },
-  { key: 'progress', label: 'Progress bar', desc: 'animated retention bar' },
+  { key: 'captions', label: 'Captions', desc: 'word-by-word bold captions, yellow highlight' },
+  { key: 'sludge', label: 'Sludge split', desc: 'your clip on top, gameplay underneath' },
+  { key: 'hook', label: 'Hook + captions', desc: 'big AI title first, captions throughout' },
   { key: 'clean', label: 'Clean', desc: 'watermark only' },
 ]
 function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, onPost }) {
@@ -1046,7 +1046,7 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
   const [busy, setBusy] = useState(false)
   const fileRef = useRef(null)
   const postable = accounts.filter(a => ['instagram', 'tiktok'].includes(a.platform))
-  const [edits, setEdits] = useState(['meme_bar'])
+  const [edits, setEdits] = useState(['captions', 'sludge'])
   const [watermark, setWatermark] = useState('')
   const wmDefault = postable[0]?.username ? `@${postable[0].username}` : ''
   const toggleEdit = k => setEdits(s => s.includes(k) ? (s.length > 1 ? s.filter(x => x !== k) : s) : [...s, k])
