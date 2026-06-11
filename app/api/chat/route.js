@@ -3,6 +3,7 @@ import { admin, getUser } from '@/lib/supabase'
 import { generateImage } from '@/lib/images'
 import { X_RUBRIC, CHAT_STYLE } from '@/lib/rubric'
 import { recentFeedback, feedbackBlock } from '@/lib/feedback'
+import { voiceBlock, enforceLen } from '@/lib/prompts'
 import { generateSlideshow } from '@/lib/slideshow'
 import { createPost, zernioEnabled } from '@/lib/zernio'
 import { runSocialEngagement, SOCIAL_ENGAGEMENT_PLATFORMS } from '@/lib/social-engagement'
@@ -241,18 +242,18 @@ async function executeTool(name, input, userId) {
     }
 
     case 'get_overview': {
-      const [{ data: accts }, { data: posts }, { data: camps }, { data: scamps }, { data: eng }] = await Promise.all([
+      const [{ data: accts }, { data: posts }, { data: camps }, { data: bcamps }, { data: eng }] = await Promise.all([
         admin.from('social_accounts').select('platform,username').eq('user_id', userId),
         admin.from('posts').select('status').eq('user_id', userId),
         admin.from('campaigns').select('name,active').eq('user_id', userId),
-        admin.from('slideshow_campaigns').select('name,active').eq('user_id', userId),
+        admin.from('brand_campaigns').select('name,active').eq('user_id', userId),
         admin.from('social_engagement').select('platform,enabled,auto_post').eq('user_id', userId),
       ])
       const counts = (posts || []).reduce((a, p) => { a[p.status] = (a[p.status] || 0) + 1; return a }, {})
       return {
         social_accounts: (accts || []).map(a => `${a.platform}:@${a.username}`),
         queue: counts,
-        campaigns: [...(camps || []), ...(scamps || [])].map(c => `${c.name}${c.active ? ' (active)' : ''}`),
+        campaigns: [...(camps || []), ...(bcamps || [])].map(c => `${c.name}${c.active ? ' (active)' : ''}`),
         auto_replies_on: (eng || []).filter(e => e.enabled).map(e => `${e.platform}${e.auto_post ? ' (auto-post)' : ' (review)'}`),
         publishing_connected: zernioEnabled(),
       }
@@ -311,12 +312,24 @@ export async function POST(req) {
     if (!user) return Response.json({ reply: 'Please sign in first.' }, { status: 401 })
 
     const { messages } = await req.json()
+    // The conversation comes from the client — validate the shape so nobody can
+    // stuff fake tool results or unbounded payloads into the agent's context.
+    if (!Array.isArray(messages) || messages.length > 60) {
+      return Response.json({ reply: 'Conversation too long — start a fresh chat.' }, { status: 400 })
+    }
+    const safeMessages = messages
+      .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+      .map(m => ({ role: m.role, content: m.content.slice(0, 8000) }))
+    if (!safeMessages.length) return Response.json({ reply: 'Say something first.' }, { status: 400 })
 
     const now = new Date().toLocaleString('en-US', {
       timeZone: 'America/Los_Angeles', dateStyle: 'full', timeStyle: 'short',
     })
 
-    const fb = await recentFeedback(user.id)
+    const [fb, { data: personaRow }] = await Promise.all([
+      recentFeedback(user.id),
+      admin.from('personas').select('*').eq('user_id', user.id).single(),
+    ])
     const { data: conns } = await admin.from('x_connections').select('username').eq('user_id', user.id)
     const accountsLine = conns?.length
       ? `The user has ${conns.length} connected X account(s): ${conns.map(c => '@' + c.username).join(', ')}.`
@@ -326,6 +339,8 @@ export async function POST(req) {
 
 Current date and time (America/Los_Angeles): ${now}
 ${accountsLine}
+
+${voiceBlock(personaRow)}
 
 Cross-platform powers (use the tools, don't just explain):
 - get_overview: report connected accounts, queue, campaigns, and auto-reply status across all platforms.
@@ -348,11 +363,12 @@ More rules:
 - "tomorrow at noon" resolves relative to the current LA time above. Show times in Pacific (PT).
 - Be concise. If a tool errors, say plainly what went wrong.`
 
-    let convo = messages.map(m => ({ role: m.role, content: m.content }))
+    let convo = safeMessages
     let reply = ''
     let proposal = null   // set when the model proposes a draft-with-image
 
-    while (true) {
+    // Hard cap on agent hops — an unbounded loop is an unbounded token bill.
+    for (let hop = 0; hop < 8; hop++) {
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 1024,
@@ -369,7 +385,8 @@ More rules:
           let result
           if (block.name === 'propose_post') {
             // Stash the proposal for the UI; never queue or publish here.
-            proposal = { content: block.input.content }
+            // The 280 limit is enforced server-side, not just in the tool docs.
+            proposal = { content: await enforceLen(String(block.input.content || ''), 'x') }
             if (block.input.want_image) {
               const img = await generateImage(block.input.image_prompt || block.input.content, { fromContent: !block.input.image_prompt })
               proposal.image_url = img.url
@@ -389,6 +406,7 @@ More rules:
       reply = textBlock?.text || 'Done.'
       break
     }
+    if (!reply) reply = 'I hit my action limit for one message — tell me to continue.'
 
     return Response.json({ reply, proposal })
   } catch (err) {

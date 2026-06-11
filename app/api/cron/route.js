@@ -1,11 +1,26 @@
 // GET /api/cron  (Authorization: Bearer <CRON_SECRET>)
-// Runs active marketing campaigns (which top up the queue), then finds due posts
-// across ALL users and posts each via that user's connected X account.
+// The single heartbeat that drives every background engine. Order matters:
+//   1. RECOVERY — release claims orphaned by crashes (engines, posts, clips)
+//   2. DUE POSTS — the money path: publish what users already approved
+//   3. ENGINES — campaigns, brand campaigns, X engagement, social auto-replies
+//      (each claim-first, so overlapping ticks are harmless; each isolated so
+//       one failure can't block the others)
+//   4. CLIP SWEEP — kicked after the response (video work is too slow to hold
+//      this request open)
+//   5. HOUSEKEEPING — expire stale oauth states
+import { after } from 'next/server'
 import { admin } from '@/lib/supabase'
 import { postOne } from '@/lib/posting'
 import { runDueCampaigns } from '@/lib/campaigns'
 import { runDueEngagement } from '@/lib/engagement'
 import { runDueBrandCampaigns } from '@/lib/brand-campaigns'
+import { runDueSocialEngagement } from '@/lib/social-engagement'
+import { releaseStaleClaims, sweepInterruptedPosts } from '@/lib/engine'
+
+export const runtime = 'nodejs'
+export const maxDuration = 300
+
+const safe = async fn => { try { return await fn() } catch (e) { return { error: e.message } } }
 
 export async function GET(req) {
   const auth = req.headers.get('authorization') || ''
@@ -13,20 +28,13 @@ export async function GET(req) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // First, let active campaigns queue fresh promo posts that are now due,
-  // and let engagement rules draft/queue replies. Each is isolated so a
-  // failure can't block posting.
-  let campaigns = null
-  try { campaigns = await runDueCampaigns() } catch (e) { campaigns = { error: e.message } }
-  let engagement = null
-  try { engagement = await runDueEngagement() } catch (e) { engagement = { error: e.message } }
-  let brand = null
-  try { brand = await runDueBrandCampaigns() } catch (e) { brand = { error: e.message } }
+  // 1. Recovery sweeps — cheap, always first.
+  await safe(() => sweepInterruptedPosts(10))
+  for (const t of ['campaigns', 'brand_campaigns', 'engagement_rules', 'social_engagement']) {
+    await safe(() => releaseStaleClaims(t, 30))
+  }
 
-  // Sweep stalled clip jobs without holding this request open (video work is slow).
-  const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
-  fetch(`${base}/api/clips/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
-
+  // 2. Due posts — publish before spending time on generation engines.
   const now = new Date().toISOString()
   const { data: duePosts, error } = await admin
     .from('posts')
@@ -34,12 +42,27 @@ export async function GET(req) {
     .eq('status', 'queued')
     .lte('scheduled_for', now)
     .order('scheduled_for', { ascending: true })
-
-  if (error) return Response.json({ error: error.message, campaigns, engagement }, { status: 500 })
-  if (!duePosts?.length) return Response.json({ posted: 0, message: 'No posts due.', campaigns, engagement, brand })
+    .limit(25)
+  if (error) return Response.json({ error: error.message }, { status: 500 })
 
   const results = []
-  for (const post of duePosts) results.push(await postOne(post))
+  for (const post of duePosts || []) results.push(await postOne(post))
 
-  return Response.json({ posted: results.filter(r => r.status === 'posted').length, results, campaigns, engagement, brand })
+  // 3. Engines — claim-first, individually isolated.
+  const campaigns = await safe(runDueCampaigns)
+  const brand = await safe(runDueBrandCampaigns)
+  const engagement = await safe(runDueEngagement)
+  const social = await safe(runDueSocialEngagement)
+
+  // 4 + 5. After the response: clip sweep kick + housekeeping.
+  const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
+  after(async () => {
+    await fetch(`${base}/api/clips/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
+    await admin.from('x_oauth_states').delete().lt('created_at', new Date(Date.now() - 3600 * 1000).toISOString()).then(() => {}, () => {})
+  })
+
+  return Response.json({
+    posted: results.filter(r => r.status === 'posted').length,
+    results, campaigns, brand, engagement, social,
+  })
 }

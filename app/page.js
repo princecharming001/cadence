@@ -456,7 +456,7 @@ function ActivityList({ pending, live }) {
               <div className="act-text">{p.content}</div>
               <div className="muted tiny" style={{ marginTop: 3 }}>
                 {when}
-                {p.status === 'posted' && p.external_id && <> · <a className="link" href={`https://x.com/i/web/status/${p.external_id}`} target="_blank" rel="noreferrer">view on X</a></>}
+                {p.status === 'posted' && p.external_id && (p.platform || 'x') === 'x' && <> · <a className="link" href={`https://x.com/i/web/status/${p.external_id}`} target="_blank" rel="noreferrer">view on X</a></>}
                 {p.reply_to_tweet_id && <> · <a className="link" href={p.target_tweet_url || `https://x.com/i/web/status/${p.reply_to_tweet_id}`} target="_blank" rel="noreferrer">replying to</a></>}
               </div>
             </div>
@@ -498,7 +498,7 @@ function PostedSection({ posted }) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="row" style={{ justifyContent: 'space-between', gap: 8, marginBottom: 4 }}><SourceTag p={p} /></div>
                   <div className="card-body" style={{ fontSize: 12.5 }}>{p.content}</div>
-                  <div className="muted tiny" style={{ marginTop: 5 }}>Posted {fmt(p.posted_at || p.scheduled_for)}{p.external_id ? <> · <a className="link" href={`https://x.com/i/web/status/${p.external_id}`} target="_blank" rel="noreferrer">view</a></> : ''}</div>
+                  <div className="muted tiny" style={{ marginTop: 5 }}>Posted {fmt(p.posted_at || p.scheduled_for)}{p.external_id && (p.platform || 'x') === 'x' ? <> · <a className="link" href={`https://x.com/i/web/status/${p.external_id}`} target="_blank" rel="noreferrer">view</a></> : ''}</div>
                 </div>
               </div>
             ))}
