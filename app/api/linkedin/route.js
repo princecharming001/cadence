@@ -1,5 +1,7 @@
-import { admin, getUser } from '@/lib/supabase'
+import { admin, getUser, isCron } from '@/lib/supabase'
 import { scrapeAndStore, scrapeAllActive } from '@/lib/linkedin'
+
+export const maxDuration = 180 // Apify scrapes are slow
 
 // GET /api/linkedin            → this user's accounts + recent posts
 // GET /api/linkedin?scrape=1   → (Bearer CRON_SECRET) scrape ALL active accounts
@@ -7,10 +9,7 @@ export async function GET(req) {
   const url = new URL(req.url)
 
   if (url.searchParams.get('scrape') === '1') {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    if (!isCron(req)) return Response.json({ error: 'Unauthorized' }, { status: 401 })
     try {
       return Response.json(await scrapeAllActive())
     } catch (err) {
@@ -28,8 +27,11 @@ export async function GET(req) {
   const ids = (accounts || []).map(a => a.id)
   let posts = []
   if (ids.length) {
+    // Exclude `raw` — multi-MB of Apify JSON per post the UI never reads.
     const { data } = await admin
-      .from('linkedin_posts').select('*').in('account_id', ids)
+      .from('linkedin_posts')
+      .select('id, account_id, content, likes, comments, reposts, posted_at, posted_ago, author_name, post_url')
+      .in('account_id', ids)
       .order('posted_at', { ascending: false }).limit(200)
     posts = data || []
   }
@@ -45,7 +47,10 @@ export async function POST(req) {
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
 
   try {
-    const { profileUrl, maxPosts = 50, isMentor = false, scrapeNow = true } = await req.json()
+    const body = await req.json()
+    const { profileUrl, isMentor = false, scrapeNow = true } = body
+    // Clamp — this flows straight into paid Apify scrapes (and a nightly re-scrape).
+    const maxPosts = Math.min(Math.max(Number(body.maxPosts) || 50, 1), 100)
     if (!profileUrl || !/linkedin\.com\/in\//.test(profileUrl)) {
       return Response.json({ error: 'Provide a valid LinkedIn profile URL (linkedin.com/in/...)' }, { status: 400 })
     }

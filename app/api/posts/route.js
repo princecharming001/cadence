@@ -13,8 +13,19 @@ export async function POST(req) {
     const { data: post } = await admin.from('posts').select('*')
       .eq('id', body.id).eq('user_id', user.id).single()
     if (!post) return Response.json({ error: 'Post not found.' }, { status: 404 })
+    // The UI calls post_now to APPROVE a draft suggestion and to RETRY a failed
+    // post — both must become 'queued' first (postOne only claims 'queued').
+    // CAS on the observed status so a concurrent change can't double-publish.
+    if (['draft', 'failed', 'paused'].includes(post.status)) {
+      const { data: promoted } = await admin.from('posts')
+        .update({ status: 'queued', error: null })
+        .eq('id', post.id).eq('user_id', user.id).eq('status', post.status).select()
+      if (!promoted?.[0]) return Response.json({ status: 'skipped', error: 'Post state changed — refresh and try again.' }, { status: 409 })
+      post.status = 'queued'
+    }
     const result = await postOne(post)
-    return Response.json(result, { status: result.status === 'posted' ? 200 : 500 })
+    const code = result.status === 'posted' ? 200 : result.status === 'skipped' ? 409 : 500
+    return Response.json(result, { status: code })
   }
 
   const content = (body.content || '').trim()

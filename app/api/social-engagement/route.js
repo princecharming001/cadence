@@ -20,7 +20,7 @@ export async function GET(req) {
     for (const r of data || []) byPlatform[r.platform] = r
   }
   const { data: replies } = await admin.from('social_replies').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(40)
-  return Response.json({ settings: SOCIAL_ENGAGEMENT_PLATFORMS.map(p => byPlatform[p]), replies: replies || [], configured: zernioEnabled() })
+  return Response.json({ settings: SOCIAL_ENGAGEMENT_PLATFORMS.map(p => byPlatform[p]).filter(Boolean), replies: replies || [], configured: zernioEnabled() })
 }
 
 // PATCH { platform, ...fields } → update a platform's settings (enable/auto_post/instructions)

@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { admin, getUser } from '@/lib/supabase'
-import { generateImage } from '@/lib/images'
+import { generateImage, persistImage } from '@/lib/images'
 import { X_RUBRIC, CHAT_STYLE } from '@/lib/rubric'
 import { recentFeedback, feedbackBlock } from '@/lib/feedback'
 import { voiceBlock, enforceLen } from '@/lib/prompts'
@@ -167,10 +167,15 @@ const tools = [
 async function executeTool(name, input, userId) {
   switch (name) {
     case 'list_queue': {
-      let q = admin.from('posts').select('*').eq('user_id', userId).order('scheduled_for', { ascending: true })
+      // Only the columns the model needs, capped + truncated — selecting '*'
+      // dumped the entire posts table into context on every hop.
+      let q = admin.from('posts')
+        .select('id, content, scheduled_for, status, platform')
+        .eq('user_id', userId).order('scheduled_for', { ascending: true }).limit(50)
       if (input.status_filter && input.status_filter !== 'all') q = q.eq('status', input.status_filter)
       const { data, error } = await q
-      return error ? { error: error.message } : { posts: data }
+      if (error) return { error: error.message }
+      return { posts: (data || []).map(p => ({ ...p, content: (p.content || '').slice(0, 140) })) }
     }
 
     case 'list_linkedin_posts': {
@@ -368,11 +373,15 @@ More rules:
     let proposal = null   // set when the model proposes a draft-with-image
 
     // Hard cap on agent hops — an unbounded loop is an unbounded token bill.
+    // Cache the (large, stable-within-a-turn) system prompt so hops 2-8 don't
+    // re-pay full input price for it.
+    const systemBlocks = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+
     for (let hop = 0; hop < 8; hop++) {
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 1024,
-        system,
+        system: systemBlocks,
         tools,
         messages: convo,
       })
@@ -389,7 +398,7 @@ More rules:
             proposal = { content: await enforceLen(String(block.input.content || ''), 'x') }
             if (block.input.want_image) {
               const img = await generateImage(block.input.image_prompt || block.input.content, { fromContent: !block.input.image_prompt })
-              proposal.image_url = img.url
+              proposal.image_url = await persistImage(img.url, user.id) // survive until publish
               proposal.image_prompt = img.prompt
             }
             result = { ok: true, note: 'Draft proposed to the user for inline review — the user will edit/schedule/post or discard it.' }

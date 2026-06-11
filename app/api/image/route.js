@@ -2,7 +2,9 @@
 // Generates an AI image for a post. When `personal` is set, the user's uploaded
 // selfies are passed as reference photos so the image features them.
 import { admin, getUser } from '@/lib/supabase'
-import { generateImage } from '@/lib/images'
+import { generateImage, persistImage } from '@/lib/images'
+
+export const maxDuration = 120 // Higgsfield/OpenAI generation can poll ~90s
 
 export async function POST(req) {
   const user = await getUser(req)
@@ -17,6 +19,8 @@ export async function POST(req) {
 
   try {
     const img = await generateImage(prompt, { seed, fromContent, referenceImages })
+    // Persist to our bucket so a scheduled post's image is still live at post time.
+    img.url = await persistImage(img.url, user.id)
     return Response.json(img)
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })

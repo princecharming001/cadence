@@ -1,6 +1,8 @@
 // Engagement rules CRUD + manual run, scoped to the authenticated user.
 // Mirrors /api/campaigns.
-import { admin, getUser } from '@/lib/supabase'
+import { admin, getUser, isCron } from '@/lib/supabase'
+
+export const maxDuration = 120
 import { runDueEngagement, runEngagementById } from '@/lib/engagement'
 
 const FIELDS = ['name', 'target_keywords', 'target_handles', 'comment_styles', 'instructions', 'connection_ids', 'interval_hours', 'replies_per_run', 'auto_post', 'active']
@@ -62,14 +64,11 @@ export async function POST(req) {
   const body = await req.json().catch(() => ({}))
 
   if (body.action === 'run') {
-    const auth = req.headers.get('authorization') || ''
-    if (auth === `Bearer ${process.env.CRON_SECRET}`) {
-      return Response.json(await runDueEngagement())
-    }
+    if (isCron(req)) return Response.json(await runDueEngagement())
     const user = await getUser(req)
     if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
-    if (body.id) return Response.json(await runEngagementById(body.id, user.id))
-    return Response.json(await runDueEngagement())
+    if (!body.id) return Response.json({ error: 'Rule id required.' }, { status: 400 })
+    return Response.json(await runEngagementById(body.id, user.id))
   }
 
   const user = await getUser(req)

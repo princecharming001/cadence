@@ -11,11 +11,11 @@
 import { after } from 'next/server'
 import { admin } from '@/lib/supabase'
 import { postOne } from '@/lib/posting'
-import { runDueCampaigns } from '@/lib/campaigns'
 import { runDueEngagement } from '@/lib/engagement'
 import { runDueBrandCampaigns } from '@/lib/brand-campaigns'
 import { runDueSocialEngagement } from '@/lib/social-engagement'
 import { releaseStaleClaims, sweepInterruptedPosts } from '@/lib/engine'
+import { isCron } from '@/lib/supabase'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -23,14 +23,11 @@ export const maxDuration = 300
 const safe = async fn => { try { return await fn() } catch (e) { return { error: e.message } } }
 
 export async function GET(req) {
-  const auth = req.headers.get('authorization') || ''
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!isCron(req)) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   // 1. Recovery sweeps — cheap, always first.
   await safe(() => sweepInterruptedPosts(10))
-  for (const t of ['campaigns', 'brand_campaigns', 'engagement_rules', 'social_engagement']) {
+  for (const t of ['brand_campaigns', 'engagement_rules', 'social_engagement']) {
     await safe(() => releaseStaleClaims(t, 30))
   }
 
@@ -48,8 +45,8 @@ export async function GET(req) {
   const results = []
   for (const post of duePosts || []) results.push(await postOne(post))
 
-  // 3. Engines — claim-first, individually isolated.
-  const campaigns = await safe(runDueCampaigns)
+  // 3. Engines — claim-first, individually isolated. (The X-only `campaigns`
+  // engine was retired in favor of brand_campaigns, which targets X too.)
   const brand = await safe(runDueBrandCampaigns)
   const engagement = await safe(runDueEngagement)
   const social = await safe(runDueSocialEngagement)
@@ -63,6 +60,6 @@ export async function GET(req) {
 
   return Response.json({
     posted: results.filter(r => r.status === 'posted').length,
-    results, campaigns, brand, engagement, social,
+    results, brand, engagement, social,
   })
 }

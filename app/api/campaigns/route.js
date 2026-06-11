@@ -1,6 +1,8 @@
 // Marketing campaigns CRUD + manual run, scoped to the authenticated user.
-import { admin, getUser } from '@/lib/supabase'
+import { admin, getUser, isCron } from '@/lib/supabase'
 import { runDueCampaigns, runCampaignById } from '@/lib/campaigns'
+
+export const maxDuration = 120
 
 const FIELDS = ['name', 'topic', 'link', 'connection_ids', 'interval_hours', 'posts_per_run', 'include_image', 'active']
 
@@ -27,15 +29,12 @@ export async function POST(req) {
   const body = await req.json().catch(() => ({}))
 
   if (body.action === 'run') {
-    const auth = req.headers.get('authorization') || ''
-    if (auth === `Bearer ${process.env.CRON_SECRET}`) {
-      return Response.json(await runDueCampaigns())
-    }
+    if (isCron(req)) return Response.json(await runDueCampaigns())
     const user = await getUser(req)
     if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
-    // "Run now" on one campaign, or all due ones for this user.
-    if (body.id) return Response.json(await runCampaignById(body.id, user.id))
-    return Response.json(await runDueCampaigns())
+    // A logged-in user may only run their OWN campaign — never sweep all tenants.
+    if (!body.id) return Response.json({ error: 'Campaign id required.' }, { status: 400 })
+    return Response.json(await runCampaignById(body.id, user.id))
   }
 
   const user = await getUser(req)

@@ -66,7 +66,10 @@ export async function DELETE(req) {
   const { data: job } = await admin.from('clip_jobs').select('*').eq('id', id).eq('user_id', user.id).single()
   if (job) {
     const paths = (job.clips || []).map((_, i) => `${user.id}/${job.id}/clip-${i}.mp4`)
-    if (job.source_url.includes('/clips/')) paths.push(`${user.id}/${job.id}/source`)
+    // An uploaded source lives at .../clips/<user>/sources/<name>; derive its
+    // real storage key from the URL instead of a path that was never written.
+    const m = job.source_url && job.source_url.match(/\/clips\/(.+)$/)
+    if (m) paths.push(decodeURIComponent(m[1].split('?')[0]))
     if (paths.length) await admin.storage.from('clips').remove(paths).catch(() => {})
     await admin.from('clip_jobs').delete().eq('id', id)
   }

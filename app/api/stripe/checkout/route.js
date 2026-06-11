@@ -12,24 +12,28 @@ export async function POST(req) {
     return Response.json({ error: 'Billing is not configured yet.' }, { status: 503 })
   }
 
-  const profile = await getProfile(user)
+  try {
+    const profile = await getProfile(user)
 
-  // Reuse or create a Stripe customer for this user.
-  let customerId = profile.stripe_customer_id
-  if (!customerId) {
-    const customer = await stripe.customers.create({ email: user.email, metadata: { user_id: user.id } })
-    customerId = customer.id
-    await admin.from('profiles').update({ stripe_customer_id: customerId }).eq('id', user.id)
+    // Reuse or create a Stripe customer for this user.
+    let customerId = profile.stripe_customer_id
+    if (!customerId) {
+      const customer = await stripe.customers.create({ email: user.email, metadata: { user_id: user.id } })
+      customerId = customer.id
+      await admin.from('profiles').update({ stripe_customer_id: customerId }).eq('id', user.id)
+    }
+
+    const checkout = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      success_url: `${APP_URL}/?billing=success`,
+      cancel_url: `${APP_URL}/?billing=cancelled`,
+      metadata: { user_id: user.id },
+    })
+    return Response.json({ url: checkout.url })
+  } catch (e) {
+    // Surface a clean JSON error so the client's r.json() never throws on a raw 500.
+    return Response.json({ error: e.message || 'Could not start checkout.' }, { status: 502 })
   }
-
-  const checkout = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer: customerId,
-    line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
-    success_url: `${APP_URL}/?billing=success`,
-    cancel_url: `${APP_URL}/?billing=cancelled`,
-    metadata: { user_id: user.id },
-  })
-
-  return Response.json({ url: checkout.url })
 }
