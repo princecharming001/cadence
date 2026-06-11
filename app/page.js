@@ -1031,12 +1031,25 @@ const CLIP_FORMAT_LIST = [
   { key: 'square', label: 'Square 1:1', desc: 'feed-friendly' },
   { key: 'original', label: 'Original', desc: 'keep aspect ratio' },
 ]
+// Edit styles applied on top of clips. Pick one or several — clips rotate
+// through the chosen set. Titles are AI-written; watermark is your handle.
+const EDIT_FORMAT_LIST = [
+  { key: 'meme_bar', label: 'Meme bar', desc: 'white headline bar on top' },
+  { key: 'hook', label: 'Hook flash', desc: 'big title for the first 3.5s' },
+  { key: 'banner', label: 'Lower banner', desc: 'podcast-style bottom bar' },
+  { key: 'progress', label: 'Progress bar', desc: 'animated retention bar' },
+  { key: 'clean', label: 'Clean', desc: 'watermark only' },
+]
 function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, onPost }) {
   const [url, setUrl] = useState(''); const [fileName, setFileName] = useState('')
   const [format, setFormat] = useState('vertical'); const [len, setLen] = useState('short'); const [maxClips, setMaxClips] = useState(3)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef(null)
   const postable = accounts.filter(a => ['instagram', 'tiktok'].includes(a.platform))
+  const [edits, setEdits] = useState(['meme_bar'])
+  const [watermark, setWatermark] = useState('')
+  const wmDefault = postable[0]?.username ? `@${postable[0].username}` : ''
+  const toggleEdit = k => setEdits(s => s.includes(k) ? (s.length > 1 ? s.filter(x => x !== k) : s) : [...s, k])
 
   async function pickFile(e) {
     const f = e.target.files?.[0]; if (!f) return
@@ -1049,7 +1062,11 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
   async function go() {
     if (!url.trim()) return
     setBusy(true)
-    const ok = await onCreate({ source_url: url.trim(), source_name: fileName || null, format, target_len: len, max_clips: Number(maxClips), captions: true })
+    const ok = await onCreate({
+      source_url: url.trim(), source_name: fileName || null, format,
+      target_len: len, max_clips: Number(maxClips), captions: true,
+      edit_formats: edits, watermark: (watermark || wmDefault).trim() || null,
+    })
     setBusy(false)
     if (ok) { setUrl(''); setFileName('') }
   }
@@ -1071,6 +1088,16 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
             </button>
           ))}
         </div>
+        <label className="ob-label">Edit style <span style={{ fontWeight: 400, color: '#9aa1ad' }}>· pick one or more — clips rotate through them</span></label>
+        <div className="ss-grid">
+          {EDIT_FORMAT_LIST.map(f => (
+            <button key={f.key} type="button" className={'style-opt' + (edits.includes(f.key) ? ' on' : '')} onClick={() => toggleEdit(f.key)}>
+              <span className={'mini-check' + (edits.includes(f.key) ? ' on' : '')}>{edits.includes(f.key) && <LCheck size={10} strokeWidth={4} />}</span>
+              <span><span className="style-name">{f.label}</span><span className="style-desc">{f.desc}</span></span>
+            </button>
+          ))}
+        </div>
+        <input className="field" style={{ marginTop: 10 }} placeholder={`Watermark${wmDefault ? ` (default ${wmDefault})` : ' — e.g. @yourhandle'}`} value={watermark} onChange={e => setWatermark(e.target.value)} />
         <div className="row" style={{ gap: 10, marginTop: 12, justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <div className="row" style={{ gap: 6 }}>
             {[['short', '15–30s'], ['medium', '30–60s']].map(([k, l]) => <button key={k} type="button" className={'chip' + (len === k ? ' on' : '')} onClick={() => setLen(k)}>{l}</button>)}
@@ -1097,7 +1124,7 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
                 <div className="clip-card" key={i}>
                   <video src={c.url} controls preload="metadata" className="clip-vid" />
                   <div style={{ fontWeight: 600, fontSize: 12.5, margin: '6px 0 2px' }}>{c.title}</div>
-                  <div className="muted tiny">{c.end - c.start}s{c.caption ? ` · ${c.caption.slice(0, 60)}` : ''}</div>
+                  <div className="muted tiny">{c.end - c.start}s{c.edit ? ` · ${(EDIT_FORMAT_LIST.find(f => f.key === c.edit) || {}).label || c.edit}` : ''}{c.caption ? ` · ${c.caption.slice(0, 60)}` : ''}</div>
                   {postable.length > 0 && configured && (
                     <div className="row" style={{ gap: 5, marginTop: 7, flexWrap: 'wrap' }}>
                       {postable.map(a => (
@@ -1641,10 +1668,9 @@ function App({ session }) {
                           <div className="persona-summary">{persona.summary}</div>
                         </div>
                       : <div className="row" style={{ gap: 10, margin: '8px 0 10px' }}>
-                          <span className="muted tiny" style={{ flex: 1 }}>Pull in some of your content, then analyze so posts sound like you.</span>
+                          <span className="muted tiny" style={{ flex: 1 }}>Cadence reads your connected accounts automatically — hit analyze and posts will sound like you.</span>
                           <button className="btn-primary btn-sm" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Analyze my voice'}</button>
                         </div>}
-                    <VoicePull platform="x" label="X" connected={connected} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
                     <InspirationAccounts platform="x" accounts={inspoX} onAdd={addInspo} onRemove={removeInspo} />
                   </Section>
                 </div>
@@ -1686,10 +1712,6 @@ function App({ session }) {
                 <div style={{ marginTop: 16 }}>
                   <Section title="Auto-reply to comments" hint="on the posts Cadence publishes" badge={<OnBadge on={engSettings.some(s => ['instagram', 'tiktok'].includes(s.platform) && s.enabled)} />}>
                     <ReplyToggles platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
-                  </Section>
-                  <Section title="Voice" hint="learn from your IG/TikTok content">
-                    <VoicePull platform="instagram" label="Instagram" connected={socialAccounts.some(a => a.platform === 'instagram')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
-                    <VoicePull platform="tiktok" label="TikTok" connected={socialAccounts.some(a => a.platform === 'tiktok')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
                   </Section>
                 </div>
               </>)}

@@ -14,6 +14,10 @@ export async function GET(req) {
   if (sync && zernioEnabled()) {
     try { accounts = await syncAccounts(user.id) }
     catch (e) { return Response.json({ accounts: [], configured: zernioEnabled(), error: e.message }) }
+    // Seed the voice automatically from whatever just connected (fire-and-forget).
+    const { pullVoice } = await import('@/lib/voice-pull')
+    const platforms = [...new Set((accounts || []).map(a => a.platform))]
+    Promise.allSettled(platforms.map(p => pullVoice(user.id, p))).catch(() => {})
   } else {
     const { data } = await admin.from('social_accounts').select('*').eq('user_id', user.id)
     accounts = data || []

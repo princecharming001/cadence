@@ -1,7 +1,7 @@
 // Clip jobs: list, create (kicks background processing), post a clip, delete.
 import { admin, getUser } from '@/lib/supabase'
 import { createPost, zernioEnabled } from '@/lib/zernio'
-import { CLIP_FORMATS } from '@/lib/clips'
+import { CLIP_FORMATS, EDIT_FORMATS } from '@/lib/clips'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -41,11 +41,14 @@ export async function POST(req) {
   const source_url = String(b.source_url || '').trim()
   if (!/^https?:\/\//.test(source_url)) return Response.json({ error: 'Paste a direct video link or upload a file.' }, { status: 400 })
   const format = CLIP_FORMATS.some(f => f.key === b.format) ? b.format : 'vertical'
+  const edit_formats = (Array.isArray(b.edit_formats) ? b.edit_formats : []).filter(e => EDIT_FORMATS.some(f => f.key === e))
   const row = {
     user_id: user.id, source_url, source_name: b.source_name || null,
     format, captions: b.captions !== false,
     target_len: ['short', 'medium'].includes(b.target_len) ? b.target_len : 'short',
     max_clips: Math.min(Math.max(Number(b.max_clips) || 3, 1), 5),
+    edit_formats: edit_formats.length ? edit_formats : ['clean'],
+    watermark: String(b.watermark || '').trim().slice(0, 40) || null,
   }
   const { data: job, error } = await admin.from('clip_jobs').insert(row).select().single()
   if (error) return Response.json({ error: error.message }, { status: 500 })
