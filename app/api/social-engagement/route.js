@@ -2,6 +2,7 @@
 import { admin, getUser } from '@/lib/supabase'
 import { runSocialEngagement, SOCIAL_ENGAGEMENT_PLATFORMS } from '@/lib/social-engagement'
 import { replyToInboxComment, zernioEnabled } from '@/lib/zernio'
+import { getValidAccessToken, postTweet } from '@/lib/x-oauth'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -43,7 +44,7 @@ export async function POST(req) {
   const b = await req.json().catch(() => ({}))
 
   if (b.action === 'run') {
-    if (!zernioEnabled()) return Response.json({ error: 'Zernio not configured' }, { status: 400 })
+    if (b.platform !== 'x' && !zernioEnabled()) return Response.json({ error: 'Zernio not configured' }, { status: 400 })
     const r = await runSocialEngagement(user.id, b.platform)
     return Response.json(r)
   }
@@ -51,7 +52,14 @@ export async function POST(req) {
     const { data: row } = await admin.from('social_replies').select('*').eq('id', b.id).eq('user_id', user.id).single()
     if (!row) return Response.json({ error: 'Not found' }, { status: 404 })
     try {
-      await replyToInboxComment({ postId: row.post_id, accountId: row.account_id, message: row.reply_text, commentId: row.comment_id })
+      if (row.platform === 'x') {
+        const { data: conn } = await admin.from('x_connections').select('*').eq('id', row.account_id).eq('user_id', user.id).single()
+        if (!conn) throw new Error('X account no longer connected.')
+        const token = await getValidAccessToken(conn)
+        await postTweet(token, row.reply_text, null, row.comment_id)
+      } else {
+        await replyToInboxComment({ postId: row.post_id, accountId: row.account_id, message: row.reply_text, commentId: row.comment_id })
+      }
       await admin.from('social_replies').update({ status: 'posted' }).eq('id', row.id)
       return Response.json({ ok: true })
     } catch (e) {

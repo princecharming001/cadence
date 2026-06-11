@@ -796,7 +796,7 @@ const PLATFORMS = [
   { key: 'instagram', label: 'Instagram' }, { key: 'tiktok', label: 'TikTok' },
   { key: 'linkedin', label: 'LinkedIn' }, { key: 'facebook', label: 'Facebook' },
 ]
-function platformDot(p) { return ({ instagram: '#E1306C', tiktok: '#111', linkedin: '#0A66C2', facebook: '#1877F2' }[p] || '#888') }
+function platformDot(p) { return ({ x: '#15171A', instagram: '#E1306C', tiktok: '#00b8b0', linkedin: '#0A66C2', facebook: '#1877F2' }[p] || '#888') }
 
 function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, onGenerate, onSave, onDelete }) {
   const [topic, setTopic] = useState('')
@@ -920,9 +920,16 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
   )
 }
 
-// A brand-themed brain animation header for each tab.
-function BrainBanner({ theme }) {
-  return <div className="brain-stage" style={{ height: 190 }}><BrainViz theme={theme} /></div>
+// A brand-themed brain animation header for each tab. Pass `dual` for two
+// side-by-side brains (the IG/TikTok tab shows both platform brains).
+function BrainBanner({ theme, dual }) {
+  if (!dual) return <div className="brain-stage" style={{ height: 190 }}><BrainViz theme={theme} /></div>
+  return (
+    <div style={{ display: 'flex', gap: 10 }}>
+      <div className="brain-stage" style={{ height: 175, flex: 1, minWidth: 0 }}><BrainViz theme={theme} /></div>
+      <div className="brain-stage" style={{ height: 175, flex: 1, minWidth: 0 }}><BrainViz theme={dual} /></div>
+    </div>
+  )
 }
 
 // "Learn my voice" — pull this account's content so the AI studies how the user
@@ -946,11 +953,11 @@ function VoicePull({ platform, label, connected, counts, pulling, onPull }) {
 // Per-platform auto-reply (comment engagement) controls + drafted replies.
 function ReplyToggles({ platforms, settings, replies, accounts, configured, onToggle, onRun, onPostDraft }) {
   const byPlat = Object.fromEntries((settings || []).map(s => [s.platform, s]))
-  const label = { instagram: 'Instagram', tiktok: 'TikTok', linkedin: 'LinkedIn' }
+  const label = { x: 'X', instagram: 'Instagram', tiktok: 'TikTok', linkedin: 'LinkedIn' }
   return (
     <>
       <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Auto-reply to comments <span className="muted tiny" style={{ fontWeight: 400 }}>· when people comment on the posts Cadence publishes, reply in your voice</span></div>
-      {!configured && <div className="notice" style={{ marginBottom: 10 }}>Connect publishing (Zernio) to enable auto-replies.</div>}
+      {!configured && platforms.some(p => p !== 'x') && <div className="notice" style={{ marginBottom: 10 }}>Connect publishing (Zernio) to enable auto-replies.</div>}
       {platforms.map(pl => {
         const s = byPlat[pl] || { platform: pl, enabled: false, auto_post: false }
         const has = accounts.some(a => a.platform === pl)
@@ -985,6 +992,54 @@ function ReplyToggles({ platforms, settings, replies, accounts, configured, onTo
           </div>
         )
       })}
+    </>
+  )
+}
+
+// "Ready to post" — AI-drafted posts for this platform, waiting for one-tap
+// approval. The heart of each content tab: open the tab, see posts ready to go.
+function Suggestions({ platform, drafts, busy, canPost, onGenerate, onPostNow, onSchedule, onDiscard }) {
+  return (
+    <>
+      <div className="conn-sec row" style={{ gap: 7 }}><Sparkles size={13} /> Ready to post <span className="muted tiny" style={{ fontWeight: 400 }}>· drafted in your voice, waiting for your approval</span>
+        <button className="mini" style={{ marginLeft: 'auto' }} disabled={busy} onClick={onGenerate}>{busy ? <Loader2 size={11} className="spin" /> : <Wand2 size={11} />} {drafts.length ? 'More' : 'Generate'}</button>
+      </div>
+      {drafts.length === 0 && <div className="muted tiny" style={{ margin: '0 2px 12px' }}>{busy ? 'Writing suggestions in your voice…' : 'Hit Generate and a few posts will be waiting here, ready to approve.'}</div>}
+      <AnimatePresence>{drafts.map(p => (
+        <motion.div key={p.id} className="card draft-card" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96 }} layout>
+          <div className="card-body" style={{ whiteSpace: 'pre-wrap' }}>{p.content}</div>
+          <div className="dp-actions" style={{ marginTop: 11 }}>
+            <button className="icon-btn x" title="Discard" onClick={() => onDiscard(p.id)}><Ex /></button>
+            <button className="icon-btn check" title="Schedule" onClick={() => onSchedule(p)}><Check /> <span>Schedule</span></button>
+            <button className="btn-primary btn-sm" disabled={!canPost} onClick={() => onPostNow(p.id)}>Post now</button>
+          </div>
+        </motion.div>
+      ))}</AnimatePresence>
+    </>
+  )
+}
+
+// Inspiration accounts — up to 3 public accounts per platform the AI studies
+// for what's working. Read-only: nothing to connect or authorize.
+function InspirationAccounts({ platform, accounts, onAdd, onRemove }) {
+  const [val, setVal] = useState('')
+  async function add() { if (!val.trim()) return; const ok = await onAdd(platform, val.trim()); if (ok) setVal('') }
+  return (
+    <>
+      <div className="conn-sec row" style={{ gap: 7 }}><Star size={12} /> Inspiration accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 · read-only, no login needed — the AI studies what works for them</span></div>
+      {accounts.map(a => (
+        <div className="card" key={a.id} style={{ padding: '9px 12px', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 9 }}>
+          <span className="status-dot" style={{ background: platformDot(platform) }} />
+          <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>@{a.handle}</span>
+          <button className="mini danger" onClick={() => onRemove(a.id)}><Trash2 size={11} /></button>
+        </div>
+      ))}
+      {accounts.length < 3 && (
+        <div className="row" style={{ gap: 8, marginBottom: 12 }}>
+          <input className="field" style={{ flex: 1 }} placeholder={`@handle or profile URL`} value={val} onChange={e => setVal(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} />
+          <button className="btn-ghost btn-sm" onClick={add}><Plus size={13} /> Add</button>
+        </div>
+      )}
     </>
   )
 }
@@ -1086,6 +1141,7 @@ function App({ session }) {
   const [qPlatform, setQPlatform] = useState('all')
   const [voiceCounts, setVoiceCounts] = useState({}); const [pulling, setPulling] = useState('')
   const [brandCampaigns, setBrandCampaigns] = useState([])
+  const [inspoX, setInspoX] = useState([]); const [suggesting, setSuggesting] = useState('')
   const [me, setMe] = useState(null)
   const [messages, setMessages] = useState([]); const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
@@ -1107,8 +1163,9 @@ function App({ session }) {
   const loadSocialEng = useCallback(async () => { const r = await authed('/api/social-engagement'); const d = await r.json(); setEngSettings(d.settings || []); setSocialReplies(d.replies || []) }, [authed])
   const loadVoice = useCallback(async () => { const r = await authed('/api/voice'); const d = await r.json(); setVoiceCounts(d.counts || {}) }, [authed])
   const loadBrand = useCallback(async () => { const r = await authed('/api/brand-campaigns'); const d = await r.json(); setBrandCampaigns(d.campaigns || []) }, [authed])
+  const loadInspoX = useCallback(async () => { const r = await authed('/api/inspiration?platform=x'); const d = await r.json(); setInspoX(d.accounts || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadVoice(); loadBrand() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadVoice, loadBrand])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadVoice(); loadBrand(); loadInspoX() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadVoice, loadBrand, loadInspoX])
 
   // Returning from a Zernio account-link (Zernio redirects to /?connected=<platform>):
   // land the user back on Slideshows, pull in the freshly connected account, and tidy the URL.
@@ -1144,6 +1201,8 @@ function App({ session }) {
   const defaultHour = me?.profile?.default_post_hour ?? 9
   const imgDefault = !!me?.profile?.include_image_default
   const drafts = posts.filter(p => p.status === 'draft')
+  const xDrafts = drafts.filter(p => (p.platform || 'x') === 'x')
+  const liDrafts = drafts.filter(p => p.platform === 'linkedin')
   const queue = posts.filter(p => p.status !== 'draft' && p.status !== 'posted')
   const posted = posts.filter(p => p.status === 'posted').sort((a, b) => new Date(b.posted_at || b.scheduled_for) - new Date(a.posted_at || a.scheduled_for))
   const collapseQueue = queue.length > 4
@@ -1217,6 +1276,25 @@ function App({ session }) {
     setBanner('Running campaign across your accounts…')
     const r = await authed('/api/brand-campaigns', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }); const d = await r.json()
     setBanner(d.error ? d.error : `Posted across ${d.done || 0} account${d.done === 1 ? '' : 's'}`); loadBrand(); loadQueue(); loadSlideshows()
+  }
+  async function suggestPosts(platform) {
+    setSuggesting(platform)
+    const r = await authed('/api/suggest', { method: 'POST', body: JSON.stringify({ platform, n: 3 }) }); const d = await r.json()
+    setSuggesting('')
+    if (d.error) setBanner(d.error); else { setBanner(`${d.posts?.length || 0} ${platform === 'x' ? 'X' : 'LinkedIn'} posts ready to approve`); loadQueue() }
+  }
+  async function addInspo(platform, handle) {
+    const r = await authed('/api/inspiration', { method: 'POST', body: JSON.stringify({ platform, handle }) }); const d = await r.json()
+    if (d.error) { setBanner(d.error); return false }
+    loadInspoX(); return true
+  }
+  async function removeInspo(id) { await authed('/api/inspiration', { method: 'DELETE', body: JSON.stringify({ id }) }); loadInspoX() }
+  // Approve a LinkedIn suggestion for the next default posting hour (simplest
+  // schedule path; it lands in the Queue where the time can still be edited).
+  async function scheduleLinkedInDraft(p) {
+    const when = defaultWhen(defaultHour)
+    await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id: p.id, content: p.content, scheduledFor: new Date(when).toISOString(), status: 'queued' }) })
+    setBanner(`Scheduled for ${fmt(new Date(when).toISOString())} — edit the time in Queue`); loadQueue()
   }
   async function pullVoiceFrom(platform) {
     setPulling(platform)
@@ -1372,6 +1450,8 @@ function App({ session }) {
                 </>)
               })()}
 
+              {/* X — create + automate X content. Ready-to-post first, then
+                  automation (replies, feeder engagement), then inputs (inspo, voice). */}
               {tab === 'x' && (<>
                 <BrainBanner theme="x" />
                 <div className="conn-sec" style={{ marginTop: 2 }}>X accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· your primary is where you post; feeders drive engagement</span></div>
@@ -1388,64 +1468,53 @@ function App({ session }) {
                     <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
                   </div>
                 ))}
-                <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account (feeder)' : 'Connect X'}</button>
+                <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 14 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account (feeder)' : 'Connect X'}</button>
 
+                <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
+                  onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
+
+                <div style={{ marginTop: 16 }}>
+                  <ReplyToggles platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  <InspirationAccounts platform="x" accounts={inspoX} onAdd={addInspo} onRemove={removeInspo} />
+                </div>
+
+                <div className="conn-sec" style={{ marginTop: 16 }}>Your voice</div>
+                {persona && <div className="card persona">
+                  <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 14 }}>Your voice <span className="muted tiny">· {persona.tone}</span></span>
+                    <button className="mini" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Re-analyze'}</button>
+                  </div>
+                  <div className="persona-summary">{persona.summary}</div>
+                </div>}
+                {!persona && <div className="card" style={{ padding: 14, marginBottom: 10 }}>
+                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 10 }}>Cadence studies content from your connected accounts to learn how you write. Pull some content in, then analyze.</div>
+                  <button className="btn-primary btn-sm" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Analyze my voice'}</button>
+                </div>}
                 <VoicePull platform="x" label="X" connected={connected} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
 
-                <div className="conn-sec">Generate X posts in your voice</div>
-                {!persona ? (
-                  <div className="brain-empty">
-                    <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6, marginTop: 6 }}>Learn your voice first</div>
-                    <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.65, maxWidth: 360, margin: '0 auto 18px' }}>Cadence studies the content from your connected accounts to learn how you write, then drafts posts that sound like you. Pull in some content from any tab, then analyze.</div>
-                    <motion.button className="btn-primary row" style={{ gap: 7 }} disabled={analyzing} onClick={analyzeVoice} whileTap={{ scale: 0.97 }}>{analyzing ? <span className="dots"><i/><i/><i/></span> : <><Wand2 size={15} /> Analyze my voice</>}</motion.button>
-                  </div>
-                ) : (<>
-                  <div className="card persona">
-                    <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-                      <span style={{ fontWeight: 700, fontSize: 14 }}>Your voice <span className="muted tiny">· {persona.tone}</span></span>
-                      <button className="mini" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Refresh'}</button>
-                    </div>
-                    <div className="persona-summary">{persona.summary}</div>
-                  </div>
-                  <div className="card gen-panel">
-                    <div className="gen-head">
-                      <span className="gen-ic"><Sparkles size={17} /></span>
-                      <div style={{ minWidth: 0 }}>
-                        <div className="gen-title">Generate posts in your voice</div>
-                        <div className="gen-sub">Looks at your best LinkedIn posts and what&apos;s working on X right now, then writes 5 tweets for you. Each one covers a different topic in your niche.</div>
-                      </div>
-                    </div>
-                    <motion.button className="btn-primary gen-btn" disabled={generating} onClick={() => generate(5)} whileTap={{ scale: 0.98 }}>
-                      {generating ? <span className="row" style={{ gap: 8 }}><span className="dots"><i/><i/><i/></span> Writing your posts…</span> : <span className="row" style={{ gap: 8 }}><Wand2 size={15} /> Generate 5 posts</span>}
-                    </motion.button>
-                  </div>
-                  {drafts.length === 0 && <Empty icon={<FileText size={26} />}>No drafts yet. Generate a batch and they&apos;ll show up here to review.</Empty>}
-                  <div><AnimatePresence>{drafts.map((p, i) => (
-                    <motion.div key={p.id} className="card draft-card" style={{ borderLeft: `3px solid ${sourceMeta(p).c}` }} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04, ...spring }} layout exit={{ opacity: 0, scale: 0.95 }}>
-                      <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 7 }}><SourceTag p={p} /></div>
-                      <ReplyContext p={p} />
-                      <div className="card-body">{p.content}</div>
-                      <div className="dp-actions" style={{ marginTop: 11 }}>
-                        <button className="icon-btn x" title="Discard" onClick={() => delPost(p.id)}><Ex /></button>
-                        <button className="icon-btn check" title="Schedule" onClick={() => openSchedule(p)}><Check /> <span>Schedule</span></button>
-                        <button className="btn-primary btn-sm" disabled={!connected} onClick={() => postNow(p.id)}>Post now</button>
-                      </div>
-                    </motion.div>
-                  ))}</AnimatePresence></div>
-                </>)}
+                <div className="conn-sec row" style={{ gap: 7, marginTop: 16 }}><MessageCircle size={13} /> Feeder engagement <span className="muted tiny" style={{ fontWeight: 400 }}>· feeder accounts reply to relevant viral posts in your voice</span></div>
+                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
               </>)}
 
+              {/* IG/TikTok — both brains, replies first, then the carousel studio. */}
               {tab === 'social' && (<>
-                <BrainBanner theme="instagram" />
-                <ReplyToggles platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
-                <div className="conn-sec" style={{ marginTop: 16 }}>Learn your voice from these platforms</div>
-                <VoicePull platform="instagram" label="Instagram" connected={socialAccounts.some(a => a.platform === 'instagram')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
-                <VoicePull platform="tiktok" label="TikTok" connected={socialAccounts.some(a => a.platform === 'tiktok')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
+                <BrainBanner theme="instagram" dual="tiktok" />
+                <div style={{ marginTop: 10 }}>
+                  <ReplyToggles platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                </div>
                 <div className="conn-sec" style={{ marginTop: 16 }}>Create &amp; schedule carousels</div>
                 <SlideshowStudio accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows}
                   onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} />
+                <div className="conn-sec" style={{ marginTop: 16 }}>Your voice on these platforms</div>
+                <VoicePull platform="instagram" label="Instagram" connected={socialAccounts.some(a => a.platform === 'instagram')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
+                <VoicePull platform="tiktok" label="TikTok" connected={socialAccounts.some(a => a.platform === 'tiktok')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
               </>)}
 
+              {/* LinkedIn — ready-to-approve posts first (the main ask), then
+                  automation, then inspiration + voice inputs. */}
               {tab === 'linkedin' && (<>
                 <BrainBanner theme="linkedin" />
                 {socialAccounts.filter(a => a.platform === 'linkedin').map(a => (
@@ -1454,30 +1523,30 @@ function App({ session }) {
                     <div style={{ flex: 1, minWidth: 0 }}><div className="conn-title">@{a.username || 'LinkedIn'}</div><div className="muted tiny">Publishing account</div></div>
                   </div>
                 ))}
-                <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('linkedin')} style={{ marginBottom: 12 }}><Plus size={11} /> Connect LinkedIn to publish</button>
+                <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('linkedin')} style={{ marginBottom: 14 }}><Plus size={11} /> Connect LinkedIn to publish</button>
 
-                <div className="conn-sec">Your voice source</div>
-                <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
-                <div className="conn-sec">Creators to study <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 styles to mimic</span></div>
+                <Suggestions platform="linkedin" drafts={liDrafts} busy={suggesting === 'linkedin'} canPost={socialAccounts.some(a => a.platform === 'linkedin')}
+                  onGenerate={() => suggestPosts('linkedin')} onPostNow={postNow} onSchedule={scheduleLinkedInDraft} onDiscard={delPost} />
+
+                <div style={{ marginTop: 16 }}>
+                  <ReplyToggles platforms={['linkedin']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                </div>
+
+                <div className="conn-sec row" style={{ gap: 7, marginTop: 16 }}><Star size={12} /> Inspiration accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 · read-only, no login needed — the AI studies what works for them</span></div>
                 {[0, 1, 2].map(i => (
                   <LinkedInSlot key={i} account={liMentors[i]} onAdd={(url) => addLinkedIn(url, true)} onRemove={removeLinkedIn} />
                 ))}
 
-                <ReplyToggles platforms={['linkedin']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                <div className="conn-sec" style={{ marginTop: 16 }}>Your voice source <span className="muted tiny" style={{ fontWeight: 400 }}>· your own LinkedIn — read to learn how you write</span></div>
+                <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
               </>)}
 
+              {/* Campaigns — purely cross-platform. One topic, every account,
+                  the right format per platform, in one voice. */}
               {tab === 'campaigns' && (<>
                 <BrainBanner theme="campaigns" />
-                <div className="muted tiny" style={{ margin: '0 2px 12px', lineHeight: 1.6 }}>Run feeder-account campaigns across all your platforms to promote your brand — in one voice. A campaign writes text posts for X &amp; LinkedIn and carousels for Instagram &amp; TikTok, on your schedule.</div>
-
-                <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> Cross-platform campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· one topic, every account, the right format per platform</span></div>
+                <div className="muted tiny" style={{ margin: '0 2px 12px', lineHeight: 1.6 }}>A campaign promotes one topic across any mix of your accounts — it writes text posts for X &amp; LinkedIn and carousels for Instagram &amp; TikTok, in your voice, on your schedule.</div>
                 <CrossCampaignManager campaigns={brandCampaigns} xConns={xConns} socialAccounts={socialAccounts} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
-
-                <div className="conn-sec row" style={{ gap: 7, marginTop: 18 }}><MessageCircle size={13} /> X engagement campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· feeder accounts auto-reply to relevant posts in your voice</span></div>
-                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
-
-                <div className="conn-sec row" style={{ gap: 7, marginTop: 18 }}><Megaphone size={13} /> X-only post campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· the classic single-platform X cadence</span></div>
-                <CampaignManager campaigns={campaigns} xConns={xConns} posts={posts} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} onRun={runCampaignNow} />
               </>)}
 
             </motion.div>
