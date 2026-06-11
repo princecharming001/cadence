@@ -42,3 +42,6 @@ next-env.d.ts
 
 # filler gameplay footage (large binaries, server-local)
 assets/fillers/
+
+# clip source download cache
+.cache/
