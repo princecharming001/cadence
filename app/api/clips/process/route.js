@@ -3,7 +3,7 @@
 import { processQueuedClipJobs } from '@/lib/clips'
 
 export const runtime = 'nodejs'
-export const maxDuration = 600 // video work is slow by nature
+export const maxDuration = 900 // video work is slow by nature (podcast downloads especially)
 
 export async function POST(req) {
   const auth = req.headers.get('authorization') || ''

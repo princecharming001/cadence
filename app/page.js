@@ -1059,7 +1059,7 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
       <div className="card camp-form">
         <div className="muted tiny" style={{ marginBottom: 8, lineHeight: 1.55 }}>Feed in a long video — a talk, podcast, stream — and Cadence finds the best moments and cuts them into ready-to-post clips. Cuts always land on natural pauses.</div>
         <div className="row" style={{ gap: 8 }}>
-          <input className="field" style={{ flex: 1 }} placeholder="Paste a direct video link (.mp4/.mov)" value={fileName ? `Uploaded: ${fileName}` : url} onChange={e => { setUrl(e.target.value); setFileName('') }} disabled={!!fileName} />
+          <input className="field" style={{ flex: 1 }} placeholder="Paste a YouTube link or direct video URL" value={fileName ? `Uploaded: ${fileName}` : url} onChange={e => { setUrl(e.target.value); setFileName('') }} disabled={!!fileName} />
           <button className="btn-ghost btn-sm" disabled={busy} onClick={() => fileRef.current?.click()}><Upload size={13} /> Upload</button>
           <input ref={fileRef} type="file" accept="video/*" style={{ display: 'none' }} onChange={pickFile} />
         </div>
