@@ -925,13 +925,31 @@ function BrainBanner({ theme }) {
   return <div className="brain-stage" style={{ height: 190 }}><BrainViz theme={theme} /></div>
 }
 
+// "Learn my voice" — pull this account's content so the AI studies how the user
+// actually writes on this platform. Shows the sample count once pulled.
+function VoicePull({ platform, label, connected, counts, pulling, onPull }) {
+  const n = counts?.[platform] || 0
+  return (
+    <div className="card" style={{ padding: 12, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span className="gen-ic" style={{ flex: 'none' }}><Brain size={16} /></span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 13 }}>Learn my voice from {label}</div>
+        <div className="muted tiny">{n > 0 ? `Studying ${n} of your ${label} posts` : `Pull your recent ${label} posts so Cadence writes more like you`}</div>
+      </div>
+      <button className="btn-ghost btn-sm" disabled={!connected || pulling === platform} onClick={() => onPull(platform)}>
+        {pulling === platform ? <Loader2 size={13} className="spin" /> : n > 0 ? 'Refresh' : 'Pull'}
+      </button>
+    </div>
+  )
+}
+
 // Per-platform auto-reply (comment engagement) controls + drafted replies.
 function ReplyToggles({ platforms, settings, replies, accounts, configured, onToggle, onRun, onPostDraft }) {
   const byPlat = Object.fromEntries((settings || []).map(s => [s.platform, s]))
   const label = { instagram: 'Instagram', tiktok: 'TikTok', linkedin: 'LinkedIn' }
   return (
     <>
-      <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Auto-replies <span className="muted tiny" style={{ fontWeight: 400 }}>· reply to comments on your posts in your voice</span></div>
+      <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Auto-reply to comments <span className="muted tiny" style={{ fontWeight: 400 }}>· when people comment on the posts Cadence publishes, reply in your voice</span></div>
       {!configured && <div className="notice" style={{ marginBottom: 10 }}>Connect publishing (Zernio) to enable auto-replies.</div>}
       {platforms.map(pl => {
         const s = byPlat[pl] || { platform: pl, enabled: false, auto_post: false }
@@ -947,11 +965,11 @@ function ReplyToggles({ platforms, settings, replies, accounts, configured, onTo
             {s.enabled && (
               <div style={{ marginTop: 8 }}>
                 <label className="row" style={{ gap: 8, fontSize: 12.5, justifyContent: 'space-between' }}>
-                  <span className="muted">Auto-post replies <span className="tiny">(off = draft for review)</span></span>
+                  <span className="muted">Post replies automatically <span className="tiny">· off = hold each reply as a draft for you to approve below</span></span>
                   <Toggle on={!!s.auto_post} onChange={v => onToggle(pl, { auto_post: v })} />
                 </label>
                 <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
-                  <button className="mini" disabled={!has} onClick={() => onRun(pl)}><RefreshCw size={11} /> Check comments now</button>
+                  <button className="mini" disabled={!has} onClick={() => onRun(pl)}><RefreshCw size={11} /> Check for new comments now</button>
                 </div>
                 {drafts.length > 0 && <div style={{ marginTop: 8 }}>
                   {drafts.slice(0, 5).map(d => (
@@ -985,6 +1003,7 @@ function App({ session }) {
   const [slideshows, setSlideshows] = useState([])
   const [engSettings, setEngSettings] = useState([]); const [socialReplies, setSocialReplies] = useState([])
   const [qPlatform, setQPlatform] = useState('all')
+  const [voiceCounts, setVoiceCounts] = useState({}); const [pulling, setPulling] = useState('')
   const [me, setMe] = useState(null)
   const [messages, setMessages] = useState([]); const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
@@ -1004,8 +1023,9 @@ function App({ session }) {
   const loadSocial = useCallback(async (sync) => { const r = await authed(`/api/social${sync ? '?sync=1' : ''}`); const d = await r.json(); setSocialAccounts(d.accounts || []); setSocialConfigured(!!d.configured) }, [authed])
   const loadSlideshows = useCallback(async () => { const r = await authed('/api/slideshow'); const d = await r.json(); setSlideshows(d.slideshows || []) }, [authed])
   const loadSocialEng = useCallback(async () => { const r = await authed('/api/social-engagement'); const d = await r.json(); setEngSettings(d.settings || []); setSocialReplies(d.replies || []) }, [authed])
+  const loadVoice = useCallback(async () => { const r = await authed('/api/voice'); const d = await r.json(); setVoiceCounts(d.counts || {}) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadVoice() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadVoice])
 
   // Returning from a Zernio account-link (Zernio redirects to /?connected=<platform>):
   // land the user back on Slideshows, pull in the freshly connected account, and tidy the URL.
@@ -1107,6 +1127,12 @@ function App({ session }) {
     setBanner(d.error ? d.error : d.skipped ? `${platform}: ${d.skipped}` : `${platform}: ${d.posted || 0} posted, ${d.drafted || 0} drafted`); loadSocialEng()
   }
   async function postReplyDraft(id) { const r = await authed('/api/social-engagement', { method: 'POST', body: JSON.stringify({ action: 'post-draft', id }) }); const d = await r.json(); setBanner(d.error || 'Reply posted'); loadSocialEng() }
+  async function pullVoiceFrom(platform) {
+    setPulling(platform)
+    const r = await authed('/api/voice', { method: 'POST', body: JSON.stringify({ platform }) }); const d = await r.json()
+    setPulling(''); setVoiceCounts(d.counts || {})
+    setBanner(d.error ? d.error : d.note ? d.note : `Pulled ${d.pulled || 0} ${platform} posts — re-analyze to update your voice`)
+  }
   async function deleteSlideshow(id) { await authed('/api/slideshow', { method: 'DELETE', body: JSON.stringify({ id }) }); loadSlideshows() }
   async function generateSlideshow(payload) {
     const r = await authed('/api/slideshow/generate', { method: 'POST', body: JSON.stringify(payload) })
@@ -1273,17 +1299,16 @@ function App({ session }) {
                 ))}
                 <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account (feeder)' : 'Connect X'}</button>
 
-                <div className="conn-sec">Your voice & posts</div>
+                <VoicePull platform="x" label="X" connected={connected} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
+
+                <div className="conn-sec">Generate X posts in your voice</div>
                 {!persona ? (
                   <div className="brain-empty">
-                    <div className="brain-stage muted-stage"><motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 3, repeat: Infinity }} style={{ color: '#0a66c2' }}><Brain size={48} /></motion.div></div>
-                    <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6, marginTop: 14 }}>Learn your voice</div>
-                    <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.65, maxWidth: 360, margin: '0 auto 18px' }}>Cadence reads your LinkedIn posts to learn how you write, then writes X posts that actually sound like you.</div>
+                    <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6, marginTop: 6 }}>Learn your voice first</div>
+                    <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.65, maxWidth: 360, margin: '0 auto 18px' }}>Cadence studies the content from your connected accounts to learn how you write, then drafts posts that sound like you. Pull in some content from any tab, then analyze.</div>
                     <motion.button className="btn-primary row" style={{ gap: 7 }} disabled={analyzing} onClick={analyzeVoice} whileTap={{ scale: 0.97 }}>{analyzing ? <span className="dots"><i/><i/><i/></span> : <><Wand2 size={15} /> Analyze my voice</>}</motion.button>
-                    {liPosts.length === 0 && <div className="muted tiny" style={{ marginTop: 12 }}>Add your LinkedIn in Connections first.</div>}
                   </div>
                 ) : (<>
-                  <div className="brain-stage"><BrainViz /></div>
                   <div className="card persona">
                     <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
                       <span style={{ fontWeight: 700, fontSize: 14 }}>Your voice <span className="muted tiny">· {persona.tone}</span></span>
@@ -1321,9 +1346,13 @@ function App({ session }) {
 
               {tab === 'social' && (<>
                 <BrainBanner theme="instagram" />
+                <ReplyToggles platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                <div className="conn-sec" style={{ marginTop: 16 }}>Learn your voice from these platforms</div>
+                <VoicePull platform="instagram" label="Instagram" connected={socialAccounts.some(a => a.platform === 'instagram')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
+                <VoicePull platform="tiktok" label="TikTok" connected={socialAccounts.some(a => a.platform === 'tiktok')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
+                <div className="conn-sec" style={{ marginTop: 16 }}>Create &amp; schedule carousels</div>
                 <SlideshowStudio accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows}
                   onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} />
-                <ReplyToggles platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
               </>)}
 
               {tab === 'linkedin' && (<>
