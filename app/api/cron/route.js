@@ -23,6 +23,10 @@ export async function GET(req) {
   let brand = null
   try { brand = await runDueBrandCampaigns() } catch (e) { brand = { error: e.message } }
 
+  // Sweep stalled clip jobs without holding this request open (video work is slow).
+  const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
+  fetch(`${base}/api/clips/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
+
   const now = new Date().toISOString()
   const { data: duePosts, error } = await admin
     .from('posts')

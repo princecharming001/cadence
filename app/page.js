@@ -798,7 +798,7 @@ const PLATFORMS = [
 ]
 function platformDot(p) { return ({ x: '#15171A', instagram: '#E1306C', tiktok: '#00b8b0', linkedin: '#0A66C2', facebook: '#1877F2' }[p] || '#888') }
 
-function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, onGenerate, onSave, onDelete }) {
+function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, onGenerate, onSave, onDelete, hideAccounts }) {
   const [topic, setTopic] = useState('')
   const [format, setFormat] = useState('listicle'); const [style, setStyle] = useState('bold')
   const [count, setCount] = useState(6)
@@ -834,19 +834,21 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
 
   return (
     <>
-      {/* Connected accounts */}
-      <div className="conn-sec row" style={{ gap: 7, marginTop: 2 }}>Connected accounts
-        <button className="mini" style={{ marginLeft: 'auto' }} onClick={onSync}><RefreshCw size={11} /> Refresh</button>
-      </div>
-      {!configured && <div className="notice" style={{ marginBottom: 10 }}>Posting isn&apos;t connected yet. Create a <b>Zernio</b> account (zernio.com), then set <code>ZERNIO_API_KEY</code> on the server. You can still generate and preview slideshows below now.</div>}
-      {accounts.length === 0
-        ? <div className="muted tiny" style={{ marginBottom: 8 }}>No accounts linked yet.</div>
-        : <div className="acct-row">{accounts.map(a => (
-            <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</span>
-          ))}</div>}
-      <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-        {PLATFORMS.map(p => <button key={p.key} className="chip" disabled={!configured} onClick={() => onConnect(p.key)}><Plus size={11} /> {p.label}</button>)}
-      </div>
+      {/* Connected accounts (hidden when the tab already shows an accounts strip) */}
+      {!hideAccounts && (<>
+        <div className="conn-sec row" style={{ gap: 7, marginTop: 2 }}>Connected accounts
+          <button className="mini" style={{ marginLeft: 'auto' }} onClick={onSync}><RefreshCw size={11} /> Refresh</button>
+        </div>
+        {!configured && <div className="notice" style={{ marginBottom: 10 }}>Posting isn&apos;t connected yet. Create a <b>Zernio</b> account (zernio.com), then set <code>ZERNIO_API_KEY</code> on the server. You can still generate and preview slideshows below now.</div>}
+        {accounts.length === 0
+          ? <div className="muted tiny" style={{ marginBottom: 8 }}>No accounts linked yet.</div>
+          : <div className="acct-row">{accounts.map(a => (
+              <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</span>
+            ))}</div>}
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {PLATFORMS.map(p => <button key={p.key} className="chip" disabled={!configured} onClick={() => onConnect(p.key)}><Plus size={11} /> {p.label}</button>)}
+        </div>
+      </>)}
 
       {/* Generator */}
       <div className="conn-sec">Create a slideshow</div>
@@ -992,6 +994,125 @@ function ReplyToggles({ platforms, settings, replies, accounts, configured, onTo
           </div>
         )
       })}
+    </>
+  )
+}
+
+// Collapsible section — the backbone of the simplified tabs. Each tab keeps one
+// primary area open; everything else folds away until needed.
+function Section({ title, hint, badge, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="sec card" style={{ padding: 0, marginBottom: 10, overflow: 'hidden' }}>
+      <button className="sec-head" onClick={() => setOpen(o => !o)}>
+        <span className="sec-title">{title}</span>
+        {hint && <span className="muted tiny" style={{ fontWeight: 400 }}>{hint}</span>}
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          {badge}
+          <ChevronDown size={15} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .18s' }} />
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}>
+            <div style={{ padding: '4px 14px 14px' }}>{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+const OnBadge = ({ on }) => <span className={'camp-state' + (on ? ' on' : '')}>{on ? 'on' : 'off'}</span>
+
+// ── Clip studio — automated clipping for IG/TikTok ──────────────────────────────
+const CLIP_FORMAT_LIST = [
+  { key: 'vertical', label: 'Vertical 9:16', desc: 'blurred pad — nothing cropped' },
+  { key: 'vertical_crop', label: 'Vertical crop', desc: 'fills the phone screen' },
+  { key: 'square', label: 'Square 1:1', desc: 'feed-friendly' },
+  { key: 'original', label: 'Original', desc: 'keep aspect ratio' },
+]
+function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, onPost }) {
+  const [url, setUrl] = useState(''); const [fileName, setFileName] = useState('')
+  const [format, setFormat] = useState('vertical'); const [len, setLen] = useState('short'); const [maxClips, setMaxClips] = useState(3)
+  const [busy, setBusy] = useState(false)
+  const fileRef = useRef(null)
+  const postable = accounts.filter(a => ['instagram', 'tiktok'].includes(a.platform))
+
+  async function pickFile(e) {
+    const f = e.target.files?.[0]; if (!f) return
+    setBusy(true); setFileName(f.name)
+    const u = await onUpload(f)
+    setBusy(false)
+    if (u) setUrl(u); else setFileName('')
+    e.target.value = ''
+  }
+  async function go() {
+    if (!url.trim()) return
+    setBusy(true)
+    const ok = await onCreate({ source_url: url.trim(), source_name: fileName || null, format, target_len: len, max_clips: Number(maxClips), captions: true })
+    setBusy(false)
+    if (ok) { setUrl(''); setFileName('') }
+  }
+
+  return (
+    <>
+      <div className="card camp-form">
+        <div className="muted tiny" style={{ marginBottom: 8, lineHeight: 1.55 }}>Feed in a long video — a talk, podcast, stream — and Cadence finds the best moments and cuts them into ready-to-post clips. Cuts always land on natural pauses.</div>
+        <div className="row" style={{ gap: 8 }}>
+          <input className="field" style={{ flex: 1 }} placeholder="Paste a direct video link (.mp4/.mov)" value={fileName ? `Uploaded: ${fileName}` : url} onChange={e => { setUrl(e.target.value); setFileName('') }} disabled={!!fileName} />
+          <button className="btn-ghost btn-sm" disabled={busy} onClick={() => fileRef.current?.click()}><Upload size={13} /> Upload</button>
+          <input ref={fileRef} type="file" accept="video/*" style={{ display: 'none' }} onChange={pickFile} />
+        </div>
+        <label className="ob-label">Clip format</label>
+        <div className="ss-grid">
+          {CLIP_FORMAT_LIST.map(f => (
+            <button key={f.key} type="button" className={'style-opt' + (format === f.key ? ' on' : '')} onClick={() => setFormat(f.key)}>
+              <span><span className="style-name">{f.label}</span><span className="style-desc">{f.desc}</span></span>
+            </button>
+          ))}
+        </div>
+        <div className="row" style={{ gap: 10, marginTop: 12, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+          <div className="row" style={{ gap: 6 }}>
+            {[['short', '15–30s'], ['medium', '30–60s']].map(([k, l]) => <button key={k} type="button" className={'chip' + (len === k ? ' on' : '')} onClick={() => setLen(k)}>{l}</button>)}
+            <label className="camp-num"><input type="number" min={1} max={5} className="field" value={maxClips} onChange={e => setMaxClips(e.target.value)} /> clips</label>
+          </div>
+          <button className="btn-primary btn-sm" disabled={busy || !url.trim()} onClick={go}>{busy ? <Loader2 size={13} className="spin" /> : <><Wand2 size={13} /> Make clips</>}</button>
+        </div>
+      </div>
+
+      {jobs.map(j => (
+        <div className="card camp-card" key={j.id} style={{ display: 'block' }}>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <div className="conn-title row" style={{ gap: 7, minWidth: 0 }}>
+              {j.source_name || 'Video'}
+              <span className={'camp-state' + (j.status === 'done' ? ' on' : '')}>{j.status}</span>
+            </div>
+            <button className="mini danger" onClick={() => onDelete(j.id)}><Trash2 size={12} /></button>
+          </div>
+          {(j.status === 'queued' || j.status === 'processing') && <div className="live-status" style={{ marginTop: 6 }}><Loader2 size={11} className="spin" /> {j.status_detail || 'Waiting…'}</div>}
+          {j.status === 'failed' && <div className="muted tiny" style={{ marginTop: 6, color: '#c0392b' }}>{j.error}</div>}
+          {j.status === 'done' && (
+            <div className="clip-grid">
+              {(j.clips || []).map((c, i) => (
+                <div className="clip-card" key={i}>
+                  <video src={c.url} controls preload="metadata" className="clip-vid" />
+                  <div style={{ fontWeight: 600, fontSize: 12.5, margin: '6px 0 2px' }}>{c.title}</div>
+                  <div className="muted tiny">{c.end - c.start}s{c.caption ? ` · ${c.caption.slice(0, 60)}` : ''}</div>
+                  {postable.length > 0 && configured && (
+                    <div className="row" style={{ gap: 5, marginTop: 7, flexWrap: 'wrap' }}>
+                      {postable.map(a => (
+                        <button key={a.id} className="chip" style={{ fontSize: 11 }} onClick={() => onPost(j.id, i, [a.id])}>
+                          <span className="status-dot" style={{ background: platformDot(a.platform) }} />Post @{a.username}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </>
   )
 }
@@ -1142,6 +1263,7 @@ function App({ session }) {
   const [voiceCounts, setVoiceCounts] = useState({}); const [pulling, setPulling] = useState('')
   const [brandCampaigns, setBrandCampaigns] = useState([])
   const [inspoX, setInspoX] = useState([]); const [suggesting, setSuggesting] = useState('')
+  const [clipJobs, setClipJobs] = useState([]); const [igMode, setIgMode] = useState('carousels')
   const [me, setMe] = useState(null)
   const [messages, setMessages] = useState([]); const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
@@ -1164,8 +1286,16 @@ function App({ session }) {
   const loadVoice = useCallback(async () => { const r = await authed('/api/voice'); const d = await r.json(); setVoiceCounts(d.counts || {}) }, [authed])
   const loadBrand = useCallback(async () => { const r = await authed('/api/brand-campaigns'); const d = await r.json(); setBrandCampaigns(d.campaigns || []) }, [authed])
   const loadInspoX = useCallback(async () => { const r = await authed('/api/inspiration?platform=x'); const d = await r.json(); setInspoX(d.accounts || []) }, [authed])
+  const loadClips = useCallback(async () => { const r = await authed('/api/clips'); const d = await r.json(); setClipJobs(d.jobs || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadVoice(); loadBrand(); loadInspoX() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadVoice, loadBrand, loadInspoX])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadVoice(); loadBrand(); loadInspoX(); loadClips() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadVoice, loadBrand, loadInspoX, loadClips])
+
+  // Poll clip jobs while any is queued/processing so progress streams in live.
+  useEffect(() => {
+    if (!clipJobs.some(j => j.status === 'queued' || j.status === 'processing')) return
+    const t = setInterval(loadClips, 3000)
+    return () => clearInterval(t)
+  }, [clipJobs, loadClips])
 
   // Returning from a Zernio account-link (Zernio redirects to /?connected=<platform>):
   // land the user back on Slideshows, pull in the freshly connected account, and tidy the URL.
@@ -1295,6 +1425,27 @@ function App({ session }) {
     const when = defaultWhen(defaultHour)
     await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id: p.id, content: p.content, scheduledFor: new Date(when).toISOString(), status: 'queued' }) })
     setBanner(`Scheduled for ${fmt(new Date(when).toISOString())} — edit the time in Queue`); loadQueue()
+  }
+  // Clips
+  async function createClipJob(payload) {
+    const r = await authed('/api/clips', { method: 'POST', body: JSON.stringify(payload) }); const d = await r.json()
+    if (d.error) { setBanner(d.error); return false }
+    setBanner('Clipping started — watch progress below'); loadClips(); return true
+  }
+  async function uploadClipFile(file) {
+    setBanner('Uploading video…')
+    const fd = new FormData(); fd.append('file', file)
+    // Raw fetch: letting the browser set the multipart boundary (authed forces JSON).
+    const r = await fetch('/api/clips/upload', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
+    const d = await r.json()
+    if (d.error) { setBanner(d.error); return null }
+    setBanner('Uploaded — ready to clip'); return d.url
+  }
+  async function deleteClipJob(id) { await authed('/api/clips', { method: 'DELETE', body: JSON.stringify({ id }) }); loadClips() }
+  async function postClip(job_id, clip_index, account_ids) {
+    setBanner('Posting clip…')
+    const r = await authed('/api/clips', { method: 'POST', body: JSON.stringify({ action: 'post', job_id, clip_index, account_ids }) }); const d = await r.json()
+    setBanner(d.error || 'Clip posted')
   }
   async function pullVoiceFrom(platform) {
     setPulling(platform)
@@ -1452,9 +1603,10 @@ function App({ session }) {
 
               {/* X — create + automate X content. Ready-to-post first, then
                   automation (replies, feeder engagement), then inputs (inspo, voice). */}
+              {/* X — accounts, then "what's ready to go out". Everything else folds. */}
               {tab === 'x' && (<>
                 <BrainBanner theme="x" />
-                <div className="conn-sec" style={{ marginTop: 2 }}>X accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· your primary is where you post; feeders drive engagement</span></div>
+                <div className="conn-sec" style={{ marginTop: 2 }}>X accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· primary posts, feeders engage</span></div>
                 {xConns.map(c => (
                   <div className={'conn-card card' + (c.is_primary ? ' primary' : '')} key={c.id}>
                     <div className="conn-icon x-icon"><XGlyph /></div>
@@ -1462,7 +1614,6 @@ function App({ session }) {
                       <div className="conn-title row" style={{ gap: 6 }}>@{c.username}
                         {c.is_primary ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span> : <span className="role-badge">Feeder</span>}
                       </div>
-                      <div className="muted tiny">{c.name || 'Connected'}</div>
                     </div>
                     {!c.is_primary && <button className="mini" onClick={() => makePrimary(c.id)} title="Make this your primary account">Make primary</button>}
                     <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
@@ -1474,71 +1625,101 @@ function App({ session }) {
                   onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
 
                 <div style={{ marginTop: 16 }}>
-                  <ReplyToggles platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                  <Section title="Auto-reply to comments" hint="answers replies to your posts, in your voice" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'x')?.enabled} />}>
+                    <ReplyToggles platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                  </Section>
+                  <Section title="Feeder engagement" hint="feeders reply to relevant viral posts" badge={<OnBadge on={engRules.some(r => r.active)} />}>
+                    <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
+                  </Section>
+                  <Section title="Voice & inspiration" hint="what the AI learns from">
+                    {persona
+                      ? <div className="card persona" style={{ marginTop: 8 }}>
+                          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+                            <span style={{ fontWeight: 700, fontSize: 14 }}>Your voice <span className="muted tiny">· {persona.tone}</span></span>
+                            <button className="mini" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Re-analyze'}</button>
+                          </div>
+                          <div className="persona-summary">{persona.summary}</div>
+                        </div>
+                      : <div className="row" style={{ gap: 10, margin: '8px 0 10px' }}>
+                          <span className="muted tiny" style={{ flex: 1 }}>Pull in some of your content, then analyze so posts sound like you.</span>
+                          <button className="btn-primary btn-sm" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Analyze my voice'}</button>
+                        </div>}
+                    <VoicePull platform="x" label="X" connected={connected} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
+                    <InspirationAccounts platform="x" accounts={inspoX} onAdd={addInspo} onRemove={removeInspo} />
+                  </Section>
                 </div>
-
-                <div style={{ marginTop: 16 }}>
-                  <InspirationAccounts platform="x" accounts={inspoX} onAdd={addInspo} onRemove={removeInspo} />
-                </div>
-
-                <div className="conn-sec" style={{ marginTop: 16 }}>Your voice</div>
-                {persona && <div className="card persona">
-                  <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 14 }}>Your voice <span className="muted tiny">· {persona.tone}</span></span>
-                    <button className="mini" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Re-analyze'}</button>
-                  </div>
-                  <div className="persona-summary">{persona.summary}</div>
-                </div>}
-                {!persona && <div className="card" style={{ padding: 14, marginBottom: 10 }}>
-                  <div className="muted" style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 10 }}>Cadence studies content from your connected accounts to learn how you write. Pull some content in, then analyze.</div>
-                  <button className="btn-primary btn-sm" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Analyze my voice'}</button>
-                </div>}
-                <VoicePull platform="x" label="X" connected={connected} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
-
-                <div className="conn-sec row" style={{ gap: 7, marginTop: 16 }}><MessageCircle size={13} /> Feeder engagement <span className="muted tiny" style={{ fontWeight: 400 }}>· feeder accounts reply to relevant viral posts in your voice</span></div>
-                <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
               </>)}
 
-              {/* IG/TikTok — both brains, replies first, then the carousel studio. */}
+              {/* IG/TikTok — both brains, accounts, then ONE create area with a
+                  Carousels | Clips switcher. Automation + voice fold away. */}
               {tab === 'social' && (<>
                 <BrainBanner theme="instagram" dual="tiktok" />
-                <div style={{ marginTop: 10 }}>
-                  <ReplyToggles platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                <div className="conn-sec row" style={{ gap: 7, marginTop: 10 }}>Accounts
+                  <button className="mini" style={{ marginLeft: 'auto' }} onClick={syncSocial}><RefreshCw size={11} /> Refresh</button>
                 </div>
-                <div className="conn-sec" style={{ marginTop: 16 }}>Create &amp; schedule carousels</div>
-                <SlideshowStudio accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows}
-                  onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} />
-                <div className="conn-sec" style={{ marginTop: 16 }}>Your voice on these platforms</div>
-                <VoicePull platform="instagram" label="Instagram" connected={socialAccounts.some(a => a.platform === 'instagram')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
-                <VoicePull platform="tiktok" label="TikTok" connected={socialAccounts.some(a => a.platform === 'tiktok')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
+                {!socialConfigured && <div className="notice" style={{ marginBottom: 10 }}>Connect publishing (Zernio) to post. You can still generate and preview below.</div>}
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+                  {socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).map(a => (
+                    <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</span>
+                  ))}
+                  <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('instagram')}><Plus size={11} /> Instagram</button>
+                  <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('tiktok')}><Plus size={11} /> TikTok</button>
+                </div>
+
+                <div className="seg" style={{ marginBottom: 12 }}>
+                  {[['carousels', 'Carousels'], ['clips', 'Clips']].map(([k, l]) => (
+                    <button key={k} className={'seg-btn' + (igMode === k ? ' on' : '')} onClick={() => setIgMode(k)}>
+                      {igMode === k && <motion.span layoutId="ig-pill" className="seg-pill" transition={spring} />}
+                      <span style={{ position: 'relative', zIndex: 1 }}>{l}</span>
+                    </button>
+                  ))}
+                </div>
+                {igMode === 'carousels' && (
+                  <SlideshowStudio hideAccounts accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows}
+                    onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} />
+                )}
+                {igMode === 'clips' && (
+                  <ClipStudio jobs={clipJobs} accounts={socialAccounts} configured={socialConfigured}
+                    onCreate={createClipJob} onUpload={uploadClipFile} onDelete={deleteClipJob} onPost={postClip} />
+                )}
+
+                <div style={{ marginTop: 16 }}>
+                  <Section title="Auto-reply to comments" hint="on the posts Cadence publishes" badge={<OnBadge on={engSettings.some(s => ['instagram', 'tiktok'].includes(s.platform) && s.enabled)} />}>
+                    <ReplyToggles platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                  </Section>
+                  <Section title="Voice" hint="learn from your IG/TikTok content">
+                    <VoicePull platform="instagram" label="Instagram" connected={socialAccounts.some(a => a.platform === 'instagram')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
+                    <VoicePull platform="tiktok" label="TikTok" connected={socialAccounts.some(a => a.platform === 'tiktok')} counts={voiceCounts} pulling={pulling} onPull={pullVoiceFrom} />
+                  </Section>
+                </div>
               </>)}
 
-              {/* LinkedIn — ready-to-approve posts first (the main ask), then
-                  automation, then inspiration + voice inputs. */}
+              {/* LinkedIn — posts ready to approve up top; the rest folds. */}
               {tab === 'linkedin' && (<>
                 <BrainBanner theme="linkedin" />
-                {socialAccounts.filter(a => a.platform === 'linkedin').map(a => (
-                  <div className="conn-card card" key={a.id}>
-                    <div className="conn-icon" style={{ background: '#eaf3fb', color: '#0a66c2' }}><LIcon size={16} /></div>
-                    <div style={{ flex: 1, minWidth: 0 }}><div className="conn-title">@{a.username || 'LinkedIn'}</div><div className="muted tiny">Publishing account</div></div>
-                  </div>
-                ))}
-                <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('linkedin')} style={{ marginBottom: 14 }}><Plus size={11} /> Connect LinkedIn to publish</button>
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', margin: '10px 0 14px' }}>
+                  {socialAccounts.filter(a => a.platform === 'linkedin').map(a => (
+                    <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot('linkedin') }} />{a.username || 'LinkedIn'}</span>
+                  ))}
+                  <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('linkedin')}><Plus size={11} /> Connect LinkedIn to publish</button>
+                </div>
 
                 <Suggestions platform="linkedin" drafts={liDrafts} busy={suggesting === 'linkedin'} canPost={socialAccounts.some(a => a.platform === 'linkedin')}
                   onGenerate={() => suggestPosts('linkedin')} onPostNow={postNow} onSchedule={scheduleLinkedInDraft} onDiscard={delPost} />
 
                 <div style={{ marginTop: 16 }}>
-                  <ReplyToggles platforms={['linkedin']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                  <Section title="Auto-reply to comments" hint="on the posts Cadence publishes" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'linkedin')?.enabled} />}>
+                    <ReplyToggles platforms={['linkedin']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                  </Section>
+                  <Section title="Inspiration & voice" hint="who the AI studies, and how you write">
+                    <div className="conn-sec row" style={{ gap: 7, marginTop: 8 }}><Star size={12} /> Inspiration accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 · read-only, no login needed</span></div>
+                    {[0, 1, 2].map(i => (
+                      <LinkedInSlot key={i} account={liMentors[i]} onAdd={(url) => addLinkedIn(url, true)} onRemove={removeLinkedIn} />
+                    ))}
+                    <div className="conn-sec" style={{ marginTop: 12 }}>Your voice source <span className="muted tiny" style={{ fontWeight: 400 }}>· your own LinkedIn</span></div>
+                    <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
+                  </Section>
                 </div>
-
-                <div className="conn-sec row" style={{ gap: 7, marginTop: 16 }}><Star size={12} /> Inspiration accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 · read-only, no login needed — the AI studies what works for them</span></div>
-                {[0, 1, 2].map(i => (
-                  <LinkedInSlot key={i} account={liMentors[i]} onAdd={(url) => addLinkedIn(url, true)} onRemove={removeLinkedIn} />
-                ))}
-
-                <div className="conn-sec" style={{ marginTop: 16 }}>Your voice source <span className="muted tiny" style={{ fontWeight: 400 }}>· your own LinkedIn — read to learn how you write</span></div>
-                <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
               </>)}
 
               {/* Campaigns — purely cross-platform. One topic, every account,
@@ -1980,6 +2161,12 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .ss-preview { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
 .ss-slide { width: 152px; height: 190px; flex: none; border-radius: 12px; object-fit: cover; border: 1px solid #e8e9ee; scroll-snap-align: start; }
 .ss-thumb { width: 46px; height: 58px; border-radius: 8px; object-fit: cover; flex: none; border: 1px solid #e8e9ee; }
+/* collapsible sections + clip studio */
+.sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }
+.sec-title { font-weight: 700; font-size: 13.5px; color: #1c1e24; }
+.clip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+.clip-card { min-width: 0; }
+.clip-vid { width: 100%; aspect-ratio: 9/16; object-fit: cover; border-radius: 10px; background: #0e0f13; border: 1px solid #e8e9ee; }
 .qfilter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 .qchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 20px; background: #fff; border: 1px solid #e3e4ea; color: #4a4f5a; cursor: pointer; font-family: inherit; }
 .qchip.on { background: #111113; border-color: #111113; color: #fff; }
