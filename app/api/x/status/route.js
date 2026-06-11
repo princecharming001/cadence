@@ -8,7 +8,7 @@ export async function GET(req) {
 
   const { data } = await admin
     .from('x_connections')
-    .select('id, x_user_id, username, name, is_primary, created_at')
+    .select('id, x_user_id, username, name, is_primary, needs_reconnect, created_at')
     .eq('user_id', user.id)
     .order('created_at', { ascending: true })
 

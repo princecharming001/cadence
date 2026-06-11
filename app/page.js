@@ -6,8 +6,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import dynamic from 'next/dynamic'
 import {
   Check as LCheck, X as LX, RefreshCw, Sparkles, Send, Plus,
-  Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, FileText, Image as LImage,
-  ThumbsUp, ThumbsDown, Megaphone, Upload, Play, Pause as LPause, MessageCircle, Star, Loader2,
+  Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, Image as LImage,
+  ThumbsUp, ThumbsDown, Upload, Play, Pause as LPause, MessageCircle, Star, Loader2,
 } from 'lucide-react'
 import { COMMENT_STYLES } from '@/lib/comment-styles'
 import { SLIDESHOW_FORMATS, SLIDE_STYLE_LIST } from '@/lib/slideshow-styles'
@@ -24,9 +24,11 @@ const supabase = createClient(
 const STATUS = {
   draft:  { c: '#8b5cf6', label: 'draft' }, queued: { c: '#10b981', label: 'queued' },
   paused: { c: '#f59e0b', label: 'paused' }, posted: { c: '#3b82f6', label: 'posted' },
-  failed: { c: '#ef4444', label: 'failed' },
+  posting: { c: '#6366f1', label: 'posting…' }, failed: { c: '#ef4444', label: 'failed' },
 }
 const MAX = 280
+// LinkedIn posts are intentionally long-form; X is the 280 platform.
+const capFor = p => (p?.platform === 'linkedin' ? 1300 : 280)
 
 // Where a post came from, color-coded so you can tell at a glance whether you
 // scheduled it, a campaign made it, or it's a reply to someone else's post.
@@ -124,12 +126,12 @@ function Paywall({ me, authed, onSignOut }) {
       <motion.div className="card pay-card" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
         <div className="row" style={{ gap: 9, marginBottom: 6 }}><span className="wordmark" style={{ fontSize: 24 }}>Cadence</span><span className="pro-pill"><Crown size={12} /> Pro</span></div>
         <div className="muted" style={{ fontSize: 14, marginBottom: 18 }}>Subscribe and Cadence writes your tweets in your voice, then posts them on schedule.</div>
-        <div className="pay-price">$17<span className="muted" style={{ fontSize: 15, fontWeight: 500 }}>/month</span></div>
+        <div className="pay-price">${me?.proPrice || 19}<span className="muted" style={{ fontSize: 15, fontWeight: 500 }}>/month</span></div>
         <div className="pay-perks">
           {perks.map(([Ic, t], i) => <div key={i} className="pay-perk"><span className="pay-ic"><Ic size={15} /></span>{t}</div>)}
         </div>
         <motion.button className="btn-primary" style={{ width: '100%', padding: 13, marginTop: 18 }} disabled={busy} onClick={subscribe} whileTap={{ scale: 0.98 }}>
-          {busy ? <span className="dots"><i/><i/><i/></span> : 'Subscribe for $17/mo'}
+          {busy ? <span className="dots"><i/><i/><i/></span> : `Subscribe for $${me?.proPrice || 19}/mo`}
         </motion.button>
         {msg && <div className="notice" style={{ marginTop: 12 }}>{msg}</div>}
         <div className="muted" style={{ marginTop: 16, textAlign: 'center', fontSize: 12.5 }}>Cancel anytime · <span className="link" onClick={onSignOut}>Sign out</span></div>
@@ -147,7 +149,7 @@ function Onboarding({ session, me, authed, onDone }) {
   const [role, setRole] = useState(saved.role || '')
   const [goals, setGoals] = useState(saved.goals || '')
   const [liUrl, setLiUrl] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState(false); const [obMsg, setObMsg] = useState('')
   const [liDone, setLiDone] = useState(saved.liDone || false)
   const [conns, setConns] = useState([])
 
@@ -156,13 +158,14 @@ function Onboarding({ session, me, authed, onDone }) {
   useEffect(() => { const p = new URLSearchParams(window.location.search); if (p.get('x') === 'connected') { setStep(s => Math.max(s, 3)); window.history.replaceState({}, '', '/') } }, [])
 
   const connected = conns.length > 0
-  async function connectX() { persist({ step: 2 }); const r = await authed('/api/x/connect', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url }
+  async function connectX() { setObMsg(''); persist({ step: 2 }); const r = await authed('/api/x/connect', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setObMsg(d.error || 'Could not start X connection. Try again.') }
   async function scrapeLi() {
     if (!liUrl.trim()) return setStep(s => s + 1)
-    setBusy(true)
+    setBusy(true); setObMsg('')
     const r = await authed('/api/linkedin', { method: 'POST', body: JSON.stringify({ profileUrl: liUrl.trim(), maxPosts: 50 }) })
     const d = await r.json(); setBusy(false)
     if (!d.error) { setLiDone(true); persist({ liDone: true, step: step + 1 }); setStep(s => s + 1) }
+    else setObMsg(d.error)
   }
   async function finish() {
     setBusy(true)
@@ -197,7 +200,7 @@ function Onboarding({ session, me, authed, onDone }) {
       <div className="ob-nav"><span className="link" onClick={() => setStep(2)}>Back</span><button className="btn-primary" disabled={busy} onClick={scrapeLi}>{busy ? <span className="dots"><i/><i/><i/></span> : liUrl.trim() ? 'Pull posts' : 'Skip'}</button></div>
     </>)},
     { title: "You're all set", body: (<>
-      <p className="ob-lead">{name ? `Welcome, ${name.split(' ')[0]}. ` : ''}Head to the Brain to learn your voice and generate posts, or jump into your Queue.</p>
+      <p className="ob-lead">{name ? `Welcome, ${name.split(' ')[0]}. ` : ''}Open the X tab to connect your account and learn your voice, then jump into your Queue.</p>
       <button className="btn-primary" style={{ marginTop: 20, padding: 12, width: '100%' }} disabled={busy} onClick={finish}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Enter Cadence'}</button>
     </>)},
   ]
@@ -208,6 +211,7 @@ function Onboarding({ session, me, authed, onDone }) {
         <div className="ob-dots">{steps.map((_, i) => <span key={i} className={'ob-dot' + (i <= step ? ' on' : '')} />)}</div>
         <div className="wordmark" style={{ fontSize: 22, marginBottom: 4 }}>{cur.title}</div>
         <div style={{ marginTop: 10 }}>{cur.body}</div>
+        {obMsg && <div className="notice" style={{ marginTop: 12, color: '#c0392b' }}>{obMsg}</div>}
       </motion.div>
     </div>
   )
@@ -308,7 +312,7 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
   const [when, setWhen] = useState(defaultWhen(defaultHour))
   const [connId, setConnId] = useState(xConns[0]?.id || '')
   const [busy, setBusy] = useState(false); const [regen, setRegen] = useState(false); const [done, setDone] = useState(null)
-  const [rating, setRating] = useState(null)
+  const [rating, setRating] = useState(null); const [err, setErr] = useState(''); const [doneErr, setDoneErr] = useState('')
   const countdown = useCountdown(when)
 
   useEffect(() => { if (!connId && xConns[0]?.id) setConnId(xConns[0].id) }, [xConns, connId])
@@ -327,11 +331,18 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
     if (!content.trim() || content.length > MAX) return
     setBusy(true)
     const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ content, scheduledFor: new Date(when).toISOString(), imageUrl: imgOn ? img : null, xConnectionId: connId || null }) })
-    const d = await r.json(); let result = 'scheduled'
-    if (postNow && d.post?.id) { const pr = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id: d.post.id, action: 'post_now' }) }); const pd = await pr.json(); result = pd.status === 'posted' ? 'posted' : 'failed' }
-    setBusy(false); setDone(result); onResolved && onResolved()
+    const d = await r.json()
+    if (!r.ok || d.error || !d.post?.id) { setBusy(false); setErr(d.error || 'Could not save the post.'); return }
+    let result = 'scheduled', errMsg = ''
+    if (postNow) {
+      const pr = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id: d.post.id, action: 'post_now' }) })
+      const pd = await pr.json()
+      result = pd.status === 'posted' ? 'posted' : 'failed'
+      if (result === 'failed') errMsg = pd.error || 'Post failed.'
+    }
+    setBusy(false); setDoneErr(errMsg); setDone(result); onResolved && onResolved()
   }
-  if (done) return <div className={'dp-done ' + done}>{done === 'posted' ? 'Posted to X' : done === 'failed' ? 'Post failed, reconnect X' : done === 'discarded' ? 'Discarded' : `Scheduled · ${fmt(new Date(when).toISOString())}`}</div>
+  if (done) return <div className={'dp-done ' + done}>{done === 'posted' ? 'Posted to X' : done === 'failed' ? `Failed — saved to Queue. ${doneErr}` : done === 'discarded' ? 'Discarded' : `Scheduled · ${fmt(new Date(when).toISOString())}`}</div>
   return (
     <motion.div className="card dp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
       <div className="dp-head">
@@ -366,6 +377,7 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
         </div>
         <span className={'count' + (content.length > MAX ? ' over' : '')}>{content.length}/{MAX}</span>
       </div>
+      {err && <div className="notice" style={{ color: '#c0392b', marginTop: 8 }}>{err}</div>}
       <div className="dp-actions">
         <button className="icon-btn x" title="Discard" onClick={() => setDone('discarded')}><Ex /></button>
         <button className="icon-btn check" title="Approve & schedule" disabled={busy || content.length > MAX || !content.trim()} onClick={() => approve(false)}><Check /> <span>Schedule</span></button>
@@ -376,8 +388,12 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
 }
 
 // ── Queue card (collapsible + inline edit) ──────────────────────────────────────
-function QueueCard({ p, i, connected, defaultCollapsed, onSaveEdit, onPostNow, onDelete, onSchedule }) {
+function QueueCard({ p, i, connected, canPostLinkedIn, defaultCollapsed, onSaveEdit, onPostNow, onDelete, onSchedule }) {
   const s = STATUS[p.status] || { c: '#9ca3af', label: p.status }
+  const cap = capFor(p)
+  const isLi = p.platform === 'linkedin'
+  const canPost = isLi ? canPostLinkedIn : connected
+  const inFlight = p.status === 'posting'
   const [open, setOpen] = useState(!defaultCollapsed)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(p.content)
@@ -397,21 +413,23 @@ function QueueCard({ p, i, connected, defaultCollapsed, onSaveEdit, onPostNow, o
             <div className="qbody">
               <ReplyContext p={p} />
               {p.image_url && <img src={p.image_url} className="qcard-img" alt="" />}
+              {p.status === 'failed' && p.error && <div className="notice" style={{ color: '#c0392b', marginBottom: 8 }}>{p.error}</div>}
               {editing
-                ? <textarea className="field" rows={5} value={draft} maxLength={400} onChange={e => setDraft(e.target.value)} autoFocus />
+                ? <textarea className="field" rows={5} value={draft} maxLength={cap + 40} onChange={e => setDraft(e.target.value)} autoFocus />
                 : <div className="card-body">{p.content}</div>}
-              {editing && <div className={'count' + (draft.length > MAX ? ' over' : '')} style={{ marginTop: 6 }}>{draft.length}/{MAX}</div>}
+              {editing && <div className={'count' + (draft.length > cap ? ' over' : '')} style={{ marginTop: 6 }}>{draft.length}/{cap}</div>}
               {p.status !== 'posted' && (
                 <div className="qrow">
-                  <span className="muted tiny">{fmt(p.scheduled_for)}</span>
+                  <span className="muted tiny">{inFlight ? 'posting…' : fmt(p.scheduled_for)}</span>
                   <div className="row" style={{ gap: 6 }}>
-                    {editing ? (<>
+                    {inFlight ? <span className="muted tiny"><Loader2 size={12} className="spin" /> publishing</span>
+                     : editing ? (<>
                       <button className="mini" onClick={() => { setDraft(p.content); setEditing(false) }}>Cancel</button>
-                      <button className="mini accent" disabled={busy || !draft.trim() || draft.length > MAX} onClick={save}>{busy ? '…' : 'Save'}</button>
+                      <button className="mini accent" disabled={busy || !draft.trim() || draft.length > cap} onClick={save}>{busy ? '…' : 'Save'}</button>
                     </>) : (<>
                       <button className="mini" onClick={() => setEditing(true)}><Pencil size={12} /> Edit</button>
                       <button className="mini" onClick={() => onSchedule(p)}><Clock size={12} /> Time</button>
-                      <button className="mini" onClick={() => onPostNow(p.id)} disabled={!connected}>Post now</button>
+                      <button className="mini" onClick={() => onPostNow(p.id)} disabled={!canPost} title={!canPost ? (isLi ? 'Connect LinkedIn to publish' : 'Connect X to publish') : ''}>{p.status === 'failed' ? 'Retry' : 'Post now'}</button>
                       <button className="mini danger" onClick={() => onDelete(p.id)}><Trash2 size={12} /></button>
                     </>)}
                   </div>
@@ -530,107 +548,6 @@ function RunNow({ running, onRun }) {
     <button className="mini" disabled={running} onClick={onRun} title="Run this now and watch it work">
       {running ? <Loader2 size={12} className="spin" /> : <Play size={12} />}
     </button>
-  )
-}
-
-// ── Marketing campaigns ─────────────────────────────────────────────────────────
-function CampaignManager({ campaigns, xConns, posts = [], onSave, onToggle, onDelete, onRun }) {
-  const [adding, setAdding] = useState(false)
-  const [editingId, setEditingId] = useState(null)
-  const [openId, setOpenId] = useState(null)
-  const [name, setName] = useState(''); const [topic, setTopic] = useState(''); const [link, setLink] = useState('')
-  const [connIds, setConnIds] = useState([]); const [every, setEvery] = useState(24); const [perRun, setPerRun] = useState(1)
-  const [img, setImg] = useState(false); const [busy, setBusy] = useState(false)
-  const formOpen = adding || editingId
-  const primaryId = xConns.find(c => c.is_primary)?.id
-
-  function reset() { setName(''); setTopic(''); setLink(''); setConnIds([]); setEvery(24); setPerRun(1); setImg(false); setAdding(false); setEditingId(null) }
-  function toggleConn(id) { setConnIds(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]) }
-  function startNew() { reset(); setConnIds(primaryId ? [primaryId] : []); setAdding(true) } // post campaigns default to primary
-  function startEdit(c) {
-    setName(c.name || ''); setTopic(c.topic || ''); setLink(c.link || '')
-    setConnIds(Array.isArray(c.connection_ids) ? c.connection_ids : [])
-    setEvery(c.interval_hours || 24); setPerRun(c.posts_per_run || 1); setImg(!!c.include_image)
-    setAdding(false); setEditingId(c.id)
-  }
-  async function submit(active) {
-    if (!name.trim() || !topic.trim()) return
-    setBusy(true)
-    const payload = { name: name.trim(), topic: topic.trim(), link: link.trim() || null, connection_ids: connIds, interval_hours: Number(every), posts_per_run: Number(perRun), include_image: img }
-    if (editingId) payload.id = editingId; else payload.active = active
-    const ok = await onSave(payload)
-    setBusy(false); if (ok) reset()
-  }
-
-  return (
-    <div style={{ marginBottom: 10 }}>
-      {campaigns.map(c => {
-        const accts = (c.connection_ids?.length ? c.connection_ids : xConns.map(x => x.id))
-        const names = accts.map(id => xConns.find(x => x.id === id)?.username).filter(Boolean)
-        const { pending, live } = activityFor(posts, 'campaign_id', c.id)
-        const open = openId === c.id
-        return (
-          <div className="card camp-card" key={c.id}>
-            <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ minWidth: 0 }}>
-                <div className="conn-title row" style={{ gap: 7 }}>{c.name}<span className={'camp-state' + (c.active ? ' on' : '')}>{c.active ? 'Running' : 'Paused'}</span></div>
-                <div className="muted tiny" style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.topic}</div>
-              </div>
-              <div className="row" style={{ gap: 6, flex: 'none' }}>
-                {onRun && <RunNow running={c.running} onRun={() => onRun(c.id)} />}
-                <button className="mini" onClick={() => startEdit(c)} title="Edit"><Pencil size={12} /></button>
-                <button className="mini" onClick={() => onToggle(c)} title={c.active ? 'Pause' : 'Start'}>{c.active ? <LPause size={12} /> : <Play size={12} />}</button>
-                <button className="mini danger" onClick={() => onDelete(c.id)}><Trash2 size={12} /></button>
-              </div>
-            </div>
-            <div className="muted tiny" style={{ marginTop: 7 }}>{c.posts_per_run} post{c.posts_per_run > 1 ? 's' : ''} every {c.interval_hours}h · {names.length ? '@' + names.join(', @') : 'all accounts'}{c.include_image ? ' · with image' : ''}</div>
-            <LiveStatus running={c.running} detail={c.status_detail} lastAt={c.last_activity_at} />
-            <button className="act-toggle" onClick={() => setOpenId(open ? null : c.id)}>
-              <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
-              {live.length} posted · {pending.length} coming up
-            </button>
-            <AnimatePresence initial={false}>
-              {open && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-                  <ActivityList pending={pending} live={live} />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        )
-      })}
-
-      {formOpen ? (
-        <div className="card camp-form">
-          <input className="field" placeholder="Campaign name (e.g. Launch week)" value={name} onChange={e => setName(e.target.value)} />
-          <textarea className="field" rows={3} style={{ marginTop: 8 }} placeholder="What do you want to promote? Describe the product/idea, the key points, and the vibe." value={topic} onChange={e => setTopic(e.target.value)} />
-          <input className="field" style={{ marginTop: 8 }} placeholder="Link (optional)" value={link} onChange={e => setLink(e.target.value)} />
-          <div className="camp-accts">
-            <div className="muted tiny" style={{ marginBottom: 6 }}>Post from{xConns.length ? ' (defaults to your primary)' : ' (connect an X account first)'}:</div>
-            {xConns.map(c => (
-              <button type="button" key={c.id} className={'chip' + (connIds.includes(c.id) ? ' on' : '')} onClick={() => toggleConn(c.id)}>@{c.username}{c.is_primary ? ' ★' : ''}</button>
-            ))}
-            {xConns.length > 0 && <span className="muted tiny" style={{ marginLeft: 4 }}>{connIds.length ? '' : '(none = all)'}</span>}
-          </div>
-          <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
-            <label className="camp-num">Every <input type="number" min={1} className="field" value={every} onChange={e => setEvery(e.target.value)} /> h</label>
-            <label className="camp-num"><input type="number" min={1} max={5} className="field" value={perRun} onChange={e => setPerRun(e.target.value)} /> per run</label>
-            <Toggle on={img} onChange={setImg} label="image" />
-          </div>
-          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-            <button className="mini" onClick={reset}>Cancel</button>
-            {editingId
-              ? <button className="btn-primary btn-sm" disabled={busy || !name.trim() || !topic.trim()} onClick={() => submit(false)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Save changes'}</button>
-              : <>
-                  <button className="btn-ghost btn-sm" disabled={busy || !name.trim() || !topic.trim()} onClick={() => submit(false)}>Save</button>
-                  <button className="btn-primary btn-sm" disabled={busy || !name.trim() || !topic.trim()} onClick={() => submit(true)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Launch'}</button>
-                </>}
-          </div>
-        </div>
-      ) : (
-        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={startNew}><Plus size={14} /> New post campaign</button>
-      )}
-    </div>
   )
 }
 
@@ -930,24 +847,6 @@ function BrainBanner({ theme, dual }) {
     <div style={{ display: 'flex', gap: 10 }}>
       <div className="brain-stage" style={{ height: 175, flex: 1, minWidth: 0 }}><BrainViz theme={theme} /></div>
       <div className="brain-stage" style={{ height: 175, flex: 1, minWidth: 0 }}><BrainViz theme={dual} /></div>
-    </div>
-  )
-}
-
-// "Learn my voice" — pull this account's content so the AI studies how the user
-// actually writes on this platform. Shows the sample count once pulled.
-function VoicePull({ platform, label, connected, counts, pulling, onPull }) {
-  const n = counts?.[platform] || 0
-  return (
-    <div className="card" style={{ padding: 12, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-      <span className="gen-ic" style={{ flex: 'none' }}><Brain size={16} /></span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 13 }}>Learn my voice from {label}</div>
-        <div className="muted tiny">{n > 0 ? `Studying ${n} of your ${label} posts` : `Pull your recent ${label} posts so Cadence writes more like you`}</div>
-      </div>
-      <button className="btn-ghost btn-sm" disabled={!connected || pulling === platform} onClick={() => onPull(platform)}>
-        {pulling === platform ? <Loader2 size={13} className="spin" /> : n > 0 ? 'Refresh' : 'Pull'}
-      </button>
     </div>
   )
 }
@@ -1281,13 +1180,12 @@ function App({ session }) {
   const [tab, setTab] = useState('queue')
   const [posts, setPosts] = useState([]); const [xConns, setXConns] = useState([])
   const [liSelf, setLiSelf] = useState([]); const [liMentors, setLiMentors] = useState([]); const [liPosts, setLiPosts] = useState([])
-  const [campaigns, setCampaigns] = useState([]); const [photos, setPhotos] = useState([])
+  const [photos, setPhotos] = useState([])
   const [engRules, setEngRules] = useState([])
   const [socialAccounts, setSocialAccounts] = useState([]); const [socialConfigured, setSocialConfigured] = useState(false)
   const [slideshows, setSlideshows] = useState([])
   const [engSettings, setEngSettings] = useState([]); const [socialReplies, setSocialReplies] = useState([])
   const [qPlatform, setQPlatform] = useState('all')
-  const [voiceCounts, setVoiceCounts] = useState({}); const [pulling, setPulling] = useState('')
   const [brandCampaigns, setBrandCampaigns] = useState([])
   const [inspoX, setInspoX] = useState([]); const [suggesting, setSuggesting] = useState('')
   const [clipJobs, setClipJobs] = useState([]); const [igMode, setIgMode] = useState('carousels')
@@ -1295,27 +1193,25 @@ function App({ session }) {
   const [messages, setMessages] = useState([]); const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
   const [compose, setCompose] = useState(null); const [composeBusy, setComposeBusy] = useState(false)
-  const [analyzing, setAnalyzing] = useState(false); const [generating, setGenerating] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
   const [upgrade, setUpgrade] = useState(false); const [settings, setSettings] = useState(false)
   const [xConnect, setXConnect] = useState(false)
   const inputRef = useRef(null); const bottomRef = useRef(null)
 
-  const loadQueue = useCallback(async () => { const { data } = await supabase.from('posts').select('*').order('scheduled_for', { ascending: true }); if (data) setPosts(data) }, [])
+  const loadQueue = useCallback(async () => { const { data } = await supabase.from('posts').select('*').order('scheduled_for', { ascending: true }).limit(300); if (data) setPosts(data) }, [])
   const loadX = useCallback(async () => { const r = await authed('/api/x/status'); const d = await r.json(); setXConns(d.connections || []) }, [authed])
   const loadLinkedIn = useCallback(async () => { const r = await authed('/api/linkedin'); const d = await r.json(); setLiSelf(d.self || []); setLiMentors(d.mentors || []); setLiPosts(d.posts || []) }, [authed])
   const loadMe = useCallback(async () => { const r = await authed('/api/me'); const d = await r.json(); setMe(d) }, [authed])
-  const loadCampaigns = useCallback(async () => { const r = await authed('/api/campaigns'); const d = await r.json(); setCampaigns(d.campaigns || []) }, [authed])
   const loadPhotos = useCallback(async () => { const r = await authed('/api/photos'); const d = await r.json(); setPhotos(d.photos || []) }, [authed])
   const loadEngagement = useCallback(async () => { const r = await authed('/api/engagement'); const d = await r.json(); setEngRules(d.rules || []) }, [authed])
   const loadSocial = useCallback(async (sync) => { const r = await authed(`/api/social${sync ? '?sync=1' : ''}`); const d = await r.json(); setSocialAccounts(d.accounts || []); setSocialConfigured(!!d.configured) }, [authed])
   const loadSlideshows = useCallback(async () => { const r = await authed('/api/slideshow'); const d = await r.json(); setSlideshows(d.slideshows || []) }, [authed])
   const loadSocialEng = useCallback(async () => { const r = await authed('/api/social-engagement'); const d = await r.json(); setEngSettings(d.settings || []); setSocialReplies(d.replies || []) }, [authed])
-  const loadVoice = useCallback(async () => { const r = await authed('/api/voice'); const d = await r.json(); setVoiceCounts(d.counts || {}) }, [authed])
   const loadBrand = useCallback(async () => { const r = await authed('/api/brand-campaigns'); const d = await r.json(); setBrandCampaigns(d.campaigns || []) }, [authed])
   const loadInspoX = useCallback(async () => { const r = await authed('/api/inspiration?platform=x'); const d = await r.json(); setInspoX(d.accounts || []) }, [authed])
   const loadClips = useCallback(async () => { const r = await authed('/api/clips'); const d = await r.json(); setClipJobs(d.jobs || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadVoice(); loadBrand(); loadInspoX(); loadClips() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadVoice, loadBrand, loadInspoX, loadClips])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips])
 
   // Poll clip jobs while any is queued/processing so progress streams in live.
   useEffect(() => {
@@ -1336,12 +1232,12 @@ function App({ session }) {
   }, [loadSocial])
 
   // While any campaign or rule is mid-run, keep its live status fresh.
-  const anyRunning = campaigns.some(c => c.running) || engRules.some(r => r.running)
+  const anyRunning = brandCampaigns.some(c => c.running) || engRules.some(r => r.running)
   useEffect(() => {
     if (!anyRunning) return
-    const t = setInterval(() => { loadCampaigns(); loadEngagement() }, 2000)
+    const t = setInterval(() => { loadBrand(); loadEngagement() }, 2000)
     return () => clearInterval(t)
-  }, [anyRunning, loadCampaigns, loadEngagement])
+  }, [anyRunning, loadBrand, loadEngagement])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
@@ -1369,17 +1265,12 @@ function App({ session }) {
   // and OAuth 2.0 has no force-login, so we let the user switch accounts before authorizing.
   function connectX() { setXConnect(true) }
   async function startXConnect() { setXConnect(false); const r = await authed('/api/x/connect', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Could not start X connection.') }
-  async function disconnectX(id) { const target = id || xConns[0]?.id; if (!target) return; await authed('/api/x/status', { method: 'DELETE', body: JSON.stringify({ id: target }) }); setBanner('Disconnected X account'); loadX() }
+  async function disconnectX(id) { const target = id || xConns[0]?.id; if (!target) return; if (!confirm('Disconnect this X account? Its scheduled posts will stop publishing.')) return; await authed('/api/x/status', { method: 'DELETE', body: JSON.stringify({ id: target }) }); setBanner('Disconnected X account'); loadX() }
   async function makePrimary(id) { await authed('/api/x/status', { method: 'PATCH', body: JSON.stringify({ id, is_primary: true }) }); setBanner('Primary account updated'); loadX() }
 
   // "Run now" — trigger one campaign/rule and poll its live status until it
   // finishes, so the user watches it work. The engine writes status_detail at
   // each step; we reload until running flips back to false.
-  async function runCampaignNow(id) {
-    setBanner('Running campaign…'); loadCampaigns()
-    const poll = setInterval(loadCampaigns, 1400)
-    try { await authed('/api/campaigns', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }) } finally { clearInterval(poll); loadCampaigns(); loadQueue() }
-  }
   async function runEngagementNow(id) {
     setBanner('Running engagement…'); loadEngagement()
     const poll = setInterval(loadEngagement, 1400)
@@ -1387,15 +1278,6 @@ function App({ session }) {
   }
   async function openPortal() { const r = await authed('/api/stripe/portal', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Billing portal unavailable.') }
 
-  // Campaigns (PATCH when editing an existing one, POST to create)
-  async function saveCampaign(payload) {
-    const editing = !!payload.id
-    const r = await authed('/api/campaigns', { method: editing ? 'PATCH' : 'POST', body: JSON.stringify(payload) })
-    const d = await r.json(); if (d.error) setBanner(d.error); else { setBanner(editing ? 'Campaign updated' : payload.active ? 'Campaign launched' : 'Campaign saved'); loadCampaigns(); if (payload.active) setTimeout(loadQueue, 1500) }
-    return !d.error
-  }
-  async function toggleCampaign(c) { await authed('/api/campaigns', { method: 'PATCH', body: JSON.stringify({ id: c.id, active: !c.active }) }); setBanner(!c.active ? 'Campaign running' : 'Campaign paused'); loadCampaigns(); loadQueue(); if (!c.active) setTimeout(loadQueue, 1500) }
-  async function deleteCampaign(id) { await authed('/api/campaigns', { method: 'DELETE', body: JSON.stringify({ id }) }); loadCampaigns(); loadQueue() }
 
   // Engagement rules
   async function saveEngagement(payload) {
@@ -1409,7 +1291,7 @@ function App({ session }) {
     await authed('/api/engagement', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) })
     if (note) setBanner(note); loadEngagement(); loadQueue(); if (patch.active) setTimeout(loadQueue, 2500)
   }
-  async function deleteEngagement(id) { await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); loadQueue() }
+  async function deleteEngagement(id) { if (!confirm('Delete this engagement rule?')) return; await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); loadQueue() }
 
   // Social (Instagram/TikTok/LinkedIn via Zernio)
   async function connectSocial(platform) {
@@ -1430,9 +1312,12 @@ function App({ session }) {
   async function patchBrand(id, patch) { await authed('/api/brand-campaigns', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); loadBrand() }
   async function deleteBrand(id) { await authed('/api/brand-campaigns', { method: 'DELETE', body: JSON.stringify({ id }) }); loadBrand() }
   async function runBrand(id) {
-    setBanner('Running campaign across your accounts…')
-    const r = await authed('/api/brand-campaigns', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }); const d = await r.json()
-    setBanner(d.error ? d.error : `Posted across ${d.done || 0} account${d.done === 1 ? '' : 's'}`); loadBrand(); loadQueue(); loadSlideshows()
+    setBanner('Running campaign across your accounts…'); loadBrand()
+    const poll = setInterval(loadBrand, 1500) // stream per-target status_detail
+    try {
+      const r = await authed('/api/brand-campaigns', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }); const d = await r.json()
+      setBanner(d.error ? d.error : `Posted across ${d.done || 0} account${d.done === 1 ? '' : 's'}`)
+    } finally { clearInterval(poll); loadBrand(); loadQueue(); loadSlideshows() }
   }
   async function suggestPosts(platform) {
     setSuggesting(platform)
@@ -1468,19 +1353,13 @@ function App({ session }) {
     if (d.error) { setBanner(d.error); return null }
     setBanner('Uploaded — ready to clip'); return d.url
   }
-  async function deleteClipJob(id) { await authed('/api/clips', { method: 'DELETE', body: JSON.stringify({ id }) }); loadClips() }
+  async function deleteClipJob(id) { if (!confirm('Delete this clip job and its clips?')) return; await authed('/api/clips', { method: 'DELETE', body: JSON.stringify({ id }) }); loadClips() }
   async function postClip(job_id, clip_index, account_ids) {
     setBanner('Posting clip…')
     const r = await authed('/api/clips', { method: 'POST', body: JSON.stringify({ action: 'post', job_id, clip_index, account_ids }) }); const d = await r.json()
     setBanner(d.error || 'Clip posted')
   }
-  async function pullVoiceFrom(platform) {
-    setPulling(platform)
-    const r = await authed('/api/voice', { method: 'POST', body: JSON.stringify({ platform }) }); const d = await r.json()
-    setPulling(''); setVoiceCounts(d.counts || {})
-    setBanner(d.error ? d.error : d.note ? d.note : `Pulled ${d.pulled || 0} ${platform} posts — re-analyze to update your voice`)
-  }
-  async function deleteSlideshow(id) { await authed('/api/slideshow', { method: 'DELETE', body: JSON.stringify({ id }) }); loadSlideshows() }
+  async function deleteSlideshow(id) { if (!confirm('Delete this slideshow?')) return; await authed('/api/slideshow', { method: 'DELETE', body: JSON.stringify({ id }) }); loadSlideshows() }
   async function generateSlideshow(payload) {
     const r = await authed('/api/slideshow/generate', { method: 'POST', body: JSON.stringify(payload) })
     const d = await r.json()
@@ -1517,12 +1396,6 @@ function App({ session }) {
     if (r.status === 402) return setUpgrade(true)
     if (d.error) setBanner(d.error); else { setBanner('Voice profile updated'); loadMe() }
   }
-  async function generate(n = 5) {
-    setGenerating(true); setBanner('')
-    const r = await authed('/api/generate', { method: 'POST', body: JSON.stringify({ n }) }); const d = await r.json(); setGenerating(false)
-    if (r.status === 402) return setUpgrade(true)
-    if (d.error) setBanner(d.error); else { setBanner(`Generated ${d.drafts?.length || 0} drafts`); loadQueue() }
-  }
   function openNew() { setCompose({ mode: 'new', content: '', when: defaultWhen(defaultHour), imgOn: imgDefault, img: '', connId: xConns[0]?.id || '', personal: false }) }
   function openSchedule(p) { setCompose({ mode: p.status === 'draft' ? 'draft' : 'edit', id: p.id, content: p.content, when: toLocalInput(new Date(p.scheduled_for)), imgOn: !!p.image_url, img: p.image_url || '', connId: p.x_connection_id || xConns[0]?.id || '', personal: false }) }
   async function saveEdit(id, content) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, content }) }); loadQueue() }
@@ -1537,14 +1410,19 @@ function App({ session }) {
     try {
       let id = compose.id; const iso = new Date(compose.when).toISOString(); const imageUrl = compose.imgOn ? compose.img : null
       if ((compose.mode === 'edit' || compose.mode === 'draft') && id) {
-        await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, content: c, scheduledFor: iso, status: 'queued', imageUrl, xConnectionId: compose.connId || null }) })
-      } else { const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ content: c, scheduledFor: iso, imageUrl, xConnectionId: compose.connId || null }) }); const d = await r.json(); id = d.post?.id }
-      if (postNow && id) { const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id, action: 'post_now' }) }); const d = await r.json(); setBanner(d.status === 'posted' ? `Posted as @${d.as}` : `Post failed: ${d.error || 'error'}`) }
+        const r = await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, content: c, scheduledFor: iso, status: 'queued', imageUrl, xConnectionId: compose.connId || null }) })
+        const d = await r.json(); if (!r.ok || d.error) { setBanner(d.error || 'Could not save.'); return }
+      } else {
+        const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ content: c, scheduledFor: iso, imageUrl, xConnectionId: compose.connId || null }) }); const d = await r.json()
+        if (!r.ok || d.error || !d.post?.id) { setBanner(d.error || 'Could not save the post.'); return }
+        id = d.post.id
+      }
+      if (postNow && id) { const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id, action: 'post_now' }) }); const d = await r.json(); setBanner(d.status === 'posted' ? `Posted as @${d.as}` : `Saved to Queue — couldn't post now: ${d.error || 'error'}`) }
       else setBanner('Added to queue')
       setCompose(null); loadQueue()
     } finally { setComposeBusy(false) }
   }
-  async function delPost(id) { await authed('/api/posts', { method: 'DELETE', body: JSON.stringify({ id }) }); loadQueue() }
+  async function delPost(id) { if (!confirm('Delete this post?')) return; await authed('/api/posts', { method: 'DELETE', body: JSON.stringify({ id }) }); loadQueue() }
   async function postNow(id) {
     setBanner('Posting…')
     const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id, action: 'post_now' }) }); const d = await r.json()
@@ -1585,7 +1463,7 @@ function App({ session }) {
               {['queue', 'x', 'linkedin', 'social', 'campaigns'].map(t => (
                 <button key={t} onClick={() => setTab(t)} className={'seg-btn' + (tab === t ? ' on' : '')}>
                   {tab === t && <motion.span layoutId="seg-pill" className="seg-pill" transition={spring} />}
-                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', social: 'IG/TikTok', campaigns: 'Campaigns' })[t]}{t === 'x' && drafts.length > 0 && <span className="dot-badge">{drafts.length}</span>}</span>
+                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', social: 'IG/TikTok', campaigns: 'Campaigns' })[t]}{t === 'x' && xDrafts.length > 0 && <span className="dot-badge">{xDrafts.length}</span>}{t === 'linkedin' && liDrafts.length > 0 && <span className="dot-badge">{liDrafts.length}</span>}</span>
                 </button>
               ))}
             </div>
@@ -1612,7 +1490,7 @@ function App({ session }) {
                     </div>
                   )}
                   {fQueue.length === 0 && schedShows.length === 0 && <Empty icon={<Clock size={26} />}>Nothing queued{qPlatform !== 'all' ? ` for ${qPlatform}` : ''}. Write a post, generate from Chat, or make a slideshow.</Empty>}
-                  <div>{fQueue.map((p, i) => <QueueCard key={p.id} p={p} i={i} connected={connected} defaultCollapsed={collapseQueue} onSaveEdit={saveEdit} onPostNow={postNow} onDelete={delPost} onSchedule={openSchedule} />)}</div>
+                  <div>{fQueue.map((p, i) => <QueueCard key={p.id} p={p} i={i} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} defaultCollapsed={collapseQueue} onSaveEdit={saveEdit} onPostNow={postNow} onDelete={delPost} onSchedule={openSchedule} />)}</div>
                   {schedShows.map(s => (
                     <div className="card camp-card" key={s.id}>
                       <div className="row" style={{ gap: 10 }}>
@@ -1640,12 +1518,16 @@ function App({ session }) {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div className="conn-title row" style={{ gap: 6 }}>@{c.username}
                         {c.is_primary ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span> : <span className="role-badge">Feeder</span>}
+                        {c.needs_reconnect && <span className="role-badge" style={{ background: '#fbe6d4', color: '#b9540a' }}>Reconnect</span>}
                       </div>
+                      {c.needs_reconnect && <div className="muted tiny" style={{ color: '#b9540a' }}>Authorization expired — posts won&apos;t publish until you reconnect.</div>}
                     </div>
+                    {c.needs_reconnect && <button className="mini accent" onClick={connectX}>Reconnect</button>}
                     {!c.is_primary && <button className="mini" onClick={() => makePrimary(c.id)} title="Make this your primary account">Make primary</button>}
                     <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
                   </div>
                 ))}
+                {xConns.some(c => c.needs_reconnect) && <div className="notice" style={{ color: '#b9540a', marginBottom: 10 }}>One or more X accounts need reconnecting — scheduled posts on them are failing.</div>}
                 <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 14 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account (feeder)' : 'Connect X'}</button>
 
                 <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
@@ -1796,7 +1678,7 @@ function App({ session }) {
           <motion.div className="overlay" onClick={() => !composeBusy && setCompose(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <motion.div className="card modal" onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.96 }} transition={spring}>
               <div className="row" style={{ justifyContent: 'space-between', marginBottom: 14 }}>
-                <span style={{ fontWeight: 700, fontSize: 15.5 }}>{compose.mode === 'edit' ? 'Edit post' : compose.mode === 'draft' ? 'Schedule draft' : compose.mode === 'repurpose' ? 'Repurpose to X' : 'New post'}</span>
+                <span style={{ fontWeight: 700, fontSize: 15.5 }}>{compose.mode === 'edit' ? 'Edit post' : compose.mode === 'draft' ? 'Schedule draft' : 'New post'}</span>
                 <button className="x-close" onClick={() => !composeBusy && setCompose(null)}><LX size={18} /></button>
               </div>
               <div style={{ position: 'relative' }}>
@@ -1841,7 +1723,7 @@ function App({ session }) {
           <motion.div className="overlay" onClick={() => setUpgrade(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <motion.div className="card modal upgrade" onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.96 }} transition={spring}>
               <div className="row" style={{ justifyContent: 'space-between' }}><span className="wordmark" style={{ fontSize: 21 }}>Cadence Pro</span><button className="x-close" onClick={() => setUpgrade(false)}><LX size={18} /></button></div>
-              <div className="price">${me?.proPrice || 17}<span className="muted" style={{ fontSize: 15, fontWeight: 500 }}>/mo</span></div>
+              <div className="price">${me?.proPrice || 19}<span className="muted" style={{ fontSize: 15, fontWeight: 500 }}>/mo</span></div>
               <ul className="perks">
                 <li><Brain size={15} /> A voice engine that learns your style and writes posts for you</li>
                 <li><Sparkles size={15} /> Unlimited posts generated in your voice</li>
