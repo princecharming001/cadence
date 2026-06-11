@@ -3,8 +3,14 @@ import { admin, getUser } from '@/lib/supabase'
 import { generateImage } from '@/lib/images'
 import { X_RUBRIC, CHAT_STYLE } from '@/lib/rubric'
 import { recentFeedback, feedbackBlock } from '@/lib/feedback'
+import { generateSlideshow } from '@/lib/slideshow'
+import { createPost, zernioEnabled } from '@/lib/zernio'
+import { runSocialEngagement, SOCIAL_ENGAGEMENT_PLATFORMS } from '@/lib/social-engagement'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+export const runtime = 'nodejs'
+export const maxDuration = 120 // slideshow generation can render several slides
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -114,6 +120,45 @@ const tools = [
       required: ['start_from', 'interval_hours'],
     },
   },
+  {
+    name: 'get_overview',
+    description: "Snapshot of the user's whole setup across platforms: connected social accounts (Instagram/TikTok/LinkedIn/X), queue counts, campaigns, and which platforms have auto-replies on. Call when the user asks what's going on or before a cross-platform action.",
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'generate_slideshow',
+    description: 'Generate an AI Instagram/TikTok carousel ("slideshow") on a topic and save it as a draft. Optionally schedule or post it to connected Instagram/TikTok/LinkedIn accounts. Returns the rendered slide image URLs + caption. Use this whenever the user wants a carousel, slideshow, IG post, or TikTok photo post.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string' },
+        format: { type: 'string', enum: ['listicle', 'howto', 'story', 'myths', 'framework', 'quotes'] },
+        style: { type: 'string', enum: ['bold', 'minimal', 'editorial', 'gradient', 'mint', 'photo'] },
+        slides: { type: 'integer', description: '3-10' },
+        post_to: { type: 'array', items: { type: 'string' }, description: 'Account usernames or platform names to publish to. Omit to just save a draft.' },
+        when: { type: 'string', description: 'ISO datetime to schedule; "now" or omit to post immediately (only when post_to is set).' },
+      },
+      required: ['topic'],
+    },
+  },
+  {
+    name: 'set_replies',
+    description: 'Turn auto-replies (comment engagement in the user\'s voice) on or off for Instagram, TikTok, or LinkedIn. auto_post:true posts replies automatically; false drafts them for review.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        platform: { type: 'string', enum: SOCIAL_ENGAGEMENT_PLATFORMS },
+        enabled: { type: 'boolean' },
+        auto_post: { type: 'boolean' },
+      },
+      required: ['platform', 'enabled'],
+    },
+  },
+  {
+    name: 'run_replies',
+    description: 'Run the comment auto-reply engine right now for a platform (reads new comments on the user\'s posts, drafts or posts replies in their voice).',
+    input_schema: { type: 'object', properties: { platform: { type: 'string', enum: SOCIAL_ENGAGEMENT_PLATFORMS } }, required: ['platform'] },
+  },
 ]
 
 // ── Tool executor — every query is scoped to the authenticated user ─────────────
@@ -195,6 +240,64 @@ async function executeTool(name, input, userId) {
       return { rescheduled_count: posts.length }
     }
 
+    case 'get_overview': {
+      const [{ data: accts }, { data: posts }, { data: camps }, { data: scamps }, { data: eng }] = await Promise.all([
+        admin.from('social_accounts').select('platform,username').eq('user_id', userId),
+        admin.from('posts').select('status').eq('user_id', userId),
+        admin.from('campaigns').select('name,active').eq('user_id', userId),
+        admin.from('slideshow_campaigns').select('name,active').eq('user_id', userId),
+        admin.from('social_engagement').select('platform,enabled,auto_post').eq('user_id', userId),
+      ])
+      const counts = (posts || []).reduce((a, p) => { a[p.status] = (a[p.status] || 0) + 1; return a }, {})
+      return {
+        social_accounts: (accts || []).map(a => `${a.platform}:@${a.username}`),
+        queue: counts,
+        campaigns: [...(camps || []), ...(scamps || [])].map(c => `${c.name}${c.active ? ' (active)' : ''}`),
+        auto_replies_on: (eng || []).filter(e => e.enabled).map(e => `${e.platform}${e.auto_post ? ' (auto-post)' : ' (review)'}`),
+        publishing_connected: zernioEnabled(),
+      }
+    }
+
+    case 'generate_slideshow': {
+      if (!input.topic) return { error: 'topic required' }
+      const { data: persona } = await admin.from('personas').select('*').eq('user_id', userId).single()
+      const deck = await generateSlideshow({ topic: input.topic, format: input.format || 'listicle', style: input.style || 'bold', slides: input.slides || 6, persona, userId })
+      const row = { user_id: userId, topic: input.topic, format: deck.format, style: deck.style, slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls, status: 'draft' }
+      let result = 'saved as a draft in the Slideshows tab'
+      if (input.post_to?.length) {
+        if (!zernioEnabled()) result = 'saved as draft (publishing not connected)'
+        else {
+          const { data: all } = await admin.from('social_accounts').select('*').eq('user_id', userId)
+          const want = input.post_to.map(s => String(s).toLowerCase().replace('@', ''))
+          const accts = (all || []).filter(a => want.includes(a.platform) || want.includes((a.username || '').toLowerCase()))
+          if (!accts.length) result = 'saved as draft (no matching connected account)'
+          else {
+            try {
+              const sched = input.when && input.when !== 'now' ? new Date(input.when).toISOString() : undefined
+              const r = await createPost({ userId, accounts: accts, content: deck.caption, mediaUrls: deck.imageUrls, scheduledFor: sched, title: deck.slides?.[0]?.heading || input.topic })
+              row.status = sched ? 'scheduled' : 'posted'; row.account_ids = accts.map(a => a.id); row.scheduled_for = sched || null; row.zernio_post_id = r.id
+              result = `${row.status} to ${accts.map(a => '@' + a.username).join(', ')}`
+            } catch (e) { row.status = 'failed'; row.error = e.message; result = `post failed: ${e.message}` }
+          }
+        }
+      }
+      await admin.from('slideshows').insert(row)
+      return { slides: deck.imageUrls.length, image_urls: deck.imageUrls, caption: deck.caption, result }
+    }
+
+    case 'set_replies': {
+      if (!SOCIAL_ENGAGEMENT_PLATFORMS.includes(input.platform)) return { error: 'platform must be instagram, tiktok, or linkedin' }
+      const patch = { enabled: !!input.enabled }
+      if ('auto_post' in input) patch.auto_post = !!input.auto_post
+      await admin.from('social_engagement').upsert({ user_id: userId, platform: input.platform, ...patch }, { onConflict: 'user_id,platform' })
+      return { platform: input.platform, ...patch }
+    }
+
+    case 'run_replies': {
+      if (!zernioEnabled()) return { error: 'Publishing/inbox not connected (Zernio).' }
+      return await runSocialEngagement(userId, input.platform)
+    }
+
     default:
       return { error: `Unknown tool: ${name}` }
   }
@@ -219,10 +322,16 @@ export async function POST(req) {
       ? `The user has ${conns.length} connected X account(s): ${conns.map(c => '@' + c.username).join(', ')}.`
       : 'The user has not connected an X account yet.'
 
-    const system = `You are Cadence, a personal assistant for managing a user's X (Twitter) post queue. You write and repurpose posts, and you schedule, reschedule, pause, resume, and edit queued posts.
+    const system = `You are Cadence — an agent that runs a user's entire social presence under ONE consistent voice across X, LinkedIn, Instagram, and TikTok, including AI carousels and feeder-account campaigns that promote their brand. You can actually DO things with tools; be decisive and take the action rather than describing it.
 
 Current date and time (America/Los_Angeles): ${now}
 ${accountsLine}
+
+Cross-platform powers (use the tools, don't just explain):
+- get_overview: report connected accounts, queue, campaigns, and auto-reply status across all platforms.
+- generate_slideshow: make an Instagram/TikTok carousel on a topic; optionally schedule/post it (post_to + when). Use for any "carousel/slideshow/IG/TikTok post" request.
+- set_replies / run_replies: turn on or off (and run) auto-replies to comments in the user's voice for instagram, tiktok, or linkedin.
+After any action, confirm what happened in one or two sentences. Never invent results — only report what tools returned.
 
 ${CHAT_STYLE}
 
