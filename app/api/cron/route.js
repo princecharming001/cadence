@@ -5,6 +5,7 @@ import { admin } from '@/lib/supabase'
 import { postOne } from '@/lib/posting'
 import { runDueCampaigns } from '@/lib/campaigns'
 import { runDueEngagement } from '@/lib/engagement'
+import { runDueBrandCampaigns } from '@/lib/brand-campaigns'
 
 export async function GET(req) {
   const auth = req.headers.get('authorization') || ''
@@ -19,6 +20,8 @@ export async function GET(req) {
   try { campaigns = await runDueCampaigns() } catch (e) { campaigns = { error: e.message } }
   let engagement = null
   try { engagement = await runDueEngagement() } catch (e) { engagement = { error: e.message } }
+  let brand = null
+  try { brand = await runDueBrandCampaigns() } catch (e) { brand = { error: e.message } }
 
   const now = new Date().toISOString()
   const { data: duePosts, error } = await admin
@@ -29,10 +32,10 @@ export async function GET(req) {
     .order('scheduled_for', { ascending: true })
 
   if (error) return Response.json({ error: error.message, campaigns, engagement }, { status: 500 })
-  if (!duePosts?.length) return Response.json({ posted: 0, message: 'No posts due.', campaigns, engagement })
+  if (!duePosts?.length) return Response.json({ posted: 0, message: 'No posts due.', campaigns, engagement, brand })
 
   const results = []
   for (const post of duePosts) results.push(await postOne(post))
 
-  return Response.json({ posted: results.filter(r => r.status === 'posted').length, results, campaigns, engagement })
+  return Response.json({ posted: results.filter(r => r.status === 'posted').length, results, campaigns, engagement, brand })
 }

@@ -989,6 +989,87 @@ function ReplyToggles({ platforms, settings, replies, accounts, configured, onTo
   )
 }
 
+// Cross-platform brand campaigns — promote a topic in one voice across any mix
+// of connected accounts; the engine picks text-post vs carousel per platform.
+function CrossCampaignManager({ campaigns, xConns, socialAccounts, onSave, onPatch, onDelete, onRun }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState(''); const [topic, setTopic] = useState('')
+  const [picked, setPicked] = useState([]); const [hours, setHours] = useState(24)
+  const [style, setStyle] = useState('bold'); const [format, setFormat] = useState('listicle'); const [img, setImg] = useState(false)
+
+  // All connectable targets across platforms.
+  const targets = [
+    ...xConns.map(c => ({ kind: 'x', id: c.id, platform: 'x', label: `@${c.username}`, primary: c.is_primary })),
+    ...socialAccounts.map(a => ({ kind: 'social', id: a.id, platform: a.platform, label: `@${a.username || a.platform}` })),
+  ]
+  const has = k => picked.some(p => p.id === k.id)
+  const toggle = k => setPicked(s => has(k) ? s.filter(p => p.id !== k.id) : [...s, { kind: k.kind, id: k.id, platform: k.platform }])
+  const hasCarousel = picked.some(p => p.platform === 'instagram' || p.platform === 'tiktok')
+
+  async function submit() {
+    const ok = await onSave({ name, topic, targets: picked, interval_hours: Number(hours), carousel_style: style, carousel_format: format, include_image: img, active: true })
+    if (ok) { setOpen(false); setName(''); setTopic(''); setPicked([]) }
+  }
+
+  return (
+    <>
+      {campaigns.map(c => (
+        <div className={'card camp-card' + (c.active ? ' on' : '')} key={c.id} style={{ display: 'block' }}>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div style={{ minWidth: 0 }}>
+              <div className="conn-title">{c.name}</div>
+              <div className="muted tiny" style={{ marginTop: 2 }}>{c.topic}</div>
+              <div className="row" style={{ gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
+                {(c.targets || []).map((t, i) => <span className="acct-chip" key={i} style={{ fontSize: 11, padding: '3px 8px' }}><span className="status-dot" style={{ background: platformDot(t.platform) }} />{t.platform}</span>)}
+              </div>
+              {c.status_detail && <div className="muted tiny" style={{ marginTop: 6 }}>{c.running && <Loader2 size={10} className="spin" />} {c.status_detail}</div>}
+            </div>
+            <Toggle on={!!c.active} onChange={v => onPatch(c.id, { active: v })} />
+          </div>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            <span className="muted tiny" style={{ marginRight: 'auto' }}>every {c.interval_hours}h</span>
+            <button className="mini" onClick={() => onRun(c.id)} disabled={c.running}><Play size={11} /> Run now</button>
+            <button className="mini danger" onClick={() => onDelete(c.id)}><Trash2 size={12} /></button>
+          </div>
+        </div>
+      ))}
+
+      {!open
+        ? <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center' }} onClick={() => setOpen(true)}><Plus size={14} /> New cross-platform campaign</button>
+        : (
+        <div className="card camp-form">
+          <input className="field" placeholder="Campaign name (e.g. Launch week)" value={name} onChange={e => setName(e.target.value)} />
+          <textarea className="field" rows={2} style={{ marginTop: 8 }} placeholder="What to promote / topic — the AI writes about this in your voice" value={topic} onChange={e => setTopic(e.target.value)} />
+          <label className="ob-label">Post to these accounts</label>
+          {targets.length === 0 && <div className="muted tiny">Connect accounts first (X, and Instagram/TikTok/LinkedIn in their tabs).</div>}
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            {targets.map(k => <button type="button" key={k.id} className={'chip' + (has(k) ? ' on' : '')} onClick={() => toggle(k)}><span className="status-dot" style={{ background: platformDot(k.platform) }} />{k.label}</button>)}
+          </div>
+          {hasCarousel && (
+            <div style={{ marginTop: 10 }}>
+              <label className="ob-label">Carousel style (for Instagram/TikTok)</label>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                {SLIDE_STYLE_LIST.map(s => <button type="button" key={s.key} className={'sw-chip' + (style === s.key ? ' on' : '')} onClick={() => setStyle(s.key)}><span className="sw" style={{ background: s.swatch.startsWith('linear') ? undefined : s.swatch, backgroundImage: s.swatch.startsWith('linear') ? s.swatch : undefined, color: s.fg }}>Aa</span>{s.label}</button>)}
+              </div>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                {SLIDESHOW_FORMATS.map(f => <button type="button" key={f.key} className={'chip' + (format === f.key ? ' on' : '')} onClick={() => setFormat(f.key)}>{f.label}</button>)}
+              </div>
+            </div>
+          )}
+          <div className="row" style={{ gap: 12, marginTop: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+            <label className="camp-num"><input type="number" min={1} className="field" value={hours} onChange={e => setHours(e.target.value)} /> hours between</label>
+            <label className="row" style={{ gap: 7, fontSize: 12.5 }}><Toggle on={img} onChange={setImg} /> AI image on text posts</label>
+          </div>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button className="mini" onClick={() => setOpen(false)}>Cancel</button>
+            <button className="btn-primary btn-sm" disabled={!name.trim() || !topic.trim() || !picked.length} onClick={submit}>Create campaign</button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 function App({ session }) {
   const token = session.access_token
@@ -1004,6 +1085,7 @@ function App({ session }) {
   const [engSettings, setEngSettings] = useState([]); const [socialReplies, setSocialReplies] = useState([])
   const [qPlatform, setQPlatform] = useState('all')
   const [voiceCounts, setVoiceCounts] = useState({}); const [pulling, setPulling] = useState('')
+  const [brandCampaigns, setBrandCampaigns] = useState([])
   const [me, setMe] = useState(null)
   const [messages, setMessages] = useState([]); const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
@@ -1024,8 +1106,9 @@ function App({ session }) {
   const loadSlideshows = useCallback(async () => { const r = await authed('/api/slideshow'); const d = await r.json(); setSlideshows(d.slideshows || []) }, [authed])
   const loadSocialEng = useCallback(async () => { const r = await authed('/api/social-engagement'); const d = await r.json(); setEngSettings(d.settings || []); setSocialReplies(d.replies || []) }, [authed])
   const loadVoice = useCallback(async () => { const r = await authed('/api/voice'); const d = await r.json(); setVoiceCounts(d.counts || {}) }, [authed])
+  const loadBrand = useCallback(async () => { const r = await authed('/api/brand-campaigns'); const d = await r.json(); setBrandCampaigns(d.campaigns || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadVoice() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadVoice])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadCampaigns(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadVoice(); loadBrand() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadCampaigns, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadVoice, loadBrand])
 
   // Returning from a Zernio account-link (Zernio redirects to /?connected=<platform>):
   // land the user back on Slideshows, pull in the freshly connected account, and tidy the URL.
@@ -1127,6 +1210,14 @@ function App({ session }) {
     setBanner(d.error ? d.error : d.skipped ? `${platform}: ${d.skipped}` : `${platform}: ${d.posted || 0} posted, ${d.drafted || 0} drafted`); loadSocialEng()
   }
   async function postReplyDraft(id) { const r = await authed('/api/social-engagement', { method: 'POST', body: JSON.stringify({ action: 'post-draft', id }) }); const d = await r.json(); setBanner(d.error || 'Reply posted'); loadSocialEng() }
+  async function saveBrand(payload) { const r = await authed('/api/brand-campaigns', { method: 'POST', body: JSON.stringify(payload) }); const d = await r.json(); if (d.error) { setBanner(d.error); return false } setBanner('Campaign created'); loadBrand(); return true }
+  async function patchBrand(id, patch) { await authed('/api/brand-campaigns', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); loadBrand() }
+  async function deleteBrand(id) { await authed('/api/brand-campaigns', { method: 'DELETE', body: JSON.stringify({ id }) }); loadBrand() }
+  async function runBrand(id) {
+    setBanner('Running campaign across your accounts…')
+    const r = await authed('/api/brand-campaigns', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }); const d = await r.json()
+    setBanner(d.error ? d.error : `Posted across ${d.done || 0} account${d.done === 1 ? '' : 's'}`); loadBrand(); loadQueue(); loadSlideshows()
+  }
   async function pullVoiceFrom(platform) {
     setPulling(platform)
     const r = await authed('/api/voice', { method: 'POST', body: JSON.stringify({ platform }) }); const d = await r.json()
@@ -1377,16 +1468,16 @@ function App({ session }) {
 
               {tab === 'campaigns' && (<>
                 <BrainBanner theme="campaigns" />
-                <div className="muted tiny" style={{ margin: '0 2px 12px', lineHeight: 1.6 }}>Run feeder-account campaigns across all your platforms to promote your brand — in one voice.</div>
+                <div className="muted tiny" style={{ margin: '0 2px 12px', lineHeight: 1.6 }}>Run feeder-account campaigns across all your platforms to promote your brand — in one voice. A campaign writes text posts for X &amp; LinkedIn and carousels for Instagram &amp; TikTok, on your schedule.</div>
 
-                <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> X post campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· keep an account posting about something you want to promote</span></div>
-                <CampaignManager campaigns={campaigns} xConns={xConns} posts={posts} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} onRun={runCampaignNow} />
+                <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> Cross-platform campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· one topic, every account, the right format per platform</span></div>
+                <CrossCampaignManager campaigns={brandCampaigns} xConns={xConns} socialAccounts={socialAccounts} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
 
-                <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> X engagement campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· feeder accounts auto-reply to relevant posts in your voice</span></div>
+                <div className="conn-sec row" style={{ gap: 7, marginTop: 18 }}><MessageCircle size={13} /> X engagement campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· feeder accounts auto-reply to relevant posts in your voice</span></div>
                 <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
 
-                <div className="conn-sec row" style={{ gap: 7 }}><Megaphone size={13} /> Slideshow campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· auto-generate + post carousels on a cadence</span></div>
-                {slideshows.filter(s => s.campaign_id).length === 0 && <div className="muted tiny" style={{ marginBottom: 10 }}>Create carousels in the <b>IG/TikTok</b> tab; recurring slideshow campaigns are coming next. For now ask Chat to “make and schedule a carousel about …”.</div>}
+                <div className="conn-sec row" style={{ gap: 7, marginTop: 18 }}><Megaphone size={13} /> X-only post campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· the classic single-platform X cadence</span></div>
+                <CampaignManager campaigns={campaigns} xConns={xConns} posts={posts} onSave={saveCampaign} onToggle={toggleCampaign} onDelete={deleteCampaign} onRun={runCampaignNow} />
               </>)}
 
             </motion.div>
