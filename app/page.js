@@ -61,6 +61,8 @@ const Check = (p) => <LCheck size={15} strokeWidth={3} {...p} />
 const Ex = (p) => <LX size={15} strokeWidth={3} {...p} />
 const Refresh = (p) => <RefreshCw size={14} strokeWidth={2.4} {...p} />
 function XGlyph() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{ display: 'block' }}><path d="M18.9 1.2h3.7l-8 9.1L24 22.8h-7.4l-5.8-7.5-6.6 7.5H.5l8.5-9.7L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg> }
+function IGGlyph({ size = 14 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ display: 'block' }}><rect x="2.6" y="2.6" width="18.8" height="18.8" rx="5.4" /><circle cx="12" cy="12" r="4.4" /><circle cx="17.7" cy="6.3" r="1.5" fill="currentColor" stroke="none" /></svg> }
+function TTGlyph({ size = 14 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={{ display: 'block' }}><path d="M16.6 1h3.1c.2 1.9 1.4 3.7 3.3 4.3v3.2c-1.7 0-3.3-.6-4.6-1.5v6.9c0 5.3-3.7 8.1-7.6 8.1-3.3 0-6.8-2.4-6.8-6.7 0-4 3.2-6.8 7.1-6.6V12c-1.9-.3-3.8 1-3.8 3.2 0 2 1.6 3.4 3.4 3.4 2 0 3.9-1.4 3.9-4.6V1z"/></svg> }
 
 function Toggle({ on, onChange, label }) {
   return (
@@ -940,6 +942,44 @@ function AutoReply({ platforms, settings, replies, accounts, configured, onToggl
 // Floating, bottom-right expandable "accounts" dot for a tab. Keeps account
 // management (and, on LinkedIn, voice/inspiration) one tap away without cluttering
 // the main create-first flow.
+// ── Standardized account UI — ONE card shape for every platform ──────────────
+// Icon + @handle + badges on the left, the same Connect/Disconnect affordances
+// on the right, across X, LinkedIn, Instagram, and TikTok.
+const PLATFORM_GLYPH = { x: <XGlyph />, linkedin: <LIcon size={15} />, instagram: <IGGlyph />, tiktok: <TTGlyph /> }
+function AccountRow({ platform, title, badges = null, subtitle, actions }) {
+  return (
+    <div className="conn-card card" style={{ marginBottom: 8 }}>
+      <div className={`conn-icon acct-ic ${platform}`}>{PLATFORM_GLYPH[platform] || <Bot size={14} />}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="conn-title row" style={{ gap: 6, overflow: 'hidden' }}>{title}{badges}</div>
+        {subtitle && <div className="muted tiny">{subtitle}</div>}
+      </div>
+      {actions}
+    </div>
+  )
+}
+const ConnectBtn = ({ onClick, disabled, children, title }) => (
+  <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 6 }} disabled={disabled} onClick={onClick} title={title}><Plus size={14} /> {children}</button>
+)
+
+// One X inspiration slot — mirrors the LinkedIn mentor slots: empty = inline
+// add field, filled = a standard account card with remove.
+function XInspoSlot({ account, onAdd, onRemove }) {
+  const [val, setVal] = useState(''); const [busy, setBusy] = useState(false)
+  async function add() { if (!val.trim()) return; setBusy(true); const ok = await onAdd('x', val.trim()); setBusy(false); if (ok) setVal('') }
+  if (account) return (
+    <AccountRow platform="x" title={`@${account.handle}`} subtitle="watched · read-only"
+      actions={<button className="mini danger" onClick={() => onRemove(account.id)}><Trash2 size={11} /></button>} />
+  )
+  return (
+    <div className="slot-empty">
+      <div className="conn-icon acct-ic ghosted"><XGlyph /></div>
+      <input className="field" placeholder="@creator to study" value={val} onChange={e => setVal(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} style={{ flex: 1, minWidth: 0 }} />
+      <button className="btn-primary btn-sm" disabled={busy || !val.trim()} onClick={add}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Add'}</button>
+    </div>
+  )
+}
+
 function FloatingAccounts({ glyph, count, label, children }) {
   const [open, setOpen] = useState(false)
   return (
@@ -1229,29 +1269,6 @@ function Suggestions({ platform, drafts, busy, canPost, onGenerate, onPostNow, o
 
 // Inspiration accounts — up to 3 public accounts per platform the AI studies
 // for what's working. Read-only: nothing to connect or authorize.
-function InspirationAccounts({ platform, accounts, onAdd, onRemove }) {
-  const [val, setVal] = useState('')
-  async function add() { if (!val.trim()) return; const ok = await onAdd(platform, val.trim()); if (ok) setVal('') }
-  return (
-    <>
-      <div className="conn-sec row" style={{ gap: 7 }}><Star size={12} /> Inspiration accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 · read-only</span></div>
-      {accounts.map(a => (
-        <div className="card" key={a.id} style={{ padding: '9px 12px', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 9 }}>
-          <span className="status-dot" style={{ background: platformDot(platform) }} />
-          <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>@{a.handle}</span>
-          <button className="mini danger" onClick={() => onRemove(a.id)}><Trash2 size={11} /></button>
-        </div>
-      ))}
-      {accounts.length < 3 && (
-        <div className="row" style={{ gap: 8, marginBottom: 12 }}>
-          <input className="field" style={{ flex: 1 }} placeholder={`@handle or profile URL`} value={val} onChange={e => setVal(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} />
-          <button className="btn-ghost btn-sm" onClick={add}><Plus size={13} /> Add</button>
-        </div>
-      )}
-    </>
-  )
-}
-
 // ── Niche engagement — YOUR account comments on relevant posts in your niche.
 // Slim front-end over the engagement_rules engine (keywords + watched accounts
 // discovery, replies in voice, approve-first by default).
@@ -2113,6 +2130,11 @@ function App({ session }) {
     else setBanner(d.error || 'Could not start connection')
   }
   async function syncSocial() { setBanner('Refreshing connected accounts…'); await loadSocial(true) }
+  async function disconnectSocial(id) {
+    if (!confirm('Disconnect this account? Its scheduled posts will stop publishing.')) return
+    await authed('/api/social', { method: 'DELETE', body: JSON.stringify({ id }) })
+    setBanner('Account disconnected'); loadSocial()
+  }
   // The single auto-reply toggle promises approve-first, so enabling it also
   // clears any legacy auto_post=true left by the old two-toggle UI.
   async function toggleReplies(platform, patch) { await authed('/api/social-engagement', { method: 'PATCH', body: JSON.stringify({ platform, ...patch, ...(patch.enabled !== undefined ? { auto_post: false } : {}) }) }); loadSocialEng() }
@@ -2423,10 +2445,6 @@ function App({ session }) {
                 <Section title="Feeder agents" hint="autonomous personas on your other accounts" badge={<OnBadge on={feederAgents.some(a => a.active)} />}>
                   <FeederAgents agents={feederAgents} xConns={xConns} posts={posts} campaigns={agentCampaigns} onSpawn={spawnAgent} onPatch={patchAgent} onDelete={deleteAgent} onRun={runAgent} onReroll={rerollAgent} />
                 </Section>
-                <Section title="Inspiration" hint="accounts the AI studies">
-                  <InspirationAccounts platform="x" accounts={inspoX} onAdd={addInspo} onRemove={removeInspo} />
-                </Section>
-
                 <div style={{ marginTop: 14 }}>
                   <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
                     onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
@@ -2437,19 +2455,12 @@ function App({ session }) {
                   Carousels | Clips switcher. Automation + voice fold away. */}
               {tab === 'social' && (<>
                 <BrainBanner theme="instagram" dual="tiktok" />
-                <div className="conn-sec row" style={{ gap: 7, marginTop: 10 }}>Accounts
-                  <button className="mini" style={{ marginLeft: 'auto' }} onClick={syncSocial}><RefreshCw size={11} /> Refresh</button>
-                </div>
-                {!socialConfigured && <div className="notice" style={{ marginBottom: 10 }}>Connect Zernio to post — previews work now.</div>}
-                <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
-                  {socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).map(a => (
-                    <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</span>
-                  ))}
-                  <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('instagram')}><Plus size={11} /> Instagram</button>
-                  <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('tiktok')}><Plus size={11} /> TikTok</button>
-                </div>
+                {!socialConfigured && <div className="notice" style={{ margin: '10px 0' }}>Connect Zernio to post — previews work now.</div>}
+                {socialConfigured && socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).length === 0 && (
+                  <div className="muted tiny" style={{ margin: '8px 2px 12px' }}>No Instagram or TikTok connected yet — accounts live in the dot, bottom-right.</div>
+                )}
 
-                <div className="seg" style={{ marginBottom: 12 }}>
+                <div className="seg" style={{ marginBottom: 12, marginTop: 10 }}>
                   {[['carousels', 'Carousels'], ['clips', 'Clips']].map(([k, l]) => (
                     <button key={k} className={'seg-btn' + (igMode === k ? ' on' : '')} onClick={() => setIgMode(k)}>
                       {igMode === k && <motion.span layoutId="ig-pill" className="seg-pill" transition={spring} />}
@@ -2529,38 +2540,53 @@ function App({ session }) {
               without cluttering the create-first flow. */}
           {tab === 'x' && (
             <FloatingAccounts glyph={<XGlyph />} count={xConns.length} label="X accounts">
+              <div className="conn-sec" style={{ marginTop: 0 }}>Your accounts</div>
               {xConns.map(c => (
-                <div className={'conn-card card' + (c.is_primary ? ' primary' : '')} key={c.id} style={{ marginBottom: 8 }}>
-                  <div className="conn-icon x-icon"><XGlyph /></div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="conn-title row" style={{ gap: 6 }}>@{c.username}
-                      {c.is_primary ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span> : <span className="role-badge">Feeder</span>}
-                      {c.needs_reconnect && <span className="role-badge" style={{ background: '#FAF3E4', color: '#8A6200' }}>Reconnect</span>}
-                    </div>
-                  </div>
-                  {c.needs_reconnect && <button className="mini accent" onClick={connectX}>Reconnect</button>}
-                  {!c.is_primary && <button className="mini" onClick={() => makePrimary(c.id)} title="Make this your primary account">Make primary</button>}
-                  <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
-                </div>
+                <AccountRow key={c.id} platform="x" title={`@${c.username}`}
+                  badges={<>
+                    {c.is_primary ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span> : <span className="role-badge">Feeder</span>}
+                    {c.needs_reconnect && <span className="role-badge" style={{ background: '#FAF3E4', color: '#8A6200' }}>Reconnect</span>}
+                  </>}
+                  actions={<>
+                    {c.needs_reconnect && <button className="mini accent" onClick={connectX}>Reconnect</button>}
+                    {!c.is_primary && <button className="mini" onClick={() => makePrimary(c.id)} title="Make this your primary account">Make primary</button>}
+                    <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
+                  </>} />
               ))}
-              <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center' }} onClick={connectX}><Plus size={14} /> {connected ? 'Add another account (feeder)' : 'Connect X'}</button>
+              <ConnectBtn onClick={connectX}>{connected ? 'Add another account (feeder)' : 'Connect X'}</ConnectBtn>
+              <div className="conn-sec row" style={{ gap: 7 }}><Star size={12} /> Inspiration <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3, read-only</span></div>
+              {[0, 1, 2].map(i => (
+                <XInspoSlot key={i} account={inspoX[i]} onAdd={addInspo} onRemove={removeInspo} />
+              ))}
             </FloatingAccounts>
           )}
           {tab === 'linkedin' && (
             <FloatingAccounts glyph={<LIcon size={15} />} count={socialAccounts.filter(a => a.platform === 'linkedin').length} label="LinkedIn">
-              <div className="conn-sec" style={{ marginTop: 0 }}>Publish to LinkedIn</div>
-              <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
-                {socialAccounts.filter(a => a.platform === 'linkedin').map(a => (
-                  <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot('linkedin') }} />{a.username || 'LinkedIn'}</span>
-                ))}
-                <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('linkedin')}><Plus size={11} /> {liAccount ? 'Reconnect' : 'Connect'}</button>
-              </div>
+              <div className="conn-sec" style={{ marginTop: 0 }}>Your account</div>
+              {socialAccounts.filter(a => a.platform === 'linkedin').map(a => (
+                <AccountRow key={a.id} platform="linkedin" title={a.username || 'LinkedIn'} subtitle="publishes your posts"
+                  actions={<button className="mini danger" onClick={() => disconnectSocial(a.id)}>Disconnect</button>} />
+              ))}
+              <ConnectBtn disabled={!socialConfigured} onClick={() => connectSocial('linkedin')} title={!socialConfigured ? 'Publishing not configured yet' : ''}>{liAccount ? 'Reconnect LinkedIn' : 'Connect LinkedIn'}</ConnectBtn>
               <div className="conn-sec">Your voice source <span className="muted tiny" style={{ fontWeight: 400 }}>· your own LinkedIn</span></div>
               <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
               <div className="conn-sec row" style={{ gap: 7 }}><Star size={12} /> Inspiration <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3, read-only</span></div>
               {[0, 1, 2].map(i => (
                 <LinkedInSlot key={i} account={liMentors[i]} onAdd={(url) => addLinkedIn(url, true)} onRemove={removeLinkedIn} />
               ))}
+            </FloatingAccounts>
+          )}
+          {tab === 'social' && (
+            <FloatingAccounts glyph={<IGGlyph size={15} />} count={socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).length} label="Instagram & TikTok">
+              <div className="conn-sec row" style={{ marginTop: 0, gap: 7 }}>Your accounts
+                <button className="mini" style={{ marginLeft: 'auto' }} onClick={syncSocial}><RefreshCw size={11} /> Refresh</button>
+              </div>
+              {socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).map(a => (
+                <AccountRow key={a.id} platform={a.platform} title={a.username || a.platform} subtitle="publishes your posts"
+                  actions={<button className="mini danger" onClick={() => disconnectSocial(a.id)}>Disconnect</button>} />
+              ))}
+              <ConnectBtn disabled={!socialConfigured} onClick={() => connectSocial('instagram')} title={!socialConfigured ? 'Publishing not configured yet' : ''}>Connect Instagram</ConnectBtn>
+              <ConnectBtn disabled={!socialConfigured} onClick={() => connectSocial('tiktok')} title={!socialConfigured ? 'Publishing not configured yet' : ''}>Connect TikTok</ConnectBtn>
             </FloatingAccounts>
           )}
         </section>
@@ -2917,6 +2943,12 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .conn-card { display: flex; align-items: center; gap: 13px; padding: 13px 15px; margin-bottom: 10px; }
 .conn-icon { width: 38px; height: 38px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex: none; }
 .x-icon { background: var(--ink); color: #fff; } .li-icon { background: #0a66c2; color: #fff; } .li-icon.ghost { background: #EDF1F6; color: #0a66c2; }
+/* standardized account-row icons — one look across every platform */
+.acct-ic.x { background: var(--ink); color: #fff; }
+.acct-ic.linkedin { background: #0a66c2; color: #fff; }
+.acct-ic.instagram { background: linear-gradient(45deg, #F58529 0%, #DD2A7B 55%, #8134AF 100%); color: #fff; }
+.acct-ic.tiktok { background: #010101; color: #6CF5EA; }
+.acct-ic.ghosted { background: var(--bg2); color: var(--faint); }
 .conn-title { font-weight: 600; font-size: 13.5px; }
 .conn-sec { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); margin: 18px 0 9px; }
 .slot-empty { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }

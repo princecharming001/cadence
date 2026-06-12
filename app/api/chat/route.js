@@ -3,7 +3,7 @@ import { admin, getUser } from '@/lib/supabase'
 import { generateImage, persistImage } from '@/lib/images'
 import { X_RUBRIC, CHAT_STYLE } from '@/lib/rubric'
 import { recentFeedback, feedbackBlock } from '@/lib/feedback'
-import { voiceBlock, enforceLen } from '@/lib/prompts'
+import { voiceBlock, enforceLen, LINKEDIN_RUBRIC } from '@/lib/prompts'
 import { generateSlideshow } from '@/lib/slideshow'
 import { createPost, zernioEnabled } from '@/lib/zernio'
 import { runSocialEngagement, SOCIAL_ENGAGEMENT_PLATFORMS } from '@/lib/social-engagement'
@@ -47,7 +47,8 @@ const tools = [
     input_schema: {
       type: 'object',
       properties: {
-        content: { type: 'string', description: 'The full tweet text (<=280 chars).' },
+        content: { type: 'string', description: 'The full post text (X <=280 chars; LinkedIn 600-1200 chars, line breaks between short paragraphs).' },
+        platform: { type: 'string', enum: ['x', 'linkedin'], description: 'Where this post is for. X and LinkedIn are DIFFERENT writing disciplines — follow the matching rubric. Default x.' },
         want_image: { type: 'boolean', description: 'True if this post should have an AI-generated image.' },
         image_prompt: { type: 'string', description: 'If want_image, a vivid visual description (subject, style, mood, colors). No text in the image.' },
       },
@@ -394,6 +395,22 @@ export async function POST(req) {
       ? `The user has ${conns.length} connected X account(s): ${conns.map(c => '@' + c.username).join(', ')}.`
       : 'The user has not connected an X account yet.'
 
+    // Ground LinkedIn drafts in how the user ACTUALLY writes there — their own
+    // scraped posts are the register reference (mentors are inspiration, not voice).
+    let liVoiceBlock = ''
+    if (!scope || scope.includes('linkedin')) {
+      const { data: ownAccts } = await admin.from('linkedin_accounts').select('id')
+        .eq('user_id', user.id).or('is_mentor.eq.false,is_mentor.is.null')
+      const ids = (ownAccts || []).map(a => a.id)
+      if (ids.length) {
+        const { data: liPosts } = await admin.from('linkedin_posts').select('content')
+          .in('account_id', ids).order('posted_at', { ascending: false }).limit(3)
+        if (liPosts?.length) {
+          liVoiceBlock = `\nHOW THEY ACTUALLY WRITE ON LINKEDIN (their real recent posts — match this register, structure, and rhythm in LinkedIn drafts; never copy them):\n${liPosts.map((p, i) => `[${i + 1}] ${String(p.content || '').replace(/\s+/g, ' ').trim().slice(0, 420)}`).join('\n')}`
+        }
+      }
+    }
+
     const SCOPE_LABEL = { x: 'X (Twitter)', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok' }
     const scopeNames = scope ? scope.map(s => SCOPE_LABEL[s]).join(' and ') : ''
     const single = scope && scope.length === 1
@@ -421,8 +438,13 @@ After any action, confirm what happened in one or two sentences. Never invent re
 
 ${CHAT_STYLE}
 
-Whenever you write or rewrite a post, follow this rubric:
+You write for TWO platforms with DIFFERENT disciplines. Pick the rubric by the post's target platform (propose_post's platform field) — an X post is a compressed punch, a LinkedIn post is a developed 60-second read. NEVER write a LinkedIn post like a tweet or vice versa.
+
+For X posts:
 ${X_RUBRIC}
+
+For LinkedIn posts:
+${LINKEDIN_RUBRIC}
 
 CRITICAL RULE — you never queue or publish a NEW post yourself. To create ANY new post, you call propose_post, which shows the user an editable draft card (text editor + time picker + live countdown + 👍/👎 + Post-now/Schedule/Discard). The user — not you — decides whether it gets scheduled or posted. This applies even when the user says "post this now" or "schedule it": still call propose_post (you can mention you've set it up to post now / for a time, and they just confirm on the card). The same consent rule covers EVERY platform: nothing goes live on X, LinkedIn, Instagram, or TikTok unless the user explicitly approved that exact content — never pass post_to to generate_slideshow unless the user clearly told you to publish it.
 
@@ -441,7 +463,7 @@ More rules:
 
     const dynamicSystem = `Current date and time (America/Los_Angeles): ${now}
 ${accountsLine}
-${scopeBlock}${feedbackBlock(fb)}`
+${scopeBlock}${liVoiceBlock}${feedbackBlock(fb)}`
 
     let convo = safeMessages
     let reply = ''
@@ -481,9 +503,11 @@ ${scopeBlock}${feedbackBlock(fb)}`
             }
           } else if (block.name === 'propose_post') {
             // Stash the proposal for the UI; never queue or publish here.
-            // Platform follows the chat's scope (LinkedIn focus → LinkedIn post,
-            // 1300-char cap); the length limit is enforced server-side.
-            const propPlatform = liScoped ? 'linkedin' : 'x'
+            // Platform: LinkedIn focus forces linkedin; otherwise the model's
+            // declared platform wins when the scope allows it. Length limits
+            // are enforced server-side either way.
+            const liAllowed = !scope || scope.includes('linkedin')
+            const propPlatform = liScoped ? 'linkedin' : (block.input.platform === 'linkedin' && liAllowed ? 'linkedin' : 'x')
             const prop = { content: await enforceLen(String(block.input.content || ''), propPlatform), platform: propPlatform }
             if (block.input.want_image) {
               // Explicit image_prompt = the model/user knows what they want.
