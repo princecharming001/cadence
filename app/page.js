@@ -1016,88 +1016,6 @@ function InspirationAccounts({ platform, accounts, onAdd, onRemove }) {
   )
 }
 
-// Cross-platform brand campaigns — promote a topic in one voice across any mix
-// of connected accounts; the engine picks text-post vs carousel per platform.
-function CrossCampaignManager({ campaigns, xConns, socialAccounts, onSave, onPatch, onDelete, onRun }) {
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState(''); const [topic, setTopic] = useState('')
-  const [picked, setPicked] = useState([]); const [hours, setHours] = useState(24)
-  const [style, setStyle] = useState('bold'); const [format, setFormat] = useState('listicle'); const [img, setImg] = useState(false)
-
-  // Your personal accounts only: the primary X account + each connected social.
-  const primary = xConns.find(c => c.is_primary) || xConns[0]
-  const targets = [
-    ...(primary ? [{ kind: 'x', id: primary.id, platform: 'x', label: `@${primary.username}` }] : []),
-    ...socialAccounts.map(a => ({ kind: 'social', id: a.id, platform: a.platform, label: `@${a.username || a.platform}` })),
-  ]
-  const has = k => picked.some(p => p.id === k.id)
-  const toggle = k => setPicked(s => has(k) ? s.filter(p => p.id !== k.id) : [...s, { kind: k.kind, id: k.id, platform: k.platform }])
-  const hasCarousel = picked.some(p => p.platform === 'instagram' || p.platform === 'tiktok')
-
-  async function submit() {
-    const ok = await onSave({ name, topic, targets: picked, interval_hours: Number(hours), carousel_style: style, carousel_format: format, include_image: img, active: true })
-    if (ok) { setOpen(false); setName(''); setTopic(''); setPicked([]) }
-  }
-
-  return (
-    <>
-      {campaigns.map(c => (
-        <div className={'card camp-card' + (c.active ? ' on' : '')} key={c.id} style={{ display: 'block' }}>
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div style={{ minWidth: 0 }}>
-              <div className="conn-title">{c.name}</div>
-              <div className="muted tiny" style={{ marginTop: 2 }}>{c.topic}</div>
-              <div className="row" style={{ gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
-                {(c.targets || []).map((t, i) => <span className="acct-chip" key={i} style={{ fontSize: 11, padding: '3px 8px' }}><span className="status-dot" style={{ background: platformDot(t.platform) }} />{t.platform}</span>)}
-              </div>
-              {c.status_detail && <div className="muted tiny" style={{ marginTop: 6 }}>{c.running && <Loader2 size={10} className="spin" />} {c.status_detail}</div>}
-            </div>
-            <Toggle on={!!c.active} onChange={v => onPatch(c.id, { active: v })} />
-          </div>
-          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-            <span className="muted tiny" style={{ marginRight: 'auto' }}>every {c.interval_hours}h</span>
-            <button className="mini" onClick={() => onRun(c.id)} disabled={c.running}><Play size={11} /> Run now</button>
-            <button className="mini danger" onClick={() => onDelete(c.id)}><Trash2 size={12} /></button>
-          </div>
-        </div>
-      ))}
-
-      {!open
-        ? <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center' }} onClick={() => setOpen(true)}><Plus size={14} /> New cross-platform campaign</button>
-        : (
-        <div className="card camp-form">
-          <input className="field" placeholder="Campaign name (e.g. Launch week)" value={name} onChange={e => setName(e.target.value)} />
-          <textarea className="field" rows={2} style={{ marginTop: 8 }} placeholder="What to promote — written in your voice" value={topic} onChange={e => setTopic(e.target.value)} />
-          <label className="ob-label">Post to these accounts</label>
-          {targets.length === 0 && <div className="muted tiny">Connect your accounts first.</div>}
-          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-            {targets.map(k => <button type="button" key={k.id} className={'chip' + (has(k) ? ' on' : '')} onClick={() => toggle(k)}><span className="status-dot" style={{ background: platformDot(k.platform) }} />{k.label}</button>)}
-          </div>
-          {hasCarousel && (
-            <div style={{ marginTop: 10 }}>
-              <label className="ob-label">Carousel style (for Instagram/TikTok)</label>
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                {SLIDE_STYLE_LIST.map(s => <button type="button" key={s.key} className={'sw-chip' + (style === s.key ? ' on' : '')} onClick={() => setStyle(s.key)}><span className="sw" style={{ background: s.swatch.startsWith('linear') ? undefined : s.swatch, backgroundImage: s.swatch.startsWith('linear') ? s.swatch : undefined, color: s.fg }}>Aa</span>{s.label}</button>)}
-              </div>
-              <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                {SLIDESHOW_FORMATS.map(f => <button type="button" key={f.key} className={'chip' + (format === f.key ? ' on' : '')} onClick={() => setFormat(f.key)}>{f.label}</button>)}
-              </div>
-            </div>
-          )}
-          <div className="row" style={{ gap: 12, marginTop: 12, alignItems: 'center', justifyContent: 'space-between' }}>
-            <label className="camp-num"><input type="number" min={1} className="field" value={hours} onChange={e => setHours(e.target.value)} /> hours between</label>
-            <label className="row" style={{ gap: 7, fontSize: 12.5 }}><Toggle on={img} onChange={setImg} /> AI image on text posts</label>
-          </div>
-          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-            <button className="mini" onClick={() => setOpen(false)}>Cancel</button>
-            <button className="btn-primary btn-sm" disabled={!name.trim() || !topic.trim() || !picked.length} onClick={submit}>Create campaign</button>
-          </div>
-        </div>
-      )}
-    </>
-  )
-}
-
 // ── Niche engagement — YOUR account comments on relevant posts in your niche.
 // Slim front-end over the engagement_rules engine (keywords + watched accounts
 // discovery, replies in voice, approve-first by default).
@@ -1193,7 +1111,7 @@ const EngageStub = ({ platform }) => <div className="muted tiny" style={{ paddin
 // ── Feeder agents — an autonomous persona per feeder account. Each one thinks
 // on a cadence, posts and replies as ITSELF, quietly backs the primary, and
 // evolves its own identity from what it does. ──────────────────────────────────
-function FeederAgents({ agents, xConns, posts, onSpawn, onPatch, onDelete, onRun, onReroll }) {
+function FeederAgents({ agents, xConns, posts, campaigns = [], onSpawn, onPatch, onDelete, onRun, onReroll }) {
   const feeders = xConns.filter(c => !c.is_primary)
   const [seed, setSeed] = useState({})        // connId -> interests draft
   const [spawning, setSpawning] = useState('') // connId mid-spawn
@@ -1226,7 +1144,9 @@ function FeederAgents({ agents, xConns, posts, onSpawn, onPatch, onDelete, onRun
           <div className={'card camp-card' + (a.active ? ' on' : '')} key={c.id} style={{ display: 'block' }}>
             <div className="row" style={{ justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
               <div style={{ minWidth: 0 }}>
-                <div className="conn-title row" style={{ gap: 7 }}><Bot size={14} /> {p.name || a.name || 'Agent'} <span className="muted tiny" style={{ fontWeight: 400 }}>· @{c.username}</span></div>
+                <div className="conn-title row" style={{ gap: 7 }}><Bot size={14} /> {p.name || a.name || 'Agent'} <span className="muted tiny" style={{ fontWeight: 400 }}>· @{c.username}</span>
+                  {a.campaign_id && <span className="role-badge" title="On a campaign mission">{campaigns.find(cp => cp.id === a.campaign_id)?.name || 'campaign'}</span>}
+                </div>
                 <div className="muted tiny" style={{ marginTop: 3 }}>{p.archetype}{p.tone ? ` · ${p.tone}` : ''}</div>
                 {lastNote && <div className="agent-note">“{lastNote}”</div>}
               </div>
@@ -1263,6 +1183,153 @@ function FeederAgents({ agents, xConns, posts, onSpawn, onPatch, onDelete, onRun
           </div>
         )
       })}
+    </>
+  )
+}
+
+// ── Agent campaigns: missions agents carry out across platforms ────────────────
+const INTENSITY_OPTS = [
+  ['subtle', 'Subtle', '~1 in 4 posts'],
+  ['balanced', 'Balanced', 'about half'],
+  ['loud', 'Loud', 'most posts'],
+]
+
+function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent }) {
+  const [form, setForm] = useState(null)        // create-campaign draft
+  const [busy, setBusy] = useState(false)
+  const [deployFor, setDeployFor] = useState(null) // campaign id with the deploy panel open
+  const [deployAcct, setDeployAcct] = useState('')  // 'x:<id>' | 's:<id>'
+  const [deploySeed, setDeploySeed] = useState('')
+  const [spawning, setSpawning] = useState(false)
+
+  const handleOf = a => a.x_connection_id
+    ? xConns.find(c => c.id === a.x_connection_id)?.username
+    : socialAccounts.find(s => s.id === a.social_account_id)?.username
+  // Accounts that could host a NEW agent.
+  const freeX = xConns.filter(c => !c.is_primary && !agents.some(a => a.x_connection_id === c.id))
+  const freeSocial = socialAccounts.filter(s => ['linkedin', 'instagram', 'tiktok'].includes(s.platform) && !agents.some(a => a.social_account_id === s.id))
+  const unassigned = agents.filter(a => !a.campaign_id)
+
+  async function create() {
+    setBusy(true)
+    const ok = await onSaveCamp(form)
+    setBusy(false)
+    if (ok) setForm(null)
+  }
+  async function deployNew(camp) {
+    if (!deployAcct) return
+    setSpawning(true)
+    const [kind, id] = deployAcct.split(':')
+    const payload = { interests: deploySeed.trim() || camp.product, campaign_id: camp.id }
+    if (kind === 'x') payload.x_connection_id = id; else payload.social_account_id = id
+    const ok = await onSpawn(payload)
+    setSpawning(false)
+    if (ok) { setDeployFor(null); setDeployAcct(''); setDeploySeed('') }
+  }
+
+  return (
+    <>
+      {campaigns.length === 0 && !form && (
+        <div className="brain-empty card" style={{ display: 'block' }}>
+          <div className="empty-icon"><Bot size={26} /></div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>No campaigns yet</div>
+          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>A campaign is a mission: pick something to promote, deploy agents on your other accounts, and they weave it into their own posting — each in its own voice.</div>
+        </div>
+      )}
+
+      {campaigns.map(c => {
+        const roster = agents.filter(a => a.campaign_id === c.id)
+        const live = roster.reduce((n, a) => n + activityFor(posts, 'feeder_agent_id', a.id).live.length, 0)
+        const pending = roster.reduce((n, a) => n + activityFor(posts, 'feeder_agent_id', a.id).pending.length, 0)
+        return (
+          <div className={'card camp-card' + (c.active ? ' on' : '')} key={c.id} style={{ display: 'block' }}>
+            <div className="row" style={{ justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="conn-title row" style={{ gap: 7 }}>{c.name}<span className={'camp-state' + (c.active ? ' on' : '')}>{c.active ? 'live' : 'paused'}</span></div>
+                <div className="muted tiny" style={{ marginTop: 3 }}>Promoting: {c.product}{c.link ? ' · has link' : ''}</div>
+              </div>
+              <div className="row" style={{ gap: 8, flex: 'none' }}>
+                <Toggle on={!!c.active} onChange={v => onPatchCamp(c.id, { active: v }, v ? 'Campaign live — agents will pick it up' : 'Campaign paused — agents stay in character')} />
+                <button className="mini danger" onClick={() => onDeleteCamp(c.id)}><Trash2 size={12} /></button>
+              </div>
+            </div>
+
+            <div className="row" style={{ gap: 6, margin: '9px 0 2px', flexWrap: 'wrap' }}>
+              {INTENSITY_OPTS.map(([k, l, hint]) => (
+                <button key={k} className={'chip' + (c.intensity === k ? ' on' : '')} title={hint} onClick={() => onPatchCamp(c.id, { intensity: k })}>{l}</button>
+              ))}
+              <span className="muted tiny" style={{ marginLeft: 'auto' }}>{live} posted · {pending} pending</span>
+            </div>
+
+            {/* Roster */}
+            {roster.length === 0 && <div className="muted tiny" style={{ margin: '8px 0 2px' }}>No agents on this mission yet.</div>}
+            {roster.map(a => {
+              const p = a.persona || {}
+              return (
+                <div className="row" key={a.id} style={{ gap: 8, padding: '7px 0 0', minWidth: 0 }}>
+                  <span className="status-dot" style={{ background: platformDot(a.platform || 'x') }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Bot size={12} style={{ verticalAlign: -2 }} /> {p.name || a.name}</span>
+                  <span className="muted tiny" style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{handleOf(a) || '—'}{a.active ? '' : ' · off'}</span>
+                  <RunNow running={a.running} onRun={() => onRunAgent(a.id)} />
+                  <button className="mini" title="Remove from campaign (agent keeps running)" onClick={() => onPatchAgent(a.id, { campaign_id: null })}><LX size={11} /></button>
+                </div>
+              )
+            })}
+
+            {/* Assign existing / deploy new */}
+            <div className="row" style={{ gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+              {unassigned.length > 0 && (
+                <select className="field" style={{ width: 'auto', padding: '6px 10px', fontSize: 12.5 }} value="" onChange={e => e.target.value && onPatchAgent(e.target.value, { campaign_id: c.id }, 'Agent assigned to the mission')}>
+                  <option value="">Assign an agent…</option>
+                  {unassigned.map(a => <option key={a.id} value={a.id}>{(a.persona?.name || a.name)} · {a.platform || 'x'}</option>)}
+                </select>
+              )}
+              {(freeX.length > 0 || freeSocial.length > 0) && (
+                <button className="chip" onClick={() => { setDeployFor(deployFor === c.id ? null : c.id); setDeployAcct(''); }}><Plus size={11} /> Deploy new agent</button>
+              )}
+              {unassigned.length === 0 && freeX.length === 0 && freeSocial.length === 0 && roster.length === 0 && (
+                <span className="muted tiny">Connect a feeder X account or another social account to deploy an agent.</span>
+              )}
+            </div>
+            <AnimatePresence initial={false}>
+              {deployFor === c.id && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
+                  <div className="row" style={{ gap: 8, marginTop: 9, flexWrap: 'wrap' }}>
+                    <select className="field" style={{ flex: 1, minWidth: 150 }} value={deployAcct} onChange={e => setDeployAcct(e.target.value)}>
+                      <option value="">Which account?</option>
+                      {freeX.map(x => <option key={x.id} value={`x:${x.id}`}>X · @{x.username}</option>)}
+                      {freeSocial.map(s => <option key={s.id} value={`s:${s.id}`}>{s.platform} · @{s.username || s.platform}</option>)}
+                    </select>
+                    <input className="field" style={{ flex: 2, minWidth: 170 }} placeholder={`Its niche (default: ${c.product.slice(0, 40)})`} value={deploySeed} onChange={e => setDeploySeed(e.target.value)} />
+                    <button className="btn-primary btn-sm" disabled={spawning || !deployAcct} onClick={() => deployNew(c)}>{spawning ? <Loader2 size={13} className="spin" /> : 'Deploy'}</button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )
+      })}
+
+      {/* Create */}
+      {form ? (
+        <div className="card camp-form">
+          <input className="field" placeholder="Campaign name (e.g. Cadence launch)" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          <input className="field" style={{ marginTop: 8 }} placeholder="What are the agents promoting?" value={form.product} onChange={e => setForm(f => ({ ...f, product: e.target.value }))} />
+          <input className="field" style={{ marginTop: 8 }} placeholder="Link (optional)" value={form.link} onChange={e => setForm(f => ({ ...f, link: e.target.value }))} />
+          <textarea className="field" style={{ marginTop: 8 }} rows={2} placeholder="Angle guidance (optional) — audience, what to emphasize" value={form.brief} onChange={e => setForm(f => ({ ...f, brief: e.target.value }))} />
+          <div className="row" style={{ gap: 6, marginTop: 10 }}>
+            {INTENSITY_OPTS.map(([k, l, hint]) => (
+              <button key={k} className={'chip' + (form.intensity === k ? ' on' : '')} title={hint} onClick={() => setForm(f => ({ ...f, intensity: k }))}>{l}</button>
+            ))}
+          </div>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button className="mini" onClick={() => setForm(null)}>Cancel</button>
+            <button className="btn-primary btn-sm" disabled={busy || !form.name.trim() || !form.product.trim()} onClick={create}>{busy ? <Loader2 size={13} className="spin" /> : 'Create campaign'}</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginTop: 4 }} onClick={() => setForm({ name: '', product: '', link: '', brief: '', intensity: 'subtle' })}><Plus size={14} /> New campaign</button>
+      )}
     </>
   )
 }
@@ -1563,6 +1630,7 @@ function App({ session }) {
   const [xStats, setXStats] = useState(null)
   const [chatScope, setChatScope] = useState([]) // [] = all platforms
   const [feederAgents, setFeederAgents] = useState([])
+  const [agentCampaigns, setAgentCampaigns] = useState([])
   const inputRef = useRef(null); const bottomRef = useRef(null)
   const [leftPct, setLeftPct] = useState(47); const colsRef = useRef(null); const [dragging, setDragging] = useState(false)
   useEffect(() => { const v = Number(localStorage.getItem('cadence_split')); if (v >= 28 && v <= 72) setLeftPct(v) }, [])
@@ -1605,8 +1673,9 @@ function App({ session }) {
     catch {} finally { xStatsBusy.current = false }
   }, [authed])
   const loadAgents = useCallback(async () => { const r = await authed('/api/feeder-agents'); const d = await r.json(); setFeederAgents(d.agents || []) }, [authed])
+  const loadAgentCamps = useCallback(async () => { const r = await authed('/api/agent-campaigns'); const d = await r.json(); setAgentCampaigns(d.campaigns || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps])
 
   // Poll clip jobs while any is queued/processing so progress streams in live.
   useEffect(() => {
@@ -1722,12 +1791,14 @@ function App({ session }) {
   }
   async function deleteEngagement(id) { if (!confirm('Delete this engagement rule?')) return; await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); loadQueue() }
 
-  // Feeder agents
-  async function spawnAgent(connId, interests) {
-    const r = await authed('/api/feeder-agents', { method: 'POST', body: JSON.stringify({ x_connection_id: connId, interests }) })
+  // Feeder agents — payload is either a feeder connection id (X tab shorthand)
+  // or a full body ({ social_account_id | x_connection_id, interests, campaign_id }).
+  async function spawnAgent(payload, interests) {
+    const body = typeof payload === 'string' ? { x_connection_id: payload, interests } : payload
+    const r = await authed('/api/feeder-agents', { method: 'POST', body: JSON.stringify(body) })
     const d = await r.json()
     if (d.error) { setBanner(d.error); return false }
-    setBanner(`“${d.agent?.name || 'Agent'}” is ready — flip it on when you are`); loadAgents(); return true
+    setBanner(`“${d.agent?.name || 'Agent'}” is ready — flip it on when you are`); loadAgents(); loadAgentCamps(); return true
   }
   async function patchAgent(id, patch, note) { await authed('/api/feeder-agents', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); if (note) setBanner(note); loadAgents(); loadQueue() }
   async function deleteAgent(id) { if (!confirm('Delete this agent and its unpublished posts?')) return; await authed('/api/feeder-agents', { method: 'DELETE', body: JSON.stringify({ id }) }); loadAgents(); loadQueue() }
@@ -1740,6 +1811,19 @@ function App({ session }) {
     setBanner('Reinventing the persona…')
     const r = await authed('/api/feeder-agents', { method: 'POST', body: JSON.stringify({ action: 'reroll', id }) }); const d = await r.json()
     setBanner(d.error || `Meet “${d.agent?.name}”`); loadAgents()
+  }
+
+  // Agent campaigns — the missions agents carry out
+  async function saveAgentCamp(body) {
+    const r = await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify(body) })
+    const d = await r.json()
+    if (d.error) { setBanner(d.error); return false }
+    setBanner('Campaign created — deploy agents to it'); loadAgentCamps(); return true
+  }
+  async function patchAgentCamp(id, patch, note) { await authed('/api/agent-campaigns', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); if (note) setBanner(note); loadAgentCamps() }
+  async function deleteAgentCamp(id) {
+    if (!confirm('Delete this campaign? Its agents stay — they just stop promoting it.')) return
+    await authed('/api/agent-campaigns', { method: 'DELETE', body: JSON.stringify({ id }) }); loadAgentCamps(); loadAgents()
   }
 
   // Social (Instagram/TikTok/LinkedIn via Zernio)
@@ -1986,7 +2070,7 @@ function App({ session }) {
                   <CrossCampHint plats={['x']} />
                 </Section>
                 <Section title="Feeder agents" hint="autonomous personas on your other accounts" badge={<OnBadge on={feederAgents.some(a => a.active)} />}>
-                  <FeederAgents agents={feederAgents} xConns={xConns} posts={posts} onSpawn={spawnAgent} onPatch={patchAgent} onDelete={deleteAgent} onRun={runAgent} onReroll={rerollAgent} />
+                  <FeederAgents agents={feederAgents} xConns={xConns} posts={posts} campaigns={agentCampaigns} onSpawn={spawnAgent} onPatch={patchAgent} onDelete={deleteAgent} onRun={runAgent} onReroll={rerollAgent} />
                 </Section>
                 <Section title="Inspiration" hint="accounts the AI studies">
                   <InspirationAccounts platform="x" accounts={inspoX} onAdd={addInspo} onRemove={removeInspo} />
@@ -2081,8 +2165,10 @@ function App({ session }) {
                   the right format per platform, in one voice. */}
               {tab === 'campaigns' && (<>
                 <BrainBanner theme="campaigns" />
-                <div className="muted tiny" style={{ margin: '0 2px 12px' }}>All your campaigns. One topic → the right format on each of your accounts.</div>
-                <CrossCampaignManager campaigns={brandCampaigns} xConns={xConns} socialAccounts={socialAccounts} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
+                <div className="muted tiny" style={{ margin: '0 2px 12px' }}>Missions for your agents. Pick something to promote, deploy agents across platforms — each one works it into its own posting, in its own voice.</div>
+                <AgentCampaigns campaigns={agentCampaigns} agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts}
+                  onSaveCamp={saveAgentCamp} onPatchCamp={patchAgentCamp} onDeleteCamp={deleteAgentCamp}
+                  onSpawn={spawnAgent} onPatchAgent={patchAgent} onRunAgent={runAgent} />
               </>)}
 
             </motion.div>

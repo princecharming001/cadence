@@ -5,7 +5,7 @@ import { buildAgentPersona, runDueFeederAgents, runFeederAgentById } from '@/lib
 export const runtime = 'nodejs'
 export const maxDuration = 300 // a think-cycle does several LLM calls + X reads
 
-const EDITABLE = ['interests', 'support_primary', 'posts_per_day', 'replies_per_day', 'interval_hours', 'auto_post', 'active']
+const EDITABLE = ['interests', 'support_primary', 'posts_per_day', 'replies_per_day', 'interval_hours', 'auto_post', 'active', 'campaign_id']
 const clampInt = (v, lo, hi, dflt) => Math.min(hi, Math.max(lo, parseInt(v, 10) || dflt))
 
 function clean(body) {
@@ -18,6 +18,8 @@ function clean(body) {
   if (typeof patch.interests === 'string') patch.interests = patch.interests.slice(0, 400)
   return patch
 }
+
+const ZERNIO_PLATFORMS = ['linkedin', 'instagram', 'tiktok']
 
 // GET → the user's agents
 export async function GET(req) {
@@ -47,8 +49,15 @@ export async function POST(req) {
   if (body.action === 'reroll') {
     const { data: agent } = await admin.from('feeder_agents').select('*').eq('id', body.id).eq('user_id', user.id).single()
     if (!agent) return Response.json({ error: 'Not found' }, { status: 404 })
-    const { data: conn } = await admin.from('x_connections').select('username').eq('id', agent.x_connection_id).single()
-    const persona = await buildAgentPersona({ interests: agent.interests, handle: conn?.username || 'feeder', previous: agent.persona })
+    let handle = 'feeder'
+    if (agent.x_connection_id) {
+      const { data: conn } = await admin.from('x_connections').select('username').eq('id', agent.x_connection_id).single()
+      handle = conn?.username || handle
+    } else if (agent.social_account_id) {
+      const { data: acct } = await admin.from('social_accounts').select('username').eq('id', agent.social_account_id).single()
+      handle = acct?.username || handle
+    }
+    const persona = await buildAgentPersona({ interests: agent.interests, handle, previous: agent.persona, platform: agent.platform || 'x' })
     // Fresh identity → fresh memory; keep cycle count for evolution cadence.
     const { data, error } = await admin.from('feeder_agents')
       .update({ persona, name: persona.name, memory: [] }).eq('id', agent.id).select().single()
@@ -56,20 +65,35 @@ export async function POST(req) {
     return Response.json({ agent: data })
   }
 
-  // Create: one agent per feeder connection, owner-verified.
-  if (!body.x_connection_id) return Response.json({ error: 'x_connection_id required' }, { status: 400 })
-  const { data: conn } = await admin.from('x_connections')
-    .select('id, username, is_primary').eq('id', body.x_connection_id).eq('user_id', user.id).single()
-  if (!conn) return Response.json({ error: 'That X account is not connected.' }, { status: 404 })
-  if (conn.is_primary) return Response.json({ error: 'Agents run on feeder accounts — your primary stays yours.' }, { status: 400 })
-
+  // Create: one agent per account, owner-verified. X agents take a feeder
+  // x_connection; LinkedIn/IG/TikTok agents take a Zernio social account.
   const interests = String(body.interests || '').slice(0, 400)
-  const persona = await buildAgentPersona({ interests, handle: conn.username })
-  const { data, error } = await admin.from('feeder_agents').insert({
-    user_id: user.id, x_connection_id: conn.id, interests,
-    persona, name: persona.name,
-    active: false, // armed explicitly by the user
-  }).select().single()
+  const campaignId = body.campaign_id || null
+  if (campaignId) {
+    const { data: camp } = await admin.from('agent_campaigns').select('id').eq('id', campaignId).eq('user_id', user.id).single()
+    if (!camp) return Response.json({ error: 'Campaign not found.' }, { status: 404 })
+  }
+
+  let insert
+  if (body.social_account_id) {
+    const { data: acct } = await admin.from('social_accounts')
+      .select('id, username, platform').eq('id', body.social_account_id).eq('user_id', user.id).single()
+    if (!acct) return Response.json({ error: 'That account is not connected.' }, { status: 404 })
+    if (!ZERNIO_PLATFORMS.includes(acct.platform)) return Response.json({ error: 'Agents support X, LinkedIn, Instagram, and TikTok accounts.' }, { status: 400 })
+    const persona = await buildAgentPersona({ interests, handle: acct.username || acct.platform, platform: acct.platform })
+    insert = { user_id: user.id, social_account_id: acct.id, platform: acct.platform, interests, persona, name: persona.name, active: false, support_primary: false }
+  } else {
+    if (!body.x_connection_id) return Response.json({ error: 'Pick an account for the agent.' }, { status: 400 })
+    const { data: conn } = await admin.from('x_connections')
+      .select('id, username, is_primary').eq('id', body.x_connection_id).eq('user_id', user.id).single()
+    if (!conn) return Response.json({ error: 'That X account is not connected.' }, { status: 404 })
+    if (conn.is_primary) return Response.json({ error: 'Agents run on feeder accounts — your primary stays yours.' }, { status: 400 })
+    const persona = await buildAgentPersona({ interests, handle: conn.username })
+    insert = { user_id: user.id, x_connection_id: conn.id, platform: 'x', interests, persona, name: persona.name, active: false }
+  }
+  if (campaignId) insert.campaign_id = campaignId
+
+  const { data, error } = await admin.from('feeder_agents').insert(insert).select().single()
   if (error) {
     const msg = /duplicate|unique/i.test(error.message) ? 'This account already has an agent.' : error.message
     return Response.json({ error: msg }, { status: 400 })
@@ -84,6 +108,11 @@ export async function PATCH(req) {
   const body = await req.json().catch(() => ({}))
   if (!body.id) return Response.json({ error: 'id required' }, { status: 400 })
   const patch = clean(body)
+  // campaign_id: null unassigns; a value must be the user's own campaign.
+  if (patch.campaign_id) {
+    const { data: camp } = await admin.from('agent_campaigns').select('id').eq('id', patch.campaign_id).eq('user_id', user.id).single()
+    if (!camp) return Response.json({ error: 'Campaign not found.' }, { status: 404 })
+  }
   if (patch.active === true) patch.next_run_at = new Date().toISOString()
   const { data, error } = await admin.from('feeder_agents')
     .update(patch).eq('id', body.id).eq('user_id', user.id).select().single()
