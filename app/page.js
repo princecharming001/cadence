@@ -8,7 +8,7 @@ import {
   Check as LCheck, X as LX, RefreshCw, Sparkles, Send, Plus,
   Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, Image as LImage,
   ThumbsUp, ThumbsDown, Upload, Play, MessageCircle, Star, Loader2,
-  ArrowLeft, CreditCard, Users, User as LUser, Bot,
+  ArrowLeft, CreditCard, Users, User as LUser, Bot, History as LHistory,
 } from 'lucide-react'
 import { SLIDESHOW_FORMATS, SLIDE_STYLE_LIST } from '@/lib/slideshow-styles'
 import { PLANS, PLAN_LIST, monthlyEquivalent } from '@/lib/plans'
@@ -408,7 +408,7 @@ function useCountdown(whenLocal) {
 // ── Draft proposal (in chat) — editable editor for every recommended post.
 // proposal.platform follows the chat's Focus (LinkedIn focus → LinkedIn post,
 // 1300-char cap, publishes via Zernio instead of an X connection). ─────────────
-function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolved, defaultHour, xConns = [], hasPhotos }) {
+function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolved, onOutcome, defaultHour, xConns = [], hasPhotos, index = 0, total = 1 }) {
   const isThread = Array.isArray(proposal.thread) && proposal.thread.length > 1
   const platform = proposal.platform === 'linkedin' ? 'linkedin' : 'x'
   const isLi = platform === 'linkedin'
@@ -423,9 +423,13 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
   const [smartSlot, setSmartSlot] = useState(false)
   const whenTouched = useRef(false)
   const [connId, setConnId] = useState(xConns[0]?.id || '')
-  const [busy, setBusy] = useState(false); const [regen, setRegen] = useState(false); const [done, setDone] = useState(null)
-  const [rating, setRating] = useState(null); const [err, setErr] = useState(''); const [doneErr, setDoneErr] = useState('')
+  // resolved/resolved_label persist with the chat, so reloaded history shows
+  // the outcome instead of a live card that could double-post.
+  const [busy, setBusy] = useState(false); const [regen, setRegen] = useState(false); const [done, setDone] = useState(proposal.resolved || null)
+  const [doneLabel, setDoneLabel] = useState(proposal.resolved_label || '')
+  const [rating, setRating] = useState(null); const [err, setErr] = useState('')
   const countdown = useCountdown(when)
+  function finish(result, label) { setDone(result); setDoneLabel(label); onOutcome && onOutcome(result, label) }
 
   useEffect(() => { if (!connId && xConns[0]?.id) setConnId(xConns[0].id) }, [xConns, connId])
 
@@ -470,13 +474,17 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
       result = pd.status === 'posted' ? 'posted' : 'failed'
       if (result === 'failed') errMsg = pd.error || 'Post failed.'
     }
-    setBusy(false); setDoneErr(errMsg); setDone(result); onResolved && onResolved()
+    setBusy(false)
+    const label = result === 'posted' ? (isThread ? 'Thread started — the rest follows in order' : isLi ? 'Posted to LinkedIn' : 'Posted to X')
+      : result === 'failed' ? `Failed — saved to Queue. ${errMsg}`
+      : `Scheduled · ${fmt(new Date(when).toISOString())}`
+    finish(result, label); onResolved && onResolved()
   }
-  if (done) return <div className={'dp-done ' + done}>{done === 'posted' ? (isThread ? 'Thread started — the rest follows in order' : isLi ? 'Posted to LinkedIn' : 'Posted to X') : done === 'failed' ? `Failed — saved to Queue. ${doneErr}` : done === 'discarded' ? 'Discarded' : `Scheduled · ${fmt(new Date(when).toISOString())}`}</div>
+  if (done) return <div className={'dp-done ' + done}>{doneLabel || (done === 'discarded' ? 'Discarded' : done)}</div>
   return (
     <motion.div className="card dp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
       <div className="dp-head">
-        <span>{isThread ? `Thread draft · ${parts.length} parts` : 'Draft preview'}</span>
+        <span>{isThread ? `Thread draft · ${parts.length} parts` : total > 1 ? `Draft ${index + 1} of ${total}` : 'Draft preview'}</span>
         <div className="row" style={{ gap: 8 }}>
           <button className={'thumb' + (rating === 'up' ? ' on up' : '')} title="More like this" onClick={() => rate('up')}><ThumbsUp size={13} /></button>
           <button className={'thumb' + (rating === 'down' ? ' on down' : '')} title="Less like this" onClick={() => rate('down')}><ThumbsDown size={13} /></button>
@@ -487,13 +495,13 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
         ? <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {parts.map((t, i) => (
               <div key={i} style={{ position: 'relative' }}>
-                <textarea className="field dp-text" style={{ minHeight: 72 }} rows={3} maxLength={380} value={t}
+                <textarea className="field dp-text" style={{ minHeight: 96 }} rows={4} maxLength={380} value={t}
                   onChange={e => setParts(ps => ps.map((x, j) => j === i ? e.target.value : x))} />
                 <span className={'count' + (t.length > 280 ? ' over' : '')} style={{ position: 'absolute', right: 10, bottom: 8, fontSize: 10.5 }}>{i + 1}/{parts.length} · {t.length}/280</span>
               </div>
             ))}
           </div>
-        : <textarea className="field dp-text" rows={isLi ? 9 : 5} maxLength={cap + 100} value={content} onChange={e => setContent(e.target.value)} />}
+        : <textarea className="field dp-text" rows={isLi ? 12 : 7} maxLength={cap + 100} value={content} onChange={e => setContent(e.target.value)} />}
       <AnimatePresence>
         {imgOn && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
@@ -519,7 +527,7 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
       </div>
       {err && <div className="notice" style={{ color: '#B3372F', marginTop: 8 }}>{err}</div>}
       <div className="dp-actions">
-        <button className="icon-btn x" title="Discard" onClick={() => setDone('discarded')}><Ex /></button>
+        <button className="icon-btn x" title="Discard" onClick={() => finish('discarded', 'Discarded')}><Ex /></button>
         <button className="icon-btn check" title="Approve & schedule" disabled={busy || (isThread ? threadInvalid : (content.length > cap || !content.trim()))} onClick={() => approve(false)}><Check /> <span>Schedule</span></button>
         <motion.button className="btn-primary btn-sm" whileTap={{ scale: 0.96 }} disabled={busy || !canPost || (isThread ? threadInvalid : content.length > cap)} onClick={() => approve(true)} title={!canPost ? (isLi ? 'Connect LinkedIn first' : 'Connect X first') : 'Post now'}>Post now</motion.button>
       </div>
@@ -1881,6 +1889,8 @@ function App({ session }) {
   const [chatScope, setChatScope] = useState([]) // [] = all platforms
   const [feederAgents, setFeederAgents] = useState([])
   const [agentCampaigns, setAgentCampaigns] = useState([])
+  const [chatList, setChatList] = useState([]); const [historyOpen, setHistoryOpen] = useState(false)
+  const chatIdRef = useRef(null) // current saved-chat id; null until first save
   const inputRef = useRef(null); const bottomRef = useRef(null)
   const [leftPct, setLeftPct] = useState(47); const colsRef = useRef(null); const [dragging, setDragging] = useState(false)
   useEffect(() => { const v = Number(localStorage.getItem('cadence_split')); if (v >= 28 && v <= 72) setLeftPct(v) }, [])
@@ -1902,7 +1912,7 @@ function App({ session }) {
     document.addEventListener('touchmove', move, { passive: false }); document.addEventListener('touchend', up)
   }, [])
 
-  const loadQueue = useCallback(async () => { const { data } = await supabase.from('posts').select('*').order('scheduled_for', { ascending: true }).limit(300); if (data) setPosts(data) }, [])
+  const loadQueue = useCallback(async () => { const { data } = await supabase.from('posts').select('*').order('scheduled_for', { ascending: true, nullsLast: true }).limit(300); if (data) setPosts(data) }, [])
   const loadX = useCallback(async () => { const r = await authed('/api/x/status'); const d = await r.json(); setXConns(d.connections || []) }, [authed])
   const loadLinkedIn = useCallback(async () => { const r = await authed('/api/linkedin'); const d = await r.json(); setLiSelf(d.self || []); setLiMentors(d.mentors || []); setLiPosts(d.posts || []) }, [authed])
   const loadMe = useCallback(async () => { const r = await authed('/api/me'); const d = await r.json(); setMe(d) }, [authed])
@@ -2227,10 +2237,61 @@ function App({ session }) {
     const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Billing isn’t live on this instance yet.')
   }
   function usePreset(text) { setInput(text); inputRef.current?.focus() }
+
+  // ── Chat persistence: every exchange upserts the conversation, so history
+  // survives reloads and the user can revisit or branch from old chats. ──────
+  const saveChat = useCallback(async (msgs) => {
+    if (!msgs?.length) return
+    try {
+      const r = await authed('/api/chats', { method: 'POST', body: JSON.stringify({ id: chatIdRef.current, messages: msgs, scope: chatScope }) })
+      const d = await r.json()
+      if (d.id) {
+        const isNew = !chatIdRef.current
+        chatIdRef.current = d.id
+        if (isNew) loadChats() // surface the new conversation in History right away
+      }
+    } catch {}
+  }, [authed, chatScope]) // eslint-disable-line react-hooks/exhaustive-deps
+  const loadChats = useCallback(async () => {
+    try { const r = await authed('/api/chats'); const d = await r.json(); setChatList(d.chats || []) } catch {}
+  }, [authed])
+  useEffect(() => { loadChats() }, [loadChats])
+  function newChat() { chatIdRef.current = null; setMessages([]); setHistoryOpen(false); inputRef.current?.focus() }
+  async function openChat(id) {
+    const r = await authed(`/api/chats?id=${id}`); const d = await r.json()
+    if (d.chat) { chatIdRef.current = d.chat.id; setMessages(Array.isArray(d.chat.messages) ? d.chat.messages : []); setHistoryOpen(false) }
+  }
+  async function deleteChat(id, e) {
+    e.stopPropagation()
+    await authed('/api/chats', { method: 'DELETE', body: JSON.stringify({ id }) })
+    if (chatIdRef.current === id) { chatIdRef.current = null; setMessages([]) }
+    loadChats()
+  }
+  // A draft card was posted/scheduled/discarded — record the outcome on the
+  // saved chat so reloading history never shows a live card for it again.
+  function resolveProposal(mi, pi, resolved, label) {
+    setMessages(ms => {
+      const next = ms.map((m, i) => i !== mi ? m : {
+        ...m,
+        proposals: (m.proposals || (m.proposal ? [m.proposal] : [])).map((p, j) => j !== pi ? p : { ...p, resolved, resolved_label: label }),
+        proposal: undefined,
+      })
+      saveChat(next)
+      return next
+    })
+  }
+
   async function send(text) {
     const t = (text ?? input).trim(); if (!t || loading) return
     setInput(''); const next = [...messages, { role: 'user', content: t }]; setMessages(next); setLoading(true)
-    try { const res = await authed('/api/chat', { method: 'POST', body: JSON.stringify({ messages: next, platforms: chatScope }) }); const data = await res.json(); setMessages(p => [...p, { role: 'assistant', content: data.reply, proposal: data.proposal || null }]); loadQueue() }
+    try {
+      // Model sees the recent window; the full conversation still saves to history.
+      const res = await authed('/api/chat', { method: 'POST', body: JSON.stringify({ messages: next.slice(-40), platforms: chatScope }) })
+      const data = await res.json()
+      const proposals = Array.isArray(data.proposals) ? data.proposals : (data.proposal ? [data.proposal] : [])
+      const withReply = [...next, { role: 'assistant', content: data.reply, proposals }]
+      setMessages(withReply); saveChat(withReply); loadQueue()
+    }
     catch (e) { setMessages(p => [...p, { role: 'assistant', content: '⚠️ ' + e.message }]) } finally { setLoading(false) }
   }
 
@@ -2497,7 +2558,30 @@ function App({ session }) {
 
         {/* chat */}
         <section className="pane right">
-          <div className="scroll chat-scroll">
+          <div className="chat-head">
+            <span className="chat-head-label">{messages.length ? (chatList.find(c => c.id === chatIdRef.current)?.title || 'Chat') : 'New chat'}</span>
+            <div className="row" style={{ gap: 6, position: 'relative' }}>
+              <button className="mini" onClick={() => { if (!historyOpen) loadChats(); setHistoryOpen(o => !o) }} title="Previous chats"><LHistory size={12} /> History</button>
+              <button className="mini" onClick={newChat} title="Start a new chat"><Plus size={12} /> New</button>
+              <AnimatePresence>
+                {historyOpen && (
+                  <motion.div className="card chat-hist" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.15 }}>
+                    {chatList.length === 0 && <div className="muted tiny" style={{ padding: '10px 12px' }}>No saved chats yet — they save automatically as you talk.</div>}
+                    {chatList.map(c => (
+                      <div key={c.id} className={'hist-row' + (c.id === chatIdRef.current ? ' on' : '')} onClick={() => openChat(c.id)}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div className="hist-title">{c.title || 'Chat'}</div>
+                          <div className="muted tiny">{fmt(c.updated_at)}</div>
+                        </div>
+                        <button className="hist-del" title="Delete chat" onClick={e => deleteChat(c.id, e)}><Trash2 size={12} /></button>
+                      </div>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+          <div className="scroll chat-scroll" onClick={() => historyOpen && setHistoryOpen(false)}>
             {messages.length === 0 && (
               <div className="chat-welcome">
                 <div className="wordmark" style={{ fontSize: 19, marginBottom: 4 }}>How can I help?</div>
@@ -2510,14 +2594,19 @@ function App({ session }) {
               </div>
             )}
             <AnimatePresence initial={false}>
-              {messages.map((m, i) => (
-                <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
-                  <div className={'msg-col' + (m.proposal ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                    <div className={'bubble ' + m.role}>{m.content}</div>
-                    {m.proposal && <DraftProposal proposal={m.proposal} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={loadQueue} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />}
-                  </div>
-                </motion.div>
-              ))}
+              {messages.map((m, i) => {
+                const props = m.proposals || (m.proposal ? [m.proposal] : [])
+                return (
+                  <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
+                    <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                      <div className={'bubble ' + m.role}>{m.content}</div>
+                      {props.map((p, j) => (
+                        <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={loadQueue} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
+                      ))}
+                    </div>
+                  </motion.div>
+                )
+              })}
             </AnimatePresence>
             {loading && <div className="msg assistant"><div className="bubble assistant"><span className="dots"><i/><i/><i/></span></div></div>}
             <div ref={bottomRef} />
@@ -2824,7 +2913,16 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .chat-welcome { margin: auto; text-align: center; padding: 30px 0; }
 .msg { display: flex; margin-bottom: 12px; } .msg.user { justify-content: flex-end; } .msg.assistant { justify-content: flex-start; }
 .msg-col { display: flex; flex-direction: column; gap: 10px; max-width: 86%; min-width: 0; }
-.msg-col.has-dp { width: 500px; max-width: 97%; }
+.msg-col.has-dp { width: 680px; max-width: 100%; }
+.chat-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg); flex: none; }
+.chat-head-label { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.chat-hist { position: absolute; top: 32px; right: 0; width: 320px; max-height: 400px; overflow-y: auto; z-index: 60; padding: 6px; box-shadow: 0 18px 50px -20px rgba(35,32,24,0.35); }
+.hist-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.hist-row:hover { background: var(--bg2); }
+.hist-row.on { background: var(--accent-soft); }
+.hist-title { font-size: 12.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hist-del { background: none; border: none; color: var(--faint); cursor: pointer; padding: 4px; border-radius: 6px; flex: none; display: flex; }
+.hist-del:hover { color: var(--bad); background: var(--bad-soft); }
 .bubble { max-width: 100%; padding: 11px 15px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bubble.user { background: var(--ink); color: #FAF9F7; border-radius: 12px 12px 4px 12px; }
 .bubble.assistant { background: var(--surface); border: 1px solid var(--line); color: var(--body); border-radius: 12px 12px 12px 4px; }
@@ -2850,7 +2948,7 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .count { font-size: 12px; color: var(--faint); white-space: nowrap; } .count.over { color: var(--bad); font-weight: 600; }
 .dp { padding: 16px; width: 100%; }
 .dp-head { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 600; color: var(--accent-text); text-transform: uppercase; letter-spacing: .09em; margin-bottom: 10px; }
-.dp-text { font-size: 14.5px; line-height: 1.6; resize: vertical; min-height: 104px; }
+.dp-text { font-size: 14.5px; line-height: 1.6; resize: vertical; min-height: 150px; }
 .dp-img-wrap { position: relative; margin-top: 10px; border-radius: 8px; overflow: hidden; }
 .dp-img { width: 100%; display: block; border-radius: 8px; aspect-ratio: 1/1; object-fit: cover; background: var(--bg2); }
 .dp-placeholder { display: flex; align-items: center; justify-content: center; color: var(--faint); }

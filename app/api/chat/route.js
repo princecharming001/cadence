@@ -43,7 +43,7 @@ const tools = [
   },
   {
     name: 'propose_post',
-    description: 'Propose a tweet to the user as an editable draft card in the chat. This is the ONLY way to create a new post — use it whenever the user wants to write, draft, repurpose, or "post" something (whether they say schedule it, post it now, or just "write a tweet about X"). It does NOT queue or publish anything: it shows the user an editable text editor with their tweet, a time picker, a live countdown, 👍/👎, and Post-now / Schedule / Discard buttons. The USER decides what happens to it. Always write the full tweet text yourself (<=280 chars). Set want_image:true (and a vivid image_prompt) only if the user wants an image / a visual / a picture on the post. When repurposing a LinkedIn post, rewrite it to fit X unless asked to keep it verbatim. After calling this, keep your text reply to one short line like "Here\'s a draft — edit it and approve below."',
+    description: 'Propose a post to the user as an editable draft card in the chat. This is the ONLY way to create a new post — use it whenever the user wants to write, draft, repurpose, or "post" something (whether they say schedule it, post it now, or just "write a tweet about X"). It does NOT queue or publish anything: it shows the user an editable text editor with their post, a time picker, a live countdown, 👍/👎, and Post-now / Schedule / Discard buttons. The USER decides what happens to it. Always write the full post text yourself. If the user asks for SEVERAL posts ("write 3 posts", "give me some options"), call propose_post once PER post in the same turn — each call becomes its own editable card. Set want_image:true (and a vivid image_prompt) only if the user wants an image / a visual / a picture on the post. When repurposing a LinkedIn post, rewrite it to fit the target platform unless asked to keep it verbatim. After calling this, keep your text reply to one short line like "Here\'s a draft — edit it and approve below."',
     input_schema: {
       type: 'object',
       properties: {
@@ -148,7 +148,7 @@ const tools = [
   },
   {
     name: 'generate_slideshow',
-    description: 'Generate an AI Instagram/TikTok carousel ("slideshow") on a topic and save it as a draft. Optionally schedule or post it to connected Instagram/TikTok/LinkedIn accounts. Returns the rendered slide image URLs + caption. Use this whenever the user wants a carousel, slideshow, IG post, or TikTok photo post.',
+    description: 'Generate an AI Instagram/TikTok carousel ("slideshow") on a topic and save it as a draft. Returns the rendered slide image URLs + caption. Use this whenever the user wants a carousel, slideshow, IG post, or TikTok photo post. IMPORTANT: only set post_to (publish/schedule) when the user EXPLICITLY said to publish it in this conversation — otherwise omit post_to so it saves as a draft they approve first.',
     input_schema: {
       type: 'object',
       properties: {
@@ -424,10 +424,13 @@ ${CHAT_STYLE}
 Whenever you write or rewrite a post, follow this rubric:
 ${X_RUBRIC}
 
-CRITICAL RULE — you never queue or publish a NEW post yourself. To create ANY new post, you call propose_post, which shows the user an editable draft card (text editor + time picker + live countdown + 👍/👎 + Post-now/Schedule/Discard). The user — not you — decides whether it gets scheduled or posted. This applies even when the user says "post this now" or "schedule it": still call propose_post (you can mention you've set it up to post now / for a time, and they just confirm on the card).
+CRITICAL RULE — you never queue or publish a NEW post yourself. To create ANY new post, you call propose_post, which shows the user an editable draft card (text editor + time picker + live countdown + 👍/👎 + Post-now/Schedule/Discard). The user — not you — decides whether it gets scheduled or posted. This applies even when the user says "post this now" or "schedule it": still call propose_post (you can mention you've set it up to post now / for a time, and they just confirm on the card). The same consent rule covers EVERY platform: nothing goes live on X, LinkedIn, Instagram, or TikTok unless the user explicitly approved that exact content — never pass post_to to generate_slideshow unless the user clearly told you to publish it.
+
+CRITICAL RULE — when asked to write, DRAFT IMMEDIATELY. Never reply with a clarifying question like "what should it be about?" or "what's the topic?". If the user doesn't give a topic, pick the strongest one yourself from their voice profile, niche, recent posts, or LinkedIn content (call list_linkedin_posts or get_overview if you need material) and call propose_post in your FIRST response. They'll edit the draft or tell you to change direction — a concrete draft is always more useful than a question. Ask a question only when the request is literally impossible to act on.
 
 More rules:
 - For "write/draft/make a tweet", "repurpose my LinkedIn post", "post about X", etc. → call propose_post with the full post text. Then reply in one short line, e.g. "Here's a draft — edit it and approve below."
+- Asked for N posts or "a few options"? Call propose_post N times in the same turn — every draft must arrive as its own editable card, never as plain text in your reply.
 - For "make a thread" / "turn this into a thread" → propose_thread with 2-8 parts: hook tweet, one point per tweet, closer with the payoff.
 - When the user pastes a link to repurpose → ingest_url first, then draft from what it returns in THEIR voice (never copy the source verbatim).
 - Set want_image:true + a vivid image_prompt ONLY when the user wants a visual/picture/image on the post.
@@ -442,7 +445,7 @@ ${scopeBlock}${feedbackBlock(fb)}`
 
     let convo = safeMessages
     let reply = ''
-    let proposal = null   // set when the model proposes a draft-with-image
+    const proposals = []  // every propose_post / propose_thread call becomes one editable card
 
     // Hard cap on agent hops — an unbounded loop is an unbounded token bill.
     // Block 1 (static) is cached across hops AND across requests; block 2
@@ -473,7 +476,7 @@ ${scopeBlock}${feedbackBlock(fb)}`
             if (parts.length < 2) {
               result = { error: 'A thread needs 2-8 parts — call propose_thread again with the full parts array.' }
             } else {
-              proposal = { thread: await Promise.all(parts.map(t => enforceLen(t, 'x'))), platform: 'x' }
+              proposals.push({ thread: await Promise.all(parts.map(t => enforceLen(t, 'x'))), platform: 'x' })
               result = { ok: true, parts: parts.length, note: 'Thread proposed to the user for inline review — they will edit/schedule/post or discard it.' }
             }
           } else if (block.name === 'propose_post') {
@@ -481,7 +484,7 @@ ${scopeBlock}${feedbackBlock(fb)}`
             // Platform follows the chat's scope (LinkedIn focus → LinkedIn post,
             // 1300-char cap); the length limit is enforced server-side.
             const propPlatform = liScoped ? 'linkedin' : 'x'
-            proposal = { content: await enforceLen(String(block.input.content || ''), propPlatform), platform: propPlatform }
+            const prop = { content: await enforceLen(String(block.input.content || ''), propPlatform), platform: propPlatform }
             if (block.input.want_image) {
               // Explicit image_prompt = the model/user knows what they want.
               // Otherwise the planner decides personal vs illustrative and
@@ -491,9 +494,10 @@ ${scopeBlock}${feedbackBlock(fb)}`
                 ? await generateImage(block.input.image_prompt, {})
                 : await generateImage(block.input.content, { auto: true, userId: user.id })
               if (img.skipped) img = await generateImage(block.input.content, { fromContent: true })
-              proposal.image_url = await persistImage(img.url, user.id) // survive until publish
-              proposal.image_prompt = img.prompt
+              prop.image_url = await persistImage(img.url, user.id) // survive until publish
+              prop.image_prompt = img.prompt
             }
+            proposals.push(prop)
             result = { ok: true, note: 'Draft proposed to the user for inline review — the user will edit/schedule/post or discard it.' }
           } else {
             result = await executeTool(block.name, block.input, user.id)
@@ -510,7 +514,8 @@ ${scopeBlock}${feedbackBlock(fb)}`
     }
     if (!reply) reply = 'I hit my action limit for one message — tell me to continue.'
 
-    return Response.json({ reply, proposal })
+    // proposals = every draft card from this turn; proposal kept for compatibility.
+    return Response.json({ reply, proposals, proposal: proposals[0] || null })
   } catch (err) {
     console.error('[chat]', err)
     return Response.json({ reply: 'Something went wrong on my end — try that again.' }, { status: 500 })
