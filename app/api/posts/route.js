@@ -1,6 +1,9 @@
 // Direct queue CRUD + manual "post now", all scoped to the authenticated user.
 import { admin, getUser } from '@/lib/supabase'
 import { postOne } from '@/lib/posting'
+import { PLATFORM } from '@/lib/prompts'
+
+const capOf = p => (PLATFORM[p] || PLATFORM.x).cap
 
 // POST  { content, scheduledFor }            → create a queued post
 // POST  { id, action: 'post_now' }           → post one immediately
@@ -31,13 +34,20 @@ export async function POST(req) {
   const content = (body.content || '').trim()
   if (!content) return Response.json({ error: 'Content required.' }, { status: 400 })
   const scheduled = body.scheduledFor || new Date().toISOString()
-  const platform = body.platform === 'linkedin' ? 'linkedin' : 'x'
-  if (content.length > (platform === 'linkedin' ? 1300 : 280)) {
-    return Response.json({ error: 'Post is over the length limit.' }, { status: 400 })
+  // All four platforms are first-class queue citizens (IG/TikTok publish via
+  // Zernio and need media; the poster enforces that at publish time).
+  const platform = Object.hasOwn(PLATFORM, body.platform) ? body.platform : 'x'
+  if (content.length > capOf(platform)) {
+    return Response.json({ error: `Over the ${capOf(platform)}-character ${PLATFORM[platform].label} limit.` }, { status: 400 })
   }
 
   const { data, error } = await admin.from('posts')
-    .insert({ content, scheduled_for: scheduled, status: 'queued', user_id: user.id, platform, image_url: body.imageUrl || null, x_connection_id: platform === 'x' ? (body.xConnectionId || null) : null })
+    .insert({
+      content, scheduled_for: scheduled, status: 'queued', user_id: user.id, platform,
+      image_url: body.imageUrl || null,
+      x_connection_id: platform === 'x' ? (body.xConnectionId || null) : null,
+      social_account_id: platform !== 'x' ? (body.socialAccountId || null) : null,
+    })
     .select().single()
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ post: data })
@@ -54,6 +64,14 @@ export async function PATCH(req) {
   if (status !== undefined)        patch.status = status
   if (imageUrl !== undefined)      patch.image_url = imageUrl
   if (xConnectionId !== undefined) patch.x_connection_id = xConnectionId
+  // Edits respect the platform of the row being edited.
+  if (patch.content !== undefined) {
+    const { data: row } = await admin.from('posts').select('platform').eq('id', id).eq('user_id', user.id).single()
+    if (!row) return Response.json({ error: 'Post not found.' }, { status: 404 })
+    if (String(patch.content).length > capOf(row.platform || 'x')) {
+      return Response.json({ error: `Over the ${capOf(row.platform || 'x')}-character limit.` }, { status: 400 })
+    }
+  }
   const { data, error } = await admin.from('posts')
     .update(patch).eq('id', id).eq('user_id', user.id).select().single()
   if (error) return Response.json({ error: error.message }, { status: 500 })

@@ -1,12 +1,12 @@
 export const metadata = {
   title: 'Cadence',
-  description: 'Turn how you write on LinkedIn into tweets that post themselves.',
+  description: 'Your voice, posting itself — across X, LinkedIn, Instagram & TikTok.',
 }
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, padding: 0, background: '#0d0d0d', color: '#e8e8e8' }}>
+      <body style={{ margin: 0, padding: 0, background: '#F6F5F1', color: '#1A1916' }}>
         {children}
       </body>
     </html>

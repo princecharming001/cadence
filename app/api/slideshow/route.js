@@ -35,6 +35,7 @@ export async function POST(req) {
     if (!row.account_ids.length) return Response.json({ error: 'Pick at least one account to post to.' }, { status: 400 })
     if (!row.image_urls.length) return Response.json({ error: 'No slides to post.' }, { status: 400 })
     const { data: accts } = await admin.from('social_accounts').select('*').eq('user_id', user.id).in('id', row.account_ids)
+      .in('platform', ['instagram', 'tiktok', 'linkedin', 'facebook']) // carousel-capable only
     if (!accts?.length) return Response.json({ error: 'Those accounts are not connected.' }, { status: 400 })
     try {
       // The cover slide's hook is the natural short title (used for TikTok's
