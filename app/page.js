@@ -1384,16 +1384,68 @@ const EngageStub = ({ platform }) => <div className="muted tiny" style={{ paddin
 // ── Feeder agents — an autonomous persona per feeder account. Each one thinks
 // on a cadence, posts and replies as ITSELF, quietly backs the primary, and
 // evolves its own identity from what it does. ──────────────────────────────────
-// Agent identity: AI-generated profile picture when we have one, else a
-// deterministic colored initial — the card leads with WHO the agent is.
+// Agent identity: the account's REAL profile picture when stats have pulled
+// it, else the AI persona portrait, else a deterministic colored initial.
 function AgentAvatar({ agent, size = 40 }) {
   const name = agent?.persona?.name || agent?.name || 'A'
-  if (agent?.avatar_url) return <img src={agent.avatar_url} alt={name} className="agent-pfp" style={{ width: size, height: size }} />
+  const src = agent?.stats?.avatar || agent?.avatar_url
+  if (src) return <img src={src} alt={name} className="agent-pfp" style={{ width: size, height: size }} />
   const hue = Math.abs([...name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) | 0, 0)) % 360
   return (
     <span className="agent-pfp" style={{ width: size, height: size, background: `hsl(${hue} 48% 84%)`, color: `hsl(${hue} 52% 32%)`, fontSize: Math.round(size * 0.42) }}>
       {name[0]?.toUpperCase() || 'A'}
     </span>
+  )
+}
+
+// ── Fleet strip — every feeder agent across platforms at a glance: real
+// profile pictures ringed in their platform color, live dot, and a hover card
+// with the numbers (followers, account posts, published/queued via Cadence).
+function AgentFleet({ agents, xConns, socialAccounts, posts }) {
+  const [hover, setHover] = useState(null)
+  const handleOf = a => a.x_connection_id
+    ? xConns.find(c => c.id === a.x_connection_id)?.username
+    : socialAccounts.find(s => s.id === a.social_account_id)?.username
+  if (!agents.length) return null
+  return (
+    <div className="fleet card">
+      <div className="conn-sec" style={{ margin: '0 0 12px' }}>Your fleet <span className="muted tiny" style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {agents.length} agent{agents.length === 1 ? '' : 's'} across platforms</span></div>
+      <div className="fleet-row">
+        {agents.map(a => {
+          const { live, pending } = activityFor(posts, 'feeder_agent_id', a.id)
+          const st = a.stats || {}
+          return (
+            <div key={a.id} className="fleet-cell" onMouseEnter={() => setHover(a.id)} onMouseLeave={() => setHover(h => (h === a.id ? null : h))}>
+              <div className="fleet-ava" style={{ borderColor: platformDot(a.platform || 'x') }}>
+                <AgentAvatar agent={a} size={52} />
+                <span className={'fleet-dot' + (a.active ? ' on' : '')} title={a.active ? 'Live' : 'Paused'} />
+              </div>
+              <div className="fleet-name">{(a.persona?.name || a.name || 'Agent').split(' ')[0]}</div>
+              <AnimatePresence>
+                {hover === a.id && (
+                  <motion.div className="card fleet-tip" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }} transition={{ duration: 0.14 }}>
+                    <div className="row" style={{ gap: 9 }}>
+                      <AgentAvatar agent={a} size={34} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.persona?.name || a.name || 'Agent'}</div>
+                        <div className="muted tiny">@{handleOf(a) || '—'} · {a.platform || 'x'}{a.active ? ' · live' : ' · paused'}</div>
+                      </div>
+                    </div>
+                    {a.persona?.archetype && <div className="muted tiny" style={{ marginTop: 7 }}>{a.persona.archetype}</div>}
+                    <div className="fleet-stats">
+                      <div><b>{fmtNum(st.followers)}</b><span>Followers</span></div>
+                      <div><b>{fmtNum(st.posts)}</b><span>Acct posts</span></div>
+                      <div><b>{live.length}</b><span>Published</span></div>
+                      <div><b>{pending.length}</b><span>Queued</span></div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -1486,7 +1538,7 @@ const INTENSITY_OPTS = [
 function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent }) {
   const [form, setForm] = useState(null)        // create-campaign draft
   const [busy, setBusy] = useState(false)
-  const [deployFor, setDeployFor] = useState(null) // campaign id with the deploy panel open
+  const [manageFor, setManageFor] = useState(null) // campaign id with the crew panel open
   const [deployAcct, setDeployAcct] = useState('')  // 'x:<id>' | 's:<id>'
   const [deploySeed, setDeploySeed] = useState('')
   const [spawning, setSpawning] = useState(false)
@@ -1513,7 +1565,7 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
     if (kind === 'x') payload.x_connection_id = id; else payload.social_account_id = id
     const ok = await onSpawn(payload)
     setSpawning(false)
-    if (ok) { setDeployFor(null); setDeployAcct(''); setDeploySeed('') }
+    if (ok) { setDeployAcct(''); setDeploySeed('') }
   }
 
   return (
@@ -1531,67 +1583,70 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
         const live = roster.reduce((n, a) => n + activityFor(posts, 'feeder_agent_id', a.id).live.length, 0)
         const pending = roster.reduce((n, a) => n + activityFor(posts, 'feeder_agent_id', a.id).pending.length, 0)
         return (
-          <div className={'card camp-card' + (c.active ? ' on' : '')} key={c.id} style={{ display: 'block' }}>
-            <div className="row" style={{ justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-              <div style={{ minWidth: 0 }}>
-                <div className="conn-title row" style={{ gap: 7 }}>{c.name}<span className={'camp-state' + (c.active ? ' on' : '')}>{c.active ? 'live' : 'paused'}</span></div>
-                <div className="muted tiny" style={{ marginTop: 3 }}>Promoting: {c.product}{c.link ? ' · has link' : ''}</div>
+          <div className={'card camp2' + (c.active ? ' live' : '')} key={c.id}>
+            <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="camp2-name">{c.name}</div>
+                <div className="camp2-sub">{c.product}{c.link ? ' · link attached' : ''}</div>
               </div>
-              <div className="row" style={{ gap: 8, flex: 'none' }}>
-                <Toggle on={!!c.active} onChange={v => onPatchCamp(c.id, { active: v }, v ? 'Campaign live — agents will pick it up' : 'Campaign paused — agents stay in character')} />
-                <button className="mini danger" onClick={() => onDeleteCamp(c.id)}><Trash2 size={12} /></button>
+              <button className={'live-pill' + (c.active ? ' on' : '')} title={c.active ? 'Pause the campaign' : 'Set it live'}
+                onClick={() => onPatchCamp(c.id, { active: !c.active }, !c.active ? 'Campaign live — agents will pick it up' : 'Campaign paused — agents stay in character')}>
+                {c.active && <span className="pulse" />}{c.active ? 'Live' : 'Paused'}
+              </button>
+              <button className="hist-del" title="Delete campaign" onClick={() => onDeleteCamp(c.id)}><Trash2 size={13} /></button>
+            </div>
+
+            <div className="camp2-row">
+              <div className="facepile" role="button" title="Manage the crew" onClick={() => { setManageFor(manageFor === c.id ? null : c.id); setDeployAcct('') }}>
+                {roster.slice(0, 6).map(a => <span key={a.id} title={a.persona?.name || a.name}><AgentAvatar agent={a} size={30} /></span>)}
+                <span className="facepile-add"><Plus size={13} /></span>
+              </div>
+              <span className="camp2-stats"><b>{live}</b> posted · <b>{pending}</b> queued</span>
+              <div className="row" style={{ gap: 4, marginLeft: 'auto' }}>
+                {INTENSITY_OPTS.map(([k, l, hint]) => (
+                  <button key={k} className={'chip sm' + (c.intensity === k ? ' on' : '')} title={hint} onClick={() => onPatchCamp(c.id, { intensity: k })}>{l}</button>
+                ))}
               </div>
             </div>
 
-            <div className="row" style={{ gap: 6, margin: '9px 0 2px', flexWrap: 'wrap' }}>
-              {INTENSITY_OPTS.map(([k, l, hint]) => (
-                <button key={k} className={'chip' + (c.intensity === k ? ' on' : '')} title={hint} onClick={() => onPatchCamp(c.id, { intensity: k })}>{l}</button>
-              ))}
-              <span className="muted tiny" style={{ marginLeft: 'auto' }}>{live} posted · {pending} pending</span>
-            </div>
-
-            {/* Roster */}
-            {roster.length === 0 && <div className="muted tiny" style={{ margin: '8px 0 2px' }}>No agents on this mission yet.</div>}
-            {roster.map(a => {
-              const p = a.persona || {}
-              return (
-                <div className="row" key={a.id} style={{ gap: 9, padding: '7px 0 0', minWidth: 0 }}>
-                  <AgentAvatar agent={a} size={26} />
-                  <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || a.name}</span>
-                  <span className="status-dot" style={{ background: platformDot(a.platform || 'x'), width: 6, height: 6 }} />
-                  <span className="muted tiny" style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{handleOf(a) || '—'}{a.active ? '' : ' · off'}</span>
-                  <RunNow running={a.running} onRun={() => onRunAgent(a.id)} />
-                  <button className="mini" title="Remove from campaign (agent keeps running)" onClick={() => onPatchAgent(a.id, { campaign_id: null })}><LX size={11} /></button>
-                </div>
-              )
-            })}
-
-            {/* Assign existing / deploy new */}
-            <div className="row" style={{ gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-              {unassigned.length > 0 && (
-                <select className="field" style={{ width: 'auto', padding: '6px 10px', fontSize: 12.5 }} value="" onChange={e => e.target.value && onPatchAgent(e.target.value, { campaign_id: c.id }, 'Agent assigned to the mission')}>
-                  <option value="">Assign an agent…</option>
-                  {unassigned.map(a => <option key={a.id} value={a.id}>{(a.persona?.name || a.name)} · {a.platform || 'x'}</option>)}
-                </select>
-              )}
-              {(freeX.length > 0 || freeSocial.length > 0) && (
-                <button className="chip" onClick={() => { setDeployFor(deployFor === c.id ? null : c.id); setDeployAcct(''); }}><Plus size={11} /> Deploy new agent</button>
-              )}
-              {unassigned.length === 0 && freeX.length === 0 && freeSocial.length === 0 && roster.length === 0 && (
-                <span className="muted tiny">Connect a feeder X account or another social account to deploy an agent.</span>
-              )}
-            </div>
             <AnimatePresence initial={false}>
-              {deployFor === c.id && (
+              {manageFor === c.id && (
                 <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-                  <div className="row" style={{ gap: 8, marginTop: 9, flexWrap: 'wrap' }}>
-                    <select className="field" style={{ flex: 1, minWidth: 150 }} value={deployAcct} onChange={e => setDeployAcct(e.target.value)}>
-                      <option value="">Which account?</option>
-                      {freeX.map(x => <option key={x.id} value={`x:${x.id}`}>X · @{x.username}</option>)}
-                      {freeSocial.map(s => <option key={s.id} value={`s:${s.id}`}>{s.platform} · @{s.username || s.platform}</option>)}
-                    </select>
-                    <input className="field" style={{ flex: 2, minWidth: 170 }} placeholder={`Its niche (default: ${c.product.slice(0, 40)})`} value={deploySeed} onChange={e => setDeploySeed(e.target.value)} />
-                    <button className="btn-primary btn-sm" disabled={spawning || !deployAcct} onClick={() => deployNew(c)}>{spawning ? <Loader2 size={13} className="spin" /> : 'Deploy'}</button>
+                  <div className="camp2-manage">
+                    {roster.length === 0 && <div className="muted tiny" style={{ marginBottom: 6 }}>No agents on this mission yet.</div>}
+                    {roster.map(a => {
+                      const p = a.persona || {}
+                      return (
+                        <div className="row" key={a.id} style={{ gap: 9, padding: '5px 0', minWidth: 0 }}>
+                          <AgentAvatar agent={a} size={26} />
+                          <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || a.name}</span>
+                          <span className="status-dot" style={{ background: platformDot(a.platform || 'x'), width: 6, height: 6 }} />
+                          <span className="muted tiny" style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{handleOf(a) || '—'}{a.active ? '' : ' · off'}</span>
+                          <RunNow running={a.running} onRun={() => onRunAgent(a.id)} />
+                          <button className="mini" title="Remove from campaign (agent keeps running)" onClick={() => onPatchAgent(a.id, { campaign_id: null })}><LX size={11} /></button>
+                        </div>
+                      )
+                    })}
+                    <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                      {unassigned.length > 0 && (
+                        <select className="field" style={{ width: 'auto', padding: '6px 10px', fontSize: 12.5 }} value="" onChange={e => e.target.value && onPatchAgent(e.target.value, { campaign_id: c.id }, 'Agent assigned to the mission')}>
+                          <option value="">Assign an agent…</option>
+                          {unassigned.map(a => <option key={a.id} value={a.id}>{(a.persona?.name || a.name)} · {a.platform || 'x'}</option>)}
+                        </select>
+                      )}
+                      {(freeX.length > 0 || freeSocial.length > 0) && (<>
+                        <select className="field" style={{ flex: 1, minWidth: 150 }} value={deployAcct} onChange={e => setDeployAcct(e.target.value)}>
+                          <option value="">Deploy on account…</option>
+                          {freeX.map(x => <option key={x.id} value={`x:${x.id}`}>X · @{x.username}</option>)}
+                          {freeSocial.map(s => <option key={s.id} value={`s:${s.id}`}>{s.platform} · @{s.username || s.platform}</option>)}
+                        </select>
+                        {deployAcct && <input className="field" style={{ flex: 2, minWidth: 170 }} placeholder={`Its niche (default: ${c.product.slice(0, 40)})`} value={deploySeed} onChange={e => setDeploySeed(e.target.value)} />}
+                        {deployAcct && <button className="btn-primary btn-sm" disabled={spawning} onClick={() => deployNew(c)}>{spawning ? <Loader2 size={13} className="spin" /> : 'Deploy'}</button>}
+                      </>)}
+                      {unassigned.length === 0 && freeX.length === 0 && freeSocial.length === 0 && roster.length === 0 && (
+                        <span className="muted tiny">Connect a feeder X account or another social account to deploy an agent.</span>
+                      )}
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -2547,6 +2602,7 @@ function App({ session }) {
                   the right format per platform, in one voice. */}
               {tab === 'campaigns' && (<>
                 <BrainBanner theme="campaigns" />
+                <AgentFleet agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts} />
                 <div className="muted tiny" style={{ margin: '0 2px 12px' }}>Missions for your agents. Pick something to promote, deploy agents across platforms — each one works it into its own posting, in its own voice.</div>
                 <AgentCampaigns campaigns={agentCampaigns} agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts}
                   onSaveCamp={saveAgentCamp} onPatchCamp={patchAgentCamp} onDeleteCamp={deleteAgentCamp}
@@ -3152,6 +3208,41 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 /* feeder agents */
 .agent-note { font-size: 11.5px; font-style: italic; font-family: var(--serif); color: var(--muted); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .agent-pfp { border-radius: 50%; object-fit: cover; flex: none; border: 1px solid var(--line2); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-family: var(--serif); }
+/* fleet strip — feeder agents across platforms at a glance */
+.fleet { padding: 14px 16px 12px; margin-bottom: 12px; overflow: visible; }
+.fleet-row { display: flex; gap: 18px; flex-wrap: wrap; }
+.fleet-cell { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 66px; }
+.fleet-ava { position: relative; border: 2.5px solid var(--line2); border-radius: 50%; padding: 2.5px; background: var(--surface); }
+.fleet-ava .agent-pfp { border: none; display: flex; }
+.fleet-dot { position: absolute; right: 0; bottom: 0; width: 13px; height: 13px; border-radius: 50%; background: #C9C5BC; border: 2.5px solid var(--surface); }
+.fleet-dot.on { background: var(--ok); }
+.fleet-name { font-size: 11px; font-weight: 600; color: var(--muted); max-width: 66px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-tip { position: absolute; top: 78px; left: 50%; margin-left: -115px; width: 230px; padding: 12px 13px; z-index: 45; box-shadow: 0 18px 44px -16px rgba(35,32,24,0.38); }
+.fleet-cell:first-child .fleet-tip { margin-left: -28px; }
+.fleet-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 10px; margin-top: 11px; }
+.fleet-stats > div { display: flex; flex-direction: column; gap: 1px; }
+.fleet-stats b { font-size: 15.5px; font-weight: 700; color: var(--ink); line-height: 1.1; }
+.fleet-stats span { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); font-weight: 600; }
+/* campaign cards v2 — headline, live pill, facepile crew */
+.camp2 { position: relative; padding: 16px 18px 14px; margin-bottom: 12px; border-radius: 14px; }
+.camp2.live { border-color: var(--ok-line); }
+.camp2.live::before { content: ''; position: absolute; left: -1px; top: 16px; bottom: 16px; width: 3px; border-radius: 0 3px 3px 0; background: var(--ok); }
+.camp2-name { font-family: var(--serif); font-size: 17px; font-weight: 600; line-height: 1.25; }
+.camp2-sub { font-size: 12px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-pill { border: 1px solid var(--line2); background: var(--bg2); color: var(--muted); font-size: 11px; font-weight: 700; padding: 5px 12px; border-radius: 999px; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 6px; flex: none; transition: .15s; }
+.live-pill:hover { border-color: var(--line-hover); }
+.live-pill.on { color: var(--ok); background: var(--ok-soft); border-color: var(--ok-line); }
+.live-pill .pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: blink 1.6s infinite; }
+.facepile { display: flex; align-items: center; cursor: pointer; }
+.facepile .agent-pfp { border: 2px solid var(--surface); }
+.facepile > span + span .agent-pfp, .facepile .facepile-add { margin-left: -9px; }
+.facepile-add { width: 30px; height: 30px; border-radius: 50%; border: 1.5px dashed var(--line-hover); background: var(--surface); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; z-index: 1; transition: .15s; }
+.facepile:hover .facepile-add { color: var(--accent-text); border-color: var(--accent-line); }
+.camp2-row { display: flex; align-items: center; gap: 14px; margin-top: 13px; flex-wrap: wrap; }
+.camp2-stats { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.camp2-stats b { color: var(--ink); font-weight: 700; }
+.camp2-manage { border-top: 1px dashed var(--line); margin-top: 12px; padding-top: 10px; }
+.chip.sm { padding: 3px 9px; font-size: 11px; }
 /* chat platform-scope selector */
 .chat-scope { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-bottom: 9px; }
 .scope-chip { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--line2); border-radius: 999px; color: var(--muted); font-size: 11.5px; font-weight: 600; padding: 4px 10px; cursor: pointer; font-family: inherit; transition: .15s; white-space: nowrap; }

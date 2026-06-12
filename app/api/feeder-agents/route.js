@@ -1,6 +1,6 @@
 // /api/feeder-agents — CRUD + run-now + persona re-roll for feeder-account agents.
 import { admin, getUser, isCron } from '@/lib/supabase'
-import { buildAgentPersona, agentAvatar, runDueFeederAgents, runFeederAgentById } from '@/lib/feeder-agents'
+import { buildAgentPersona, agentAvatar, refreshAgentStats, runDueFeederAgents, runFeederAgentById } from '@/lib/feeder-agents'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // a think-cycle does several LLM calls + X reads
@@ -26,6 +26,9 @@ export async function GET(req) {
   const user = await getUser(req)
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
   const { data } = await admin.from('feeder_agents').select('*').eq('user_id', user.id).order('created_at', { ascending: true })
+  // Refresh follower stats / real profile pictures in the background (24h TTL
+  // per agent) — this response stays fast; the next poll shows fresh numbers.
+  refreshAgentStats(user.id).catch(() => {})
   return Response.json({ agents: data || [] })
 }
 
