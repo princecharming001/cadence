@@ -1847,6 +1847,7 @@ function App({ session }) {
   const [slideshows, setSlideshows] = useState([])
   const [engSettings, setEngSettings] = useState([]); const [socialReplies, setSocialReplies] = useState([])
   const [qPlatform, setQPlatform] = useState('all')
+  const [showReplies, setShowReplies] = useState(false)
   const [brandCampaigns, setBrandCampaigns] = useState([])
   const [inspoX, setInspoX] = useState([]); const [suggesting, setSuggesting] = useState('')
   const [clipJobs, setClipJobs] = useState([]); const [igMode, setIgMode] = useState('carousels')
