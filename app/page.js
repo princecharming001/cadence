@@ -290,7 +290,7 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
           <Toggle on={imgOn} onChange={toggleImg} label="image" />
         </div>
       </div>
-      <textarea className="field dp-text" rows={isLi ? 6 : 3} maxLength={cap + 100} value={content} onChange={e => setContent(e.target.value)} />
+      <textarea className="field dp-text" rows={isLi ? 9 : 5} maxLength={cap + 100} value={content} onChange={e => setContent(e.target.value)} />
       <AnimatePresence>
         {imgOn && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
@@ -580,7 +580,8 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
           <div className="ss-preview">
             {deck.imageUrls.map((u, i) => <img key={i} src={u} alt={`slide ${i + 1}`} className="ss-slide" />)}
           </div>
-          <div className="muted tiny" style={{ whiteSpace: 'pre-wrap', marginTop: 10, lineHeight: 1.5 }}>{deck.caption}</div>
+          <label className="ob-label" style={{ marginTop: 12 }}>Caption <span className="muted tiny" style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· edit before posting</span></label>
+          <textarea className="field" rows={4} style={{ lineHeight: 1.5 }} value={deck.caption || ''} onChange={e => setDeck(d => ({ ...d, caption: e.target.value }))} />
           {igLike.length > 0 && <>
             <div className="muted tiny" style={{ margin: '12px 0 6px' }}>Post to:</div>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
@@ -1563,6 +1564,25 @@ function App({ session }) {
   const [chatScope, setChatScope] = useState([]) // [] = all platforms
   const [feederAgents, setFeederAgents] = useState([])
   const inputRef = useRef(null); const bottomRef = useRef(null)
+  const [leftPct, setLeftPct] = useState(47); const colsRef = useRef(null); const [dragging, setDragging] = useState(false)
+  useEffect(() => { const v = Number(localStorage.getItem('cadence_split')); if (v >= 28 && v <= 72) setLeftPct(v) }, [])
+  const startDrag = useCallback((e) => {
+    e.preventDefault(); setDragging(true)
+    const move = (ev) => {
+      const cx = ev.touches ? ev.touches[0].clientX : ev.clientX
+      const rect = colsRef.current?.getBoundingClientRect(); if (!rect) return
+      setLeftPct(Math.min(72, Math.max(28, ((cx - rect.left) / rect.width) * 100)))
+    }
+    const up = () => {
+      document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up)
+      document.removeEventListener('touchmove', move); document.removeEventListener('touchend', up)
+      document.body.style.userSelect = ''; document.body.style.cursor = ''; setDragging(false)
+      setLeftPct(p => { localStorage.setItem('cadence_split', String(Math.round(p))); return p })
+    }
+    document.body.style.userSelect = 'none'; document.body.style.cursor = 'col-resize'
+    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up)
+    document.addEventListener('touchmove', move, { passive: false }); document.addEventListener('touchend', up)
+  }, [])
 
   const loadQueue = useCallback(async () => { const { data } = await supabase.from('posts').select('*').order('scheduled_for', { ascending: true }).limit(300); if (data) setPosts(data) }, [])
   const loadX = useCallback(async () => { const r = await authed('/api/x/status'); const d = await r.json(); setXConns(d.connections || []) }, [authed])
@@ -1890,7 +1910,7 @@ function App({ session }) {
 
       <AnimatePresence>{banner && <motion.div className="banner" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={spring}>{banner}</motion.div>}</AnimatePresence>
 
-      <div className="cols">
+      <div className="cols" ref={colsRef} style={{ '--left-pct': leftPct + '%' }}>
         <section className="pane left">
           <div className="left-head">
             <div className="seg">
@@ -2108,6 +2128,8 @@ function App({ session }) {
           )}
         </section>
 
+        <div className={'split-handle' + (dragging ? ' active' : '')} onMouseDown={startDrag} onTouchStart={startDrag} title="Drag to resize" role="separator" aria-label="Resize panels"><span className="split-grip" /></div>
+
         {/* chat */}
         <section className="pane right">
           <div className="scroll chat-scroll">
@@ -2120,7 +2142,7 @@ function App({ session }) {
             <AnimatePresence initial={false}>
               {messages.map((m, i) => (
                 <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
-                  <div className="msg-col" style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                  <div className={'msg-col' + (m.proposal ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
                     <div className={'bubble ' + m.role}>{m.content}</div>
                     {m.proposal && <DraftProposal proposal={m.proposal} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={loadQueue} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />}
                   </div>
@@ -2361,8 +2383,13 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .banner { position: relative; z-index: 1; margin: 10px 22px -2px; padding: 9px 14px; font-size: 13px; color: #34468f; font-weight: 500; background: #eef1fe; border: 1px solid #dde3fb; border-radius: 11px; }
 .cols { display: flex; flex: 1; overflow: hidden; }
 .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-.left { width: 47%; border-right: 1px solid #ededf2; }
-.right { flex: 1; }
+.left { width: var(--left-pct, 47%); flex: none; }
+.right { flex: 1; min-width: 0; }
+.split-handle { flex: none; width: 9px; margin: 0 -4px; cursor: col-resize; position: relative; z-index: 6; display: flex; align-items: center; justify-content: center; touch-action: none; }
+.split-handle::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; transform: translateX(-50%); background: #ededf2; transition: background .15s, width .15s; }
+.split-handle:hover::before, .split-handle.active::before { width: 3px; background: #4f63d8; border-radius: 2px; }
+.split-grip { position: relative; z-index: 1; width: 4px; height: 30px; border-radius: 3px; background: #d7dae2; opacity: 0; transition: opacity .15s; }
+.split-handle:hover .split-grip, .split-handle.active .split-grip { opacity: 1; background: #4f63d8; }
 .scroll-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 14px 18px; }
 .left-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 8px; gap: 8px; }
@@ -2400,6 +2427,7 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .chat-welcome { margin: auto; text-align: center; padding: 30px 0; }
 .msg { display: flex; margin-bottom: 12px; } .msg.user { justify-content: flex-end; } .msg.assistant { justify-content: flex-start; }
 .msg-col { display: flex; flex-direction: column; gap: 10px; max-width: 86%; min-width: 0; }
+.msg-col.has-dp { width: 500px; max-width: 97%; }
 .bubble { max-width: 100%; padding: 11px 15px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bubble.user { background: #4f63d8; color: #fff; border-radius: 17px 17px 5px 17px; }
 .bubble.assistant { background: #fff; border: 1px solid #ececf1; color: #2a2f3a; border-radius: 17px 17px 17px 5px; box-shadow: 0 1px 2px rgba(20,24,30,0.03); }
@@ -2423,9 +2451,9 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .draft-spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #6f8cff; pointer-events: none; }
 .dt { width: auto; padding: 8px 12px; font-size: 13px; color-scheme: light; flex: none; }
 .count { font-size: 12px; color: #9aa1ad; white-space: nowrap; } .count.over { color: #ef4444; font-weight: 600; }
-.dp { padding: 14px; width: 320px; max-width: 100%; }
-.dp-head { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 600; color: #8b5cf6; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 9px; }
-.dp-text { font-size: 13.5px; line-height: 1.5; resize: none; }
+.dp { padding: 16px; width: 100%; }
+.dp-head { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 600; color: #8b5cf6; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 10px; }
+.dp-text { font-size: 14.5px; line-height: 1.6; resize: vertical; min-height: 104px; }
 .dp-img-wrap { position: relative; margin-top: 10px; border-radius: 12px; overflow: hidden; }
 .dp-img { width: 100%; display: block; border-radius: 12px; aspect-ratio: 1/1; object-fit: cover; background: #eef1f7; }
 .dp-placeholder { display: flex; align-items: center; justify-content: center; color: #9aa1ad; }
@@ -2620,6 +2648,7 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 @media (max-width: 860px) {
   .cols { flex-direction: column; }
   .left { width: 100%; max-height: 56vh; border-right: none; border-bottom: 1px solid #ededf2; }
+  .split-handle { display: none; }
   .seg { flex-wrap: wrap; }
 }
 `
