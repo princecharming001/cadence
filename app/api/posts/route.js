@@ -31,9 +31,13 @@ export async function POST(req) {
   const content = (body.content || '').trim()
   if (!content) return Response.json({ error: 'Content required.' }, { status: 400 })
   const scheduled = body.scheduledFor || new Date().toISOString()
+  const platform = body.platform === 'linkedin' ? 'linkedin' : 'x'
+  if (content.length > (platform === 'linkedin' ? 1300 : 280)) {
+    return Response.json({ error: 'Post is over the length limit.' }, { status: 400 })
+  }
 
   const { data, error } = await admin.from('posts')
-    .insert({ content, scheduled_for: scheduled, status: 'queued', user_id: user.id, image_url: body.imageUrl || null, x_connection_id: body.xConnectionId || null })
+    .insert({ content, scheduled_for: scheduled, status: 'queued', user_id: user.id, platform, image_url: body.imageUrl || null, x_connection_id: platform === 'x' ? (body.xConnectionId || null) : null })
     .select().single()
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ post: data })

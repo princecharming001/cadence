@@ -7,10 +7,11 @@ import dynamic from 'next/dynamic'
 import {
   Check as LCheck, X as LX, RefreshCw, Sparkles, Send, Plus,
   Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, Image as LImage,
-  ThumbsUp, ThumbsDown, Upload, Play, Pause as LPause, MessageCircle, Star, Loader2,
+  ThumbsUp, ThumbsDown, Upload, Play, MessageCircle, Star, Loader2,
+  ArrowLeft, CreditCard, Users, User as LUser, Bot,
 } from 'lucide-react'
-import { COMMENT_STYLES } from '@/lib/comment-styles'
 import { SLIDESHOW_FORMATS, SLIDE_STYLE_LIST } from '@/lib/slideshow-styles'
+import { PLANS, PLAN_LIST, monthlyEquivalent } from '@/lib/plans'
 
 function LIcon({ size = 18 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.55V9h3.57v11.45zM22.22 0H1.77C.8 0 0 .78 0 1.74v20.52C0 23.22.8 24 1.77 24h20.45c.98 0 1.78-.78 1.78-1.74V1.74C24 .78 23.2 0 22.22 0z"/></svg> }
 
@@ -33,6 +34,7 @@ const capFor = p => (p?.platform === 'linkedin' ? 1300 : 280)
 // Where a post came from, color-coded so you can tell at a glance whether you
 // scheduled it, a campaign made it, or it's a reply to someone else's post.
 function sourceMeta(p) {
+  if (p.source === 'agent') return { label: 'Agent', c: '#0e9f6e', bg: '#eafaf2', bd: '#c4ecd8' }
   if (p.reply_to_tweet_id || p.source === 'engagement') return { label: 'Reply', c: '#7c3aed', bg: '#f3eefe', bd: '#e2d4fb' }
   if (p.source === 'campaign') return { label: 'Campaign', c: '#c2740a', bg: '#fdf3e3', bd: '#f5dcae' }
   return { label: 'You', c: '#4f63d8', bg: '#eef1fe', bd: '#dde3fb' }
@@ -217,77 +219,6 @@ function Onboarding({ session, me, authed, onDone }) {
   )
 }
 
-// ── Settings modal ─────────────────────────────────────────────────────────────
-function SettingsModal({ me, session, authed, conns, photos = [], onUploadPhoto, onDeletePhoto, onConnect, onClose, onSaved, onDisconnect, onUpgrade, onPortal }) {
-  const p = me?.profile || {}
-  const [name, setName] = useState(p.full_name || '')
-  const [role, setRole] = useState(p.role || '')
-  const [tz, setTz] = useState(p.timezone || 'America/Los_Angeles')
-  const [hour, setHour] = useState(p.default_post_hour ?? 9)
-  const [imgDefault, setImgDefault] = useState(!!p.include_image_default)
-  const [busy, setBusy] = useState(false)
-  const isPro = p.is_pro || (me && !me.billingConfigured)
-  async function save() {
-    setBusy(true)
-    await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ full_name: name, role, timezone: tz, default_post_hour: Number(hour), include_image_default: imgDefault }) })
-    setBusy(false); onSaved()
-  }
-  return (
-    <motion.div className="overlay" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <motion.div className="card modal settings" onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.96 }} transition={spring}>
-        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
-          <span style={{ fontWeight: 700, fontSize: 16 }}>Settings</span>
-          <button className="x-close" onClick={onClose}><LX size={18} /></button>
-        </div>
-        <div className="set-section">
-          <div className="set-h">Profile</div>
-          <label className="ob-label">Name</label><input className="field" value={name} onChange={e => setName(e.target.value)} />
-          <label className="ob-label">What you do</label><input className="field" value={role} onChange={e => setRole(e.target.value)} />
-        </div>
-        <div className="set-section">
-          <div className="set-h">Posting</div>
-          <div className="set-row"><span>Timezone</span><select className="field set-input" value={tz} onChange={e => setTz(e.target.value)}>{TZS.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}</select></div>
-          <div className="set-row"><span>Default time</span><select className="field set-input" value={hour} onChange={e => setHour(e.target.value)}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{((h % 12) || 12) + (h < 12 ? ' AM' : ' PM')}</option>)}</select></div>
-          <div className="set-row"><span>Attach image by default</span><Toggle on={imgDefault} onChange={setImgDefault} /></div>
-        </div>
-        <div className="set-section">
-          <div className="set-h">Your photos <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, color: '#9aa1ad' }}>· 5–10 selfies for AI images of you</span></div>
-          <div className="photo-grid">
-            {photos.map(p => (
-              <div className="photo-cell" key={p.id}>
-                <img src={p.url} alt="" />
-                <button className="photo-del" onClick={() => onDeletePhoto(p.id)} title="Remove"><LX size={12} /></button>
-              </div>
-            ))}
-            {photos.length < 10 && (
-              <label className="photo-add">
-                <Upload size={16} />
-                <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) onUploadPhoto(f); e.target.value = '' }} />
-              </label>
-            )}
-          </div>
-          <div className="muted tiny" style={{ marginTop: 8 }}>{photos.length}/10 uploaded. Used as reference when you turn on “Feature me” on a post image.</div>
-        </div>
-        <div className="set-section">
-          <div className="set-h">Account</div>
-          <div className="set-row"><span>Email</span><span className="muted">{session.user.email}</span></div>
-          <div className="set-row" style={{ alignItems: 'flex-start' }}><span>X accounts</span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-              {conns.length ? conns.map(c => <span className="row" key={c.id} style={{ gap: 8 }}>@{c.username} <button className="mini danger" onClick={() => onDisconnect(c.id)}>Disconnect</button></span>) : <span className="muted">Not connected</span>}
-              <button className="mini" onClick={onConnect}><Plus size={11} /> {conns.length ? 'Add account' : 'Connect'}</button>
-            </div>
-          </div>
-          <div className="set-row"><span>Plan</span>{isPro ? <span className="row" style={{ gap: 8 }}><span className="pro-pill"><Crown size={12} /> Pro</span>{me?.billingConfigured && <button className="mini" onClick={onPortal}>Manage</button>}</span> : <button className="btn-primary btn-sm" onClick={onUpgrade}>Upgrade</button>}</div>
-        </div>
-        <div className="row" style={{ justifyContent: 'space-between', marginTop: 18 }}>
-          <button className="btn-ghost" onClick={() => supabase.auth.signOut()}>Sign out</button>
-          <button className="btn-primary" disabled={busy} onClick={save}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Save'}</button>
-        </div>
-      </motion.div>
-    </motion.div>
-  )
-}
-
 // ── Live countdown to a scheduled time ──────────────────────────────────────────
 function useCountdown(whenLocal) {
   const [now, setNow] = useState(() => Date.now())
@@ -303,8 +234,14 @@ function useCountdown(whenLocal) {
   return `in ${sec}s`
 }
 
-// ── Draft proposal (in chat) — editable text editor for every recommended tweet ──
-function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, xConns = [], hasPhotos }) {
+// ── Draft proposal (in chat) — editable editor for every recommended post.
+// proposal.platform follows the chat's Focus (LinkedIn focus → LinkedIn post,
+// 1300-char cap, publishes via Zernio instead of an X connection). ─────────────
+function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolved, defaultHour, xConns = [], hasPhotos }) {
+  const platform = proposal.platform === 'linkedin' ? 'linkedin' : 'x'
+  const isLi = platform === 'linkedin'
+  const cap = isLi ? 1300 : MAX
+  const canPost = isLi ? canPostLinkedIn : connected
   const [content, setContent] = useState(proposal.content || '')
   const [img, setImg] = useState(proposal.image_url || '')
   const [imgOn, setImgOn] = useState(!!proposal.image_url)
@@ -328,9 +265,9 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
     authed('/api/feedback', { method: 'POST', body: JSON.stringify({ content, rating: r }) }).catch(() => {})
   }
   async function approve(postNow) {
-    if (!content.trim() || content.length > MAX) return
+    if (!content.trim() || content.length > cap) return
     setBusy(true)
-    const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ content, scheduledFor: new Date(when).toISOString(), imageUrl: imgOn ? img : null, xConnectionId: connId || null }) })
+    const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ content, platform, scheduledFor: new Date(when).toISOString(), imageUrl: imgOn ? img : null, xConnectionId: isLi ? null : (connId || null) }) })
     const d = await r.json()
     if (!r.ok || d.error || !d.post?.id) { setBusy(false); setErr(d.error || 'Could not save the post.'); return }
     let result = 'scheduled', errMsg = ''
@@ -342,7 +279,7 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
     }
     setBusy(false); setDoneErr(errMsg); setDone(result); onResolved && onResolved()
   }
-  if (done) return <div className={'dp-done ' + done}>{done === 'posted' ? 'Posted to X' : done === 'failed' ? `Failed — saved to Queue. ${doneErr}` : done === 'discarded' ? 'Discarded' : `Scheduled · ${fmt(new Date(when).toISOString())}`}</div>
+  if (done) return <div className={'dp-done ' + done}>{done === 'posted' ? (isLi ? 'Posted to LinkedIn' : 'Posted to X') : done === 'failed' ? `Failed — saved to Queue. ${doneErr}` : done === 'discarded' ? 'Discarded' : `Scheduled · ${fmt(new Date(when).toISOString())}`}</div>
   return (
     <motion.div className="card dp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
       <div className="dp-head">
@@ -353,7 +290,7 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
           <Toggle on={imgOn} onChange={toggleImg} label="image" />
         </div>
       </div>
-      <textarea className="field dp-text" rows={3} maxLength={400} value={content} onChange={e => setContent(e.target.value)} />
+      <textarea className="field dp-text" rows={isLi ? 6 : 3} maxLength={cap + 100} value={content} onChange={e => setContent(e.target.value)} />
       <AnimatePresence>
         {imgOn && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
@@ -365,7 +302,7 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
           </motion.div>
         )}
       </AnimatePresence>
-      {xConns.length > 1 && (
+      {!isLi && xConns.length > 1 && (
         <select className="field dp-acct" value={connId} onChange={e => setConnId(e.target.value)}>
           {xConns.map(c => <option key={c.id} value={c.id}>Post as @{c.username}</option>)}
         </select>
@@ -375,13 +312,13 @@ function DraftProposal({ proposal, authed, connected, onResolved, defaultHour, x
           <input type="datetime-local" className="field dt" value={when} onChange={e => setWhen(e.target.value)} />
           <span className="cd-pill"><Clock size={11} /> {countdown}</span>
         </div>
-        <span className={'count' + (content.length > MAX ? ' over' : '')}>{content.length}/{MAX}</span>
+        <span className={'count' + (content.length > cap ? ' over' : '')}>{content.length}/{cap}</span>
       </div>
       {err && <div className="notice" style={{ color: '#c0392b', marginTop: 8 }}>{err}</div>}
       <div className="dp-actions">
         <button className="icon-btn x" title="Discard" onClick={() => setDone('discarded')}><Ex /></button>
-        <button className="icon-btn check" title="Approve & schedule" disabled={busy || content.length > MAX || !content.trim()} onClick={() => approve(false)}><Check /> <span>Schedule</span></button>
-        <motion.button className="btn-primary btn-sm" whileTap={{ scale: 0.96 }} disabled={busy || !connected || content.length > MAX} onClick={() => approve(true)} title={!connected ? 'Connect X first' : 'Post now'}>Post now</motion.button>
+        <button className="icon-btn check" title="Approve & schedule" disabled={busy || content.length > cap || !content.trim()} onClick={() => approve(false)}><Check /> <span>Schedule</span></button>
+        <motion.button className="btn-primary btn-sm" whileTap={{ scale: 0.96 }} disabled={busy || !canPost || content.length > cap} onClick={() => approve(true)} title={!canPost ? (isLi ? 'Connect LinkedIn first' : 'Connect X first') : 'Post now'}>Post now</motion.button>
       </div>
     </motion.div>
   )
@@ -551,163 +488,6 @@ function RunNow({ running, onRun }) {
   )
 }
 
-// ── X engagement rules (auto-commenting) ────────────────────────────────────────
-function EngagementManager({ rules, xConns, xReadEnabled, posts = [], onSave, onPatch, onDelete, onRun }) {
-  const [adding, setAdding] = useState(false)
-  const [editingId, setEditingId] = useState(null)
-  const [openId, setOpenId] = useState(null)
-  const [name, setName] = useState('')
-  const [keywords, setKeywords] = useState(''); const [handles, setHandles] = useState('')
-  const [styles, setStyles] = useState(['add_value']); const [instructions, setInstructions] = useState('')
-  const [connId, setConnId] = useState('')
-  const [every, setEvery] = useState(24); const [perRun, setPerRun] = useState(3)
-  const [autoPost, setAutoPost] = useState(false); const [busy, setBusy] = useState(false)
-
-  // Engagement runs on a feeder by default (the non-primary you reserve for it).
-  const firstFeeder = xConns.find(c => !c.is_primary)?.id || xConns[0]?.id || ''
-  useEffect(() => { if (!connId && firstFeeder) setConnId(firstFeeder) }, [firstFeeder, connId])
-  const csv = s => s.split(',').map(x => x.trim()).filter(Boolean)
-  const lines = s => s.split('\n').map(x => x.trim()).filter(Boolean)
-  const watchedCount = lines(handles).length
-  const toggleStyle = k => setStyles(s => s.includes(k) ? s.filter(x => x !== k) : [...s, k])
-  const formOpen = adding || editingId
-
-  function reset() { setName(''); setKeywords(''); setHandles(''); setStyles(['add_value']); setInstructions(''); setConnId(firstFeeder); setEvery(24); setPerRun(3); setAutoPost(false); setAdding(false); setEditingId(null) }
-  function startNew() { reset(); setAdding(true) }
-  function startEdit(r) {
-    setName(r.name || '')
-    setKeywords((r.target_keywords || []).join(', '))
-    setHandles((r.target_handles || []).map(h => `https://x.com/${String(h).replace(/^@/, '')}`).join('\n'))
-    setStyles(Array.isArray(r.comment_styles) && r.comment_styles.length ? r.comment_styles : [r.comment_style || 'add_value'])
-    setInstructions(r.instructions || ''); setConnId(r.connection_ids?.[0] || firstFeeder)
-    setEvery(r.interval_hours || 24); setPerRun(r.replies_per_run || 3); setAutoPost(!!r.auto_post)
-    setAdding(false); setEditingId(r.id)
-  }
-  async function submit(active) {
-    if (!name.trim()) return
-    setBusy(true)
-    const payload = {
-      name: name.trim(),
-      target_keywords: csv(keywords), target_handles: lines(handles).slice(0, 3),
-      comment_styles: styles.length ? styles : ['add_value'], instructions: instructions.trim() || null,
-      connection_ids: connId ? [connId] : [],
-      interval_hours: Number(every), replies_per_run: Number(perRun),
-      auto_post: autoPost,
-    }
-    if (editingId) payload.id = editingId; else payload.active = active
-    const ok = editingId ? await onPatch(editingId, payload, 'Engagement rule updated') : await onSave(payload)
-    setBusy(false); if (ok !== false) reset()
-  }
-
-  const styleLabels = r => {
-    const keys = (Array.isArray(r.comment_styles) && r.comment_styles.length ? r.comment_styles : [r.comment_style || 'add_value'])
-    return keys.map(k => COMMENT_STYLES.find(s => s.key === k)?.label || k).join(', ')
-  }
-
-  return (
-    <div style={{ marginBottom: 10 }}>
-      {rules.map(r => {
-        const acct = xConns.find(x => x.id === (r.connection_ids?.[0]))?.username || xConns[0]?.username
-        const { pending, live } = activityFor(posts, 'engagement_rule_id', r.id)
-        const open = openId === r.id
-        const targets = [
-          (r.target_handles?.length ? r.target_handles.map(h => '@' + String(h).replace(/^@/, '')).join(', ') : null),
-          (r.target_keywords?.length ? r.target_keywords.join(', ') : null),
-        ].filter(Boolean).join(' · ')
-        return (
-          <div className="card camp-card" key={r.id}>
-            <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ minWidth: 0 }}>
-                <div className="conn-title row" style={{ gap: 7 }}>{r.name}
-                  <span className={'camp-state' + (r.active ? ' on' : '')}>{r.active ? 'Running' : 'Paused'}</span>
-                  {r.auto_post && <span className="camp-state auto">Auto</span>}
-                </div>
-                <div className="muted tiny" style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{styleLabels(r)} · {targets || 'no targets yet'}</div>
-              </div>
-              <div className="row" style={{ gap: 6, flex: 'none' }}>
-                {onRun && <RunNow running={r.running} onRun={() => onRun(r.id)} />}
-                <button className="mini" onClick={() => startEdit(r)} title="Edit"><Pencil size={12} /></button>
-                <button className="mini" onClick={() => onPatch(r.id, { active: !r.active }, !r.active ? 'Engagement agent running' : 'Engagement agent paused')} title={r.active ? 'Pause' : 'Start'}>{r.active ? <LPause size={12} /> : <Play size={12} />}</button>
-                <button className="mini danger" onClick={() => onDelete(r.id)}><Trash2 size={12} /></button>
-              </div>
-            </div>
-            <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
-              <span className="muted tiny">{r.replies_per_run} repl{r.replies_per_run > 1 ? 'ies' : 'y'} every {r.interval_hours}h{acct ? ` as @${acct}` : ''}</span>
-              <Toggle on={!!r.auto_post} onChange={v => onPatch(r.id, { auto_post: v }, v ? 'Auto-posting replies is ON for this rule' : 'Back to approve-first')} label="auto-post" />
-            </div>
-            <LiveStatus running={r.running} detail={r.status_detail} lastAt={r.last_activity_at} />
-            <button className="act-toggle" onClick={() => setOpenId(open ? null : r.id)}>
-              <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
-              {live.length} repl{live.length === 1 ? 'y' : 'ies'} made · {pending.length} pending
-            </button>
-            <AnimatePresence initial={false}>
-              {open && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-                  <ActivityList pending={pending} live={live} />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        )
-      })}
-
-      {formOpen ? (
-        <div className="card camp-form">
-          <input className="field" placeholder="Rule name (e.g. Engage AI founders)" value={name} onChange={e => setName(e.target.value)} />
-
-          <label className="ob-label">Accounts to watch <span style={{ fontWeight: 400, color: '#9aa1ad' }}>· up to 3, one profile link per line</span></label>
-          <textarea className="field" rows={3} placeholder={'https://x.com/naval\nhttps://x.com/sama'} value={handles} onChange={e => setHandles(e.target.value)} />
-          {watchedCount > 3 && <div className="notice" style={{ marginTop: 6 }}>Up to 3 accounts. Only the first 3 will be used.</div>}
-          <label className="ob-label">Keywords / topics <span style={{ fontWeight: 400, color: '#9aa1ad' }}>· optional, comma-separated</span></label>
-          <input className="field" placeholder="e.g. AI agents, water infrastructure" value={keywords} onChange={e => setKeywords(e.target.value)} />
-          <div className="muted tiny" style={{ marginTop: 8 }}>Cadence automatically finds recent, high-engagement tweets from these accounts and topics, and skews toward the most viral and relevant ones.</div>
-          {!xReadEnabled && <div className="notice" style={{ marginTop: 6 }}>Automatic discovery needs X API read access turned on (it&apos;s pay-per-use). Until then this rule has nothing to find. Set <code>X_READ_ENABLED=true</code> on the server once you&apos;ve added X read credits.</div>}
-
-          <label className="ob-label">How should it comment? <span style={{ fontWeight: 400, color: '#9aa1ad' }}>· pick one or more</span></label>
-          <div className="style-grid">
-            {COMMENT_STYLES.map(s => (
-              <button type="button" key={s.key} className={'style-opt' + (styles.includes(s.key) ? ' on' : '')} onClick={() => toggleStyle(s.key)} title={s.description}>
-                <span className={'mini-check' + (styles.includes(s.key) ? ' on' : '')}>{styles.includes(s.key) && <LCheck size={10} strokeWidth={4} />}</span>
-                <span><span className="style-name">{s.label}</span><span className="style-desc">{s.description}</span></span>
-              </button>
-            ))}
-          </div>
-          <textarea className="field" rows={2} style={{ marginTop: 10 }} placeholder="Your own commenting instructions (optional). E.g. mention my water-tech background when it fits, keep it under 120 chars, never use slang." value={instructions} onChange={e => setInstructions(e.target.value)} />
-
-          {xConns.length > 1 && (
-            <div className="camp-accts">
-              <div className="muted tiny" style={{ marginBottom: 6 }}>Reply as <span style={{ color: '#9aa1ad' }}>(a feeder is recommended, not your primary)</span>:</div>
-              {xConns.map(c => (
-                <button type="button" key={c.id} className={'chip' + (connId === c.id ? ' on' : '')} onClick={() => setConnId(c.id)}>@{c.username}{c.is_primary ? ' ★' : ''}</button>
-              ))}
-            </div>
-          )}
-
-          <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
-            <label className="camp-num">Every <input type="number" min={1} className="field" value={every} onChange={e => setEvery(e.target.value)} /> h</label>
-            <label className="camp-num"><input type="number" min={1} className="field" value={perRun} onChange={e => setPerRun(e.target.value)} /> replies per run</label>
-          </div>
-          <div className="card eng-auto">
-            <Toggle on={autoPost} onChange={setAutoPost} label="Auto-post replies (no per-reply approval)" />
-            <div className="muted tiny" style={{ marginTop: 6 }}>{autoPost ? 'Cadence will reply on your behalf on this cadence. Heavy auto-replying can get an X account flagged, so keep volume low.' : 'Off: every reply lands in your drafts for approval first. Recommended.'}</div>
-          </div>
-          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-            <button className="mini" onClick={reset}>Cancel</button>
-            {editingId
-              ? <button className="btn-primary btn-sm" disabled={busy || !name.trim()} onClick={() => submit(false)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Save changes'}</button>
-              : <>
-                  <button className="btn-ghost btn-sm" disabled={busy || !name.trim()} onClick={() => submit(false)}>Save</button>
-                  <button className="btn-primary btn-sm" disabled={busy || !name.trim()} onClick={() => submit(true)}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start engaging'}</button>
-                </>}
-          </div>
-        </div>
-      ) : (
-        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 10 }} onClick={startNew}><Plus size={14} /> New engagement campaign</button>
-      )}
-    </div>
-  )
-}
-
 // ── Slideshow studio (AI Instagram carousels) ───────────────────────────────────
 const PLATFORMS = [
   { key: 'instagram', label: 'Instagram' }, { key: 'tiktok', label: 'TikTok' },
@@ -851,48 +631,192 @@ function BrainBanner({ theme, dual }) {
   )
 }
 
-// Per-platform auto-reply (comment engagement) controls + drafted replies.
-function ReplyToggles({ platforms, settings, replies, accounts, configured, onToggle, onRun, onPostDraft }) {
+// Clean per-platform auto-reply: ONE toggle per platform. When on, Cadence reads
+// new comments on the user's own posts and writes a reply in their voice, held
+// for one-tap approval (safe, reversible — nothing posts without a tap). Every
+// rendered field is stringified so raw inbox payloads can never leak as code.
+const str = v => (v == null ? '' : typeof v === 'string' ? v : typeof v === 'object' ? '' : String(v))
+// Some inbox payloads stored the comment author as a JSON object (or a string of
+// one). Pull a clean @handle out of whatever shape we got.
+function authorHandle(v) {
+  let val = v
+  if (typeof val === 'string') {
+    const s = val.trim()
+    if (s.startsWith('{') || s.startsWith('[')) { try { val = JSON.parse(s) } catch { return s.replace(/^@/, '') || 'someone' } }
+    else return s.replace(/^@/, '') || 'someone'
+  }
+  if (val && typeof val === 'object') return val.username || val.name || val.handle || 'someone'
+  return val == null ? 'someone' : String(val).replace(/^@/, '') || 'someone'
+}
+function AutoReply({ platforms, settings, replies, accounts, configured, onToggle, onRun, onPostDraft }) {
   const byPlat = Object.fromEntries((settings || []).map(s => [s.platform, s]))
   const label = { x: 'X', instagram: 'Instagram', tiktok: 'TikTok', linkedin: 'LinkedIn' }
   return (
     <>
-      <div className="conn-sec row" style={{ gap: 7 }}><MessageCircle size={13} /> Auto-reply to comments <span className="muted tiny" style={{ fontWeight: 400 }}>· when people comment on the posts Cadence publishes, reply in your voice</span></div>
-      {!configured && platforms.some(p => p !== 'x') && <div className="notice" style={{ marginBottom: 10 }}>Connect publishing (Zernio) to enable auto-replies.</div>}
+      {!configured && platforms.some(p => p !== 'x') && <div className="notice" style={{ marginBottom: 10 }}>Connect publishing to enable replies.</div>}
       {platforms.map(pl => {
-        const s = byPlat[pl] || { platform: pl, enabled: false, auto_post: false }
+        const s = byPlat[pl] || { platform: pl, enabled: false }
         const has = accounts.some(a => a.platform === pl)
         const drafts = (replies || []).filter(r => r.platform === pl && r.status === 'draft')
         return (
-          <div className={'card camp-card' + (s.enabled ? ' on' : '')} key={pl} style={{ display: 'block' }}>
-            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="conn-title row" style={{ gap: 7 }}><span className="status-dot" style={{ background: platformDot(pl) }} />{label[pl]} replies {s.running && <span className="live-status"><Loader2 size={11} className="spin" /> {s.status_detail}</span>}</div>
+          <div className={'ar-block card' + (s.enabled ? ' on' : '')} key={pl}>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+              <div className="row" style={{ gap: 10, minWidth: 0 }}>
+                <span className="status-dot" style={{ background: platformDot(pl), marginTop: 5 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{label[pl]}</div>
+                  <div className="muted tiny">{has ? 'Replies held for your approval' : 'No account connected'}</div>
+                </div>
+              </div>
               <Toggle on={!!s.enabled} onChange={v => onToggle(pl, { enabled: v })} />
             </div>
-            {!has && <div className="muted tiny" style={{ marginTop: 4 }}>No {label[pl]} account connected yet.</div>}
             {s.enabled && (
-              <div style={{ marginTop: 8 }}>
-                <label className="row" style={{ gap: 8, fontSize: 12.5, justifyContent: 'space-between' }}>
-                  <span className="muted">Post replies automatically <span className="tiny">· off = hold each reply as a draft for you to approve below</span></span>
-                  <Toggle on={!!s.auto_post} onChange={v => onToggle(pl, { auto_post: v })} />
-                </label>
-                <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
-                  <button className="mini" disabled={!has} onClick={() => onRun(pl)}><RefreshCw size={11} /> Check for new comments now</button>
+              <div style={{ marginTop: 10 }}>
+                <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
+                  {s.running
+                    ? <span className="live-status on" style={{ margin: 0 }}><Loader2 size={11} className="spin" /> {str(s.status_detail) || 'Checking comments…'}</span>
+                    : <span className="muted tiny">{drafts.length ? `${drafts.length} repl${drafts.length === 1 ? 'y' : 'ies'} waiting for you` : 'No replies waiting'}</span>}
+                  <button className="mini" disabled={!has} onClick={() => onRun(pl)}><RefreshCw size={11} /> Check now</button>
                 </div>
-                {drafts.length > 0 && <div style={{ marginTop: 8 }}>
-                  {drafts.slice(0, 5).map(d => (
-                    <div className="card" key={d.id} style={{ padding: 10, marginBottom: 6 }}>
-                      <div className="muted tiny">@{d.comment_author}: {(d.comment_text || '').slice(0, 90)}</div>
-                      <div style={{ fontSize: 13, margin: '5px 0' }}>{d.reply_text}</div>
-                      <div className="row" style={{ justifyContent: 'flex-end' }}><button className="btn-primary btn-sm" onClick={() => onPostDraft(d.id)}>Post reply</button></div>
+                {drafts.slice(0, 6).map(d => (
+                  <div className="ar-draft" key={d.id}>
+                    <div className="ar-comment"><span className="ar-author">@{authorHandle(d.comment_author)}</span>{str(d.comment_text) ? ' · ' + str(d.comment_text).slice(0, 130) : ''}</div>
+                    <div className="ar-reply">{str(d.reply_text)}</div>
+                    <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+                      <button className="btn-primary btn-sm" onClick={() => onPostDraft(d.id)}>Reply</button>
                     </div>
-                  ))}
-                </div>}
+                  </div>
+                ))}
               </div>
             )}
           </div>
         )
       })}
+    </>
+  )
+}
+
+// Floating, bottom-right expandable "accounts" dot for a tab. Keeps account
+// management (and, on LinkedIn, voice/inspiration) one tap away without cluttering
+// the main create-first flow.
+function FloatingAccounts({ glyph, count, label, children }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="facct">
+      <AnimatePresence>
+        {open && (
+          <motion.div className="facct-panel card" initial={{ opacity: 0, y: 8, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.97 }} transition={spring}>
+            <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+              <span style={{ fontWeight: 700, fontSize: 13.5 }}>{label}</span>
+              <button className="x-close" onClick={() => setOpen(false)}><LX size={16} /></button>
+            </div>
+            <div className="facct-body">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <button className={'facct-dot' + (open ? ' on' : '')} onClick={() => setOpen(o => !o)} title={label}>
+        {glyph}
+        {count > 0 && <span className="facct-count">{count}</span>}
+      </button>
+    </div>
+  )
+}
+
+// Compact stat tiles (e.g. followers / following / posts).
+const fmtNum = n => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n)
+function StatTiles({ tiles }) {
+  return (
+    <div className="stat-tiles">
+      {tiles.map((t, i) => (
+        <div className="stat-tile" key={i}>
+          <div className="stat-num">{t.value}</div>
+          <div className="stat-lbl">{t.label}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Single-platform campaign: promote a topic on the user's OWN account for this
+// platform, in their voice, on a cadence. Reuses the brand-campaign engine with
+// targets locked to this tab's platform.
+function PlatformCampaign({ campaigns, targets, supportsCarousel, allowImage, canCreate, connectHint, onSave, onPatch, onDelete, onRun }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState(''); const [topic, setTopic] = useState('')
+  const [hours, setHours] = useState(24)
+  const [style, setStyle] = useState('bold'); const [format, setFormat] = useState('listicle'); const [img, setImg] = useState(false)
+  const [picked, setPicked] = useState([]); const [busy, setBusy] = useState(false)
+  const single = targets.length === 1
+  function startNew() { setPicked(targets.map(t => t.id)); setOpen(true) }
+  const chosen = single ? targets : targets.filter(t => picked.includes(t.id))
+  async function submit() {
+    if (!name.trim() || !topic.trim() || !chosen.length) return
+    setBusy(true)
+    const payload = {
+      name: name.trim(), topic: topic.trim(),
+      targets: chosen.map(t => ({ kind: t.kind, id: t.id, platform: t.platform })),
+      interval_hours: Number(hours), include_image: img,
+    }
+    if (supportsCarousel) { payload.carousel_style = style; payload.carousel_format = format }
+    payload.active = true
+    const ok = await onSave(payload)
+    setBusy(false)
+    if (ok) { setOpen(false); setName(''); setTopic(''); setPicked([]) }
+  }
+  return (
+    <>
+      {campaigns.map(c => (
+        <div className={'card camp-card' + (c.active ? ' on' : '')} key={c.id} style={{ display: 'block' }}>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ minWidth: 0 }}>
+              <div className="conn-title">{c.name}</div>
+              <div className="muted tiny" style={{ marginTop: 2 }}>{c.topic}</div>
+              {c.status_detail && <div className="muted tiny" style={{ marginTop: 6 }}>{c.running && <Loader2 size={10} className="spin" />} {c.status_detail}</div>}
+            </div>
+            <Toggle on={!!c.active} onChange={v => onPatch(c.id, { active: v })} />
+          </div>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            <span className="muted tiny" style={{ marginRight: 'auto' }}>every {c.interval_hours}h</span>
+            <button className="mini" onClick={() => onRun(c.id)} disabled={c.running}><Play size={11} /> Run now</button>
+            <button className="mini danger" onClick={() => onDelete(c.id)}><Trash2 size={12} /></button>
+          </div>
+        </div>
+      ))}
+      {open ? (
+        <div className="card camp-form">
+          <input className="field" placeholder="Campaign name (e.g. Launch week)" value={name} onChange={e => setName(e.target.value)} />
+          <textarea className="field" rows={2} style={{ marginTop: 8 }} placeholder="What to promote — written in your voice" value={topic} onChange={e => setTopic(e.target.value)} />
+          {!single && (<>
+            <label className="ob-label">Post to</label>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {targets.map(t => <button type="button" key={t.id} className={'chip' + (picked.includes(t.id) ? ' on' : '')} onClick={() => setPicked(p => p.includes(t.id) ? p.filter(x => x !== t.id) : [...p, t.id])}><span className="status-dot" style={{ background: platformDot(t.platform) }} />{t.label}</button>)}
+            </div>
+          </>)}
+          {supportsCarousel && (
+            <div style={{ marginTop: 10 }}>
+              <label className="ob-label">Carousel style</label>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                {SLIDE_STYLE_LIST.map(s => <button type="button" key={s.key} className={'sw-chip' + (style === s.key ? ' on' : '')} onClick={() => setStyle(s.key)}><span className="sw" style={{ background: s.swatch.startsWith('linear') ? undefined : s.swatch, backgroundImage: s.swatch.startsWith('linear') ? s.swatch : undefined, color: s.fg }}>Aa</span>{s.label}</button>)}
+              </div>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                {SLIDESHOW_FORMATS.map(f => <button type="button" key={f.key} className={'chip' + (format === f.key ? ' on' : '')} onClick={() => setFormat(f.key)}>{f.label}</button>)}
+              </div>
+            </div>
+          )}
+          <div className="row" style={{ gap: 12, marginTop: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+            <label className="camp-num">every <input type="number" min={1} className="field" value={hours} onChange={e => setHours(e.target.value)} /> hours</label>
+            {allowImage && !supportsCarousel && <label className="row" style={{ gap: 7, fontSize: 12.5 }}><Toggle on={img} onChange={setImg} /> AI image</label>}
+          </div>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button className="mini" onClick={() => setOpen(false)}>Cancel</button>
+            <button className="btn-primary btn-sm" disabled={busy || !name.trim() || !topic.trim() || !chosen.length} onClick={submit}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start campaign'}</button>
+          </div>
+        </div>
+      ) : (
+        canCreate
+          ? <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center' }} onClick={startNew}><Plus size={14} /> New campaign</button>
+          : <div className="muted tiny" style={{ padding: '2px 2px 4px' }}>{connectHint}</div>
+      )}
     </>
   )
 }
@@ -973,7 +897,7 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
   return (
     <>
       <div className="card camp-form">
-        <div className="muted tiny" style={{ marginBottom: 8, lineHeight: 1.55 }}>Feed in a long video — a talk, podcast, stream — and Cadence finds the best moments and cuts them into ready-to-post clips. Cuts always land on natural pauses.</div>
+        <div className="muted tiny" style={{ marginBottom: 8 }}>Drop in a long video — Cadence cuts the best moments into ready-to-post clips.</div>
         <div className="row" style={{ gap: 8 }}>
           <input className="field" style={{ flex: 1 }} placeholder="Paste a YouTube link or direct video URL" value={fileName ? `Uploaded: ${fileName}` : url} onChange={e => { setUrl(e.target.value); setFileName('') }} disabled={!!fileName} />
           <button className="btn-ghost btn-sm" disabled={busy} onClick={() => fileRef.current?.click()}><Upload size={13} /> Upload</button>
@@ -1048,10 +972,10 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
 function Suggestions({ platform, drafts, busy, canPost, onGenerate, onPostNow, onSchedule, onDiscard }) {
   return (
     <>
-      <div className="conn-sec row" style={{ gap: 7 }}><Sparkles size={13} /> Ready to post <span className="muted tiny" style={{ fontWeight: 400 }}>· drafted in your voice, waiting for your approval</span>
+      <div className="conn-sec row" style={{ gap: 7 }}><Sparkles size={13} /> Ready to post
         <button className="mini" style={{ marginLeft: 'auto' }} disabled={busy} onClick={onGenerate}>{busy ? <Loader2 size={11} className="spin" /> : <Wand2 size={11} />} {drafts.length ? 'More' : 'Generate'}</button>
       </div>
-      {drafts.length === 0 && <div className="muted tiny" style={{ margin: '0 2px 12px' }}>{busy ? 'Writing suggestions in your voice…' : 'Hit Generate and a few posts will be waiting here, ready to approve.'}</div>}
+      {drafts.length === 0 && <div className="muted tiny" style={{ margin: '0 2px 12px' }}>{busy ? 'Writing…' : 'Generate drafts in your voice.'}</div>}
       <AnimatePresence>{drafts.map(p => (
         <motion.div key={p.id} className="card draft-card" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96 }} layout>
           <div className="card-body" style={{ whiteSpace: 'pre-wrap' }}>{p.content}</div>
@@ -1073,7 +997,7 @@ function InspirationAccounts({ platform, accounts, onAdd, onRemove }) {
   async function add() { if (!val.trim()) return; const ok = await onAdd(platform, val.trim()); if (ok) setVal('') }
   return (
     <>
-      <div className="conn-sec row" style={{ gap: 7 }}><Star size={12} /> Inspiration accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 · read-only, no login needed — the AI studies what works for them</span></div>
+      <div className="conn-sec row" style={{ gap: 7 }}><Star size={12} /> Inspiration accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 · read-only</span></div>
       {accounts.map(a => (
         <div className="card" key={a.id} style={{ padding: '9px 12px', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 9 }}>
           <span className="status-dot" style={{ background: platformDot(platform) }} />
@@ -1099,9 +1023,10 @@ function CrossCampaignManager({ campaigns, xConns, socialAccounts, onSave, onPat
   const [picked, setPicked] = useState([]); const [hours, setHours] = useState(24)
   const [style, setStyle] = useState('bold'); const [format, setFormat] = useState('listicle'); const [img, setImg] = useState(false)
 
-  // All connectable targets across platforms.
+  // Your personal accounts only: the primary X account + each connected social.
+  const primary = xConns.find(c => c.is_primary) || xConns[0]
   const targets = [
-    ...xConns.map(c => ({ kind: 'x', id: c.id, platform: 'x', label: `@${c.username}`, primary: c.is_primary })),
+    ...(primary ? [{ kind: 'x', id: primary.id, platform: 'x', label: `@${primary.username}` }] : []),
     ...socialAccounts.map(a => ({ kind: 'social', id: a.id, platform: a.platform, label: `@${a.username || a.platform}` })),
   ]
   const has = k => picked.some(p => p.id === k.id)
@@ -1141,9 +1066,9 @@ function CrossCampaignManager({ campaigns, xConns, socialAccounts, onSave, onPat
         : (
         <div className="card camp-form">
           <input className="field" placeholder="Campaign name (e.g. Launch week)" value={name} onChange={e => setName(e.target.value)} />
-          <textarea className="field" rows={2} style={{ marginTop: 8 }} placeholder="What to promote / topic — the AI writes about this in your voice" value={topic} onChange={e => setTopic(e.target.value)} />
+          <textarea className="field" rows={2} style={{ marginTop: 8 }} placeholder="What to promote — written in your voice" value={topic} onChange={e => setTopic(e.target.value)} />
           <label className="ob-label">Post to these accounts</label>
-          {targets.length === 0 && <div className="muted tiny">Connect accounts first (X, and Instagram/TikTok/LinkedIn in their tabs).</div>}
+          {targets.length === 0 && <div className="muted tiny">Connect your accounts first.</div>}
           <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
             {targets.map(k => <button type="button" key={k.id} className={'chip' + (has(k) ? ' on' : '')} onClick={() => toggle(k)}><span className="status-dot" style={{ background: platformDot(k.platform) }} />{k.label}</button>)}
           </div>
@@ -1172,6 +1097,444 @@ function CrossCampaignManager({ campaigns, xConns, socialAccounts, onSave, onPat
   )
 }
 
+// ── Niche engagement — YOUR account comments on relevant posts in your niche.
+// Slim front-end over the engagement_rules engine (keywords + watched accounts
+// discovery, replies in voice, approve-first by default).
+function EngageManager({ rules, primaryConn, xReadEnabled, posts, onSave, onPatch, onDelete, onRun }) {
+  const [open, setOpen] = useState(false)
+  const [keywords, setKeywords] = useState(''); const [handles, setHandles] = useState('')
+  const [every, setEvery] = useState(24); const [perRun, setPerRun] = useState(3)
+  const [autoPost, setAutoPost] = useState(false); const [busy, setBusy] = useState(false)
+  const [openId, setOpenId] = useState(null)
+  const lines = s => s.split('\n').map(x => x.trim()).filter(Boolean)
+  async function submit() {
+    if (!keywords.trim() && !lines(handles).length) return
+    setBusy(true)
+    const ok = await onSave({
+      name: 'Niche engagement',
+      target_keywords: keywords.split(',').map(s => s.trim()).filter(Boolean),
+      target_handles: lines(handles).slice(0, 3),
+      comment_styles: ['add_value'],
+      connection_ids: primaryConn ? [primaryConn.id] : [],
+      interval_hours: Number(every), replies_per_run: Number(perRun),
+      auto_post: autoPost, active: true,
+    })
+    setBusy(false)
+    if (ok !== false) { setOpen(false); setKeywords(''); setHandles('') }
+  }
+  return (
+    <>
+      {rules.map(r => {
+        const { pending, live } = activityFor(posts, 'engagement_rule_id', r.id)
+        const expanded = openId === r.id
+        const targets = [
+          r.target_handles?.length ? r.target_handles.map(h => '@' + String(h).replace(/^@/, '')).join(' ') : null,
+          r.target_keywords?.length ? r.target_keywords.join(', ') : null,
+        ].filter(Boolean).join(' · ')
+        return (
+          <div className={'card camp-card' + (r.active ? ' on' : '')} key={r.id} style={{ display: 'block' }}>
+            <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="conn-title" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{targets || r.name}</div>
+                <div className="muted tiny" style={{ marginTop: 2 }}>{r.replies_per_run}/run · every {r.interval_hours}h · {r.auto_post ? 'auto-posts' : 'you approve each'}</div>
+              </div>
+              <Toggle on={!!r.active} onChange={v => onPatch(r.id, { active: v }, v ? 'Engaging' : 'Paused')} />
+            </div>
+            <LiveStatus running={r.running} detail={r.status_detail} lastAt={r.last_activity_at} />
+            <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
+              <button className="act-toggle" style={{ marginTop: 0, borderTop: 'none', padding: 0, width: 'auto' }} onClick={() => setOpenId(expanded ? null : r.id)}>
+                <ChevronDown size={13} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+                {live.length} posted · {pending.length} pending
+              </button>
+              <div className="row" style={{ gap: 6 }}>
+                {onRun && <RunNow running={r.running} onRun={() => onRun(r.id)} />}
+                <button className="mini danger" onClick={() => onDelete(r.id)}><Trash2 size={12} /></button>
+              </div>
+            </div>
+            <AnimatePresence initial={false}>
+              {expanded && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
+                  <ActivityList pending={pending} live={live} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )
+      })}
+      {open ? (
+        <div className="card camp-form">
+          <label className="ob-label" style={{ marginTop: 0 }}>Topics / keywords</label>
+          <input className="field" placeholder="AI agents, indie hacking" value={keywords} onChange={e => setKeywords(e.target.value)} />
+          <label className="ob-label">Accounts to watch <span style={{ fontWeight: 400, color: '#9aa1ad' }}>· up to 3</span></label>
+          <textarea className="field" rows={2} placeholder={'@naval\n@sama'} value={handles} onChange={e => setHandles(e.target.value)} />
+          {!xReadEnabled && <div className="notice" style={{ marginTop: 8 }}>Needs X read access turned on to find posts.</div>}
+          <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+            <div className="row" style={{ gap: 10 }}>
+              <label className="camp-num"><input type="number" min={1} max={10} className="field" value={perRun} onChange={e => setPerRun(e.target.value)} /> per run</label>
+              <label className="camp-num">every <input type="number" min={1} className="field" value={every} onChange={e => setEvery(e.target.value)} /> h</label>
+            </div>
+            <label className="row" style={{ gap: 7, fontSize: 12.5 }}><Toggle on={autoPost} onChange={setAutoPost} /> auto-post</label>
+          </div>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button className="mini" onClick={() => setOpen(false)}>Cancel</button>
+            <button className="btn-primary btn-sm" disabled={busy || (!keywords.trim() && !handles.trim())} onClick={submit}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start'}</button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center' }} onClick={() => setOpen(true)}><Plus size={14} /> New engagement</button>
+      )}
+    </>
+  )
+}
+// Platforms whose APIs don't allow commenting on other people's posts (yet).
+const EngageStub = ({ platform }) => <div className="muted tiny" style={{ padding: '2px 2px 6px' }}>Coming soon — {platform} doesn&apos;t let apps comment on others&apos; posts yet.</div>
+
+// ── Feeder agents — an autonomous persona per feeder account. Each one thinks
+// on a cadence, posts and replies as ITSELF, quietly backs the primary, and
+// evolves its own identity from what it does. ──────────────────────────────────
+function FeederAgents({ agents, xConns, posts, onSpawn, onPatch, onDelete, onRun, onReroll }) {
+  const feeders = xConns.filter(c => !c.is_primary)
+  const [seed, setSeed] = useState({})        // connId -> interests draft
+  const [spawning, setSpawning] = useState('') // connId mid-spawn
+  const [openId, setOpenId] = useState(null)
+  async function spawn(connId) {
+    setSpawning(connId)
+    const ok = await onSpawn(connId, seed[connId] || '')
+    setSpawning('')
+    if (ok) setSeed(s => ({ ...s, [connId]: '' }))
+  }
+  if (!feeders.length) return <div className="muted tiny" style={{ padding: '2px 2px 6px' }}>Agents run on feeder accounts. Connect a second X account (accounts, bottom-right) to deploy one.</div>
+  return (
+    <>
+      {feeders.map(c => {
+        const a = agents.find(x => x.x_connection_id === c.id)
+        if (!a) return (
+          <div className="card camp-card" key={c.id} style={{ display: 'block' }}>
+            <div className="conn-title row" style={{ gap: 7 }}><Bot size={14} /> @{c.username} <span className="muted tiny" style={{ fontWeight: 400 }}>· no agent yet</span></div>
+            <div className="row" style={{ gap: 8, marginTop: 9 }}>
+              <input className="field" style={{ flex: 1 }} placeholder="Its niche (e.g. AI tooling, fitness memes)" value={seed[c.id] || ''} onChange={e => setSeed(s => ({ ...s, [c.id]: e.target.value }))} />
+              <button className="btn-primary btn-sm" disabled={spawning === c.id} onClick={() => spawn(c.id)}>{spawning === c.id ? <Loader2 size={13} className="spin" /> : 'Spawn'}</button>
+            </div>
+          </div>
+        )
+        const p = a.persona || {}
+        const { pending, live } = activityFor(posts, 'feeder_agent_id', a.id)
+        const expanded = openId === a.id
+        const lastNote = (a.memory || [])[a.memory?.length - 1]?.note
+        return (
+          <div className={'card camp-card' + (a.active ? ' on' : '')} key={c.id} style={{ display: 'block' }}>
+            <div className="row" style={{ justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="conn-title row" style={{ gap: 7 }}><Bot size={14} /> {p.name || a.name || 'Agent'} <span className="muted tiny" style={{ fontWeight: 400 }}>· @{c.username}</span></div>
+                <div className="muted tiny" style={{ marginTop: 3 }}>{p.archetype}{p.tone ? ` · ${p.tone}` : ''}</div>
+                {lastNote && <div className="agent-note">“{lastNote}”</div>}
+              </div>
+              <Toggle on={!!a.active} onChange={v => onPatch(a.id, { active: v }, v ? `${p.name || 'Agent'} is live` : `${p.name || 'Agent'} paused`)} />
+            </div>
+            <LiveStatus running={a.running} detail={a.status_detail} lastAt={a.last_activity_at} />
+            <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
+              <button className="act-toggle" style={{ marginTop: 0, borderTop: 'none', padding: 0, width: 'auto' }} onClick={() => setOpenId(expanded ? null : a.id)}>
+                <ChevronDown size={13} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+                {live.length} posted · {pending.length} pending
+              </button>
+              <div className="row" style={{ gap: 6 }}>
+                <Toggle on={!!a.auto_post} onChange={v => onPatch(a.id, { auto_post: v }, v ? 'Acts on its own' : 'Drafts for your review')} label="autonomous" />
+                <RunNow running={a.running} onRun={() => onRun(a.id)} />
+                <button className="mini" title="New persona" onClick={() => onReroll(a.id)}><RefreshCw size={12} /></button>
+                <button className="mini danger" onClick={() => onDelete(a.id)}><Trash2 size={12} /></button>
+              </div>
+            </div>
+            <AnimatePresence initial={false}>
+              {expanded && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
+                  <div className="muted tiny" style={{ margin: '8px 0 4px' }}>{p.bio}</div>
+                  {(p.opinions || []).slice(0, 3).map((o, i) => <div className="muted tiny" key={i}>· {o}</div>)}
+                  <div className="row" style={{ gap: 10, margin: '10px 0 4px', flexWrap: 'wrap' }}>
+                    <label className="camp-num"><input type="number" min={0} max={6} className="field" value={a.posts_per_day} onChange={e => onPatch(a.id, { posts_per_day: e.target.value })} /> posts/day</label>
+                    <label className="camp-num"><input type="number" min={0} max={12} className="field" value={a.replies_per_day} onChange={e => onPatch(a.id, { replies_per_day: e.target.value })} /> replies/day</label>
+                    <label className="camp-num">every <input type="number" min={1} className="field" value={a.interval_hours} onChange={e => onPatch(a.id, { interval_hours: e.target.value })} /> h</label>
+                    <label className="row" style={{ gap: 6, fontSize: 12 }}><Toggle on={!!a.support_primary} onChange={v => onPatch(a.id, { support_primary: v })} /> backs your primary</label>
+                  </div>
+                  <ActivityList pending={pending} live={live} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+// ── Pricing plan card ──────────────────────────────────────────────────────────
+function PlanCard({ plan, interval, currentPlan, seats, setSeats, onChoose, busy }) {
+  const per = monthlyEquivalent(plan, interval)
+  const isCurrent = currentPlan === plan.key
+  const total = plan.perSeat ? Math.round(per * seats) : per
+  return (
+    <div className={'plan-card card' + (plan.key === 'team' ? ' team' : '') + (isCurrent ? ' current' : '')}>
+      <div className="row" style={{ gap: 8 }}>
+        <span className="plan-ic">{plan.perSeat ? <Users size={16} /> : <LUser size={16} />}</span>
+        <span className="plan-name">{plan.name}</span>
+        {isCurrent && <span className="plan-badge">Current</span>}
+      </div>
+      <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>{plan.tagline}</div>
+      <div className="plan-price">${per}<span className="muted" style={{ fontSize: 15, fontWeight: 500 }}>{plan.unit}</span></div>
+      <div className="muted tiny" style={{ minHeight: 16 }}>{interval === 'annual' ? `billed annually — $${plan.annual}${plan.perSeat ? '/seat' : ''}/yr` : plan.perSeat ? `min ${plan.minSeats} seats` : 'billed monthly'}</div>
+      {plan.perSeat && (
+        <div className="seat-row">
+          <span className="muted tiny" style={{ flex: 1 }}>Seats</span>
+          <div className="stepper">
+            <button onClick={() => setSeats(s => Math.max(plan.minSeats, s - 1))} disabled={seats <= plan.minSeats}>−</button>
+            <span>{seats}</span>
+            <button onClick={() => setSeats(s => Math.min(plan.maxSeats || 50, s + 1))}>+</button>
+          </div>
+          <span className="plan-total">${total}/mo</span>
+        </div>
+      )}
+      <ul className="plan-feats">{plan.features.map((f, i) => <li key={i}><LCheck size={14} strokeWidth={3} /> {f}</li>)}</ul>
+      <button className={isCurrent ? 'btn-ghost' : 'btn-primary'} style={{ width: '100%', padding: 12, marginTop: 'auto' }} disabled={busy} onClick={() => onChoose(plan)}>
+        {isCurrent ? 'Manage subscription' : `Choose ${plan.name}`}
+      </button>
+    </div>
+  )
+}
+
+// ── Account page — full-screen profile / accounts / billing / pricing ───────────
+function AccountPage({ me, session, accountTab, setAccountTab, authed, banner, photos, onUploadPhoto, onDeletePhoto, persona, analyzing, onAnalyze, xConns, connected, onConnectX, onDisconnectX, onMakePrimary, socialConfigured, socialAccounts, onConnectSocial, liSelf, liMentors, onAddLinkedIn, onRemoveLinkedIn, onPortal, onCheckout, onReload, onClose }) {
+  const p = me?.profile || {}
+  const [name, setName] = useState(p.full_name || '')
+  const [role, setRole] = useState(p.role || '')
+  const [goals, setGoals] = useState(p.goals || '')
+  const [tz, setTz] = useState(p.timezone || 'America/Los_Angeles')
+  const [hour, setHour] = useState(p.default_post_hour ?? 9)
+  const [imgDefault, setImgDefault] = useState(!!p.include_image_default)
+  const [busy, setBusy] = useState(false); const [saved, setSaved] = useState(false)
+  const [interval, setIntervalSel] = useState(me?.planInterval === 'annual' ? 'annual' : 'monthly')
+  const [teamSeats, setTeamSeats] = useState(Math.max(me?.seats || PLANS.team.minSeats, PLANS.team.minSeats))
+  const billingOn = !!me?.billingConfigured
+  const isPro = p.is_pro || !billingOn
+  const planKey = me?.plan && PLANS[me.plan] ? me.plan : null
+  const initials = (p.full_name || session.user.email || '?').trim()[0]?.toUpperCase()
+  const stats = me?.stats || {}
+  const liAcct = socialAccounts.find(a => a.platform === 'linkedin')
+  const igtk = socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform))
+
+  async function save() {
+    setBusy(true)
+    await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ full_name: name, role, goals, timezone: tz, default_post_hour: Number(hour), include_image_default: imgDefault }) })
+    setBusy(false); setSaved(true); setTimeout(() => setSaved(false), 1800); onReload && onReload()
+  }
+  function chooseplan(plan) {
+    // Any active subscriber manages plan changes in the portal — a second
+    // checkout would create a second live subscription.
+    if (planKey === plan.key || (billingOn && p.is_pro)) return onPortal()
+    onCheckout(plan.key, interval, plan.perSeat ? teamSeats : 1)
+  }
+
+  const TABS = [['profile', 'Profile', LUser], ['accounts', 'Accounts', Users], ['billing', 'Billing', CreditCard], ['pricing', 'Pricing', Crown]]
+
+  return (
+    <motion.div className="acctpage" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
+      <header className="acct-top">
+        <button className="btn-ghost row" style={{ gap: 7 }} onClick={onClose}><ArrowLeft size={16} /> Back</button>
+        <span className="wordmark" style={{ fontSize: 18 }}>Account</span>
+        <span style={{ width: 78 }} />
+      </header>
+      {banner && <div className="banner" style={{ margin: '10px 20px 0' }}>{banner}</div>}
+      <div className="acct-tabstrip">
+        {TABS.map(([k, l, Ic]) => (
+          <button key={k} className={'acct-navbtn' + (accountTab === k ? ' on' : '')} onClick={() => setAccountTab(k)} style={{ width: 'auto' }}><Ic size={15} /> {l}</button>
+        ))}
+      </div>
+      <div className="acct-wrap">
+        <nav className="acct-nav">
+          <div className="acct-id">
+            <span className="acct-avatar">{initials}</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.full_name || 'Your account'}</div>
+              <div className="muted tiny" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{session.user.email}</div>
+            </div>
+          </div>
+          {TABS.map(([k, l, Ic]) => (
+            <button key={k} className={'acct-navbtn' + (accountTab === k ? ' on' : '')} onClick={() => setAccountTab(k)}>
+              <Ic size={16} /> {l}
+            </button>
+          ))}
+          <div style={{ marginTop: 'auto' }}>
+            <button className="acct-navbtn" onClick={() => supabase.auth.signOut()}><LX size={16} /> Sign out</button>
+          </div>
+        </nav>
+
+        <div className="acct-content">
+          {accountTab === 'profile' && (
+            <div className="acct-sec-wrap">
+              <h2 className="acct-h">Personal information</h2>
+              <div className="card acct-card">
+                <label className="ob-label">Name</label>
+                <input className="field" value={name} onChange={e => setName(e.target.value)} placeholder="Jane Founder" />
+                <label className="ob-label">What you do</label>
+                <input className="field" value={role} onChange={e => setRole(e.target.value)} placeholder="Building an AI startup" />
+                <label className="ob-label">What you want from social</label>
+                <textarea className="field" rows={2} value={goals} onChange={e => setGoals(e.target.value)} placeholder="Grow an audience of founders & investors" />
+                <label className="ob-label">Email</label>
+                <input className="field" value={session.user.email} disabled />
+              </div>
+
+              <h2 className="acct-h">Posting defaults</h2>
+              <div className="card acct-card">
+                <div className="set-row"><span>Timezone</span><select className="field set-input" value={tz} onChange={e => setTz(e.target.value)}>{TZS.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}</select></div>
+                <div className="set-row"><span>Default post time</span><select className="field set-input" value={hour} onChange={e => setHour(e.target.value)}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{((h % 12) || 12) + (h < 12 ? ' AM' : ' PM')}</option>)}</select></div>
+                <div className="set-row"><span>Attach an AI image by default</span><Toggle on={imgDefault} onChange={setImgDefault} /></div>
+              </div>
+
+              <h2 className="acct-h">Your voice</h2>
+              <div className="card acct-card">
+                {persona
+                  ? <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="muted tiny" style={{ marginBottom: 4 }}>{persona.tone}</div>
+                        <div className="persona-summary">{persona.summary}</div>
+                      </div>
+                      <button className="mini" disabled={analyzing} onClick={onAnalyze}>{analyzing ? '…' : 'Re-analyze'}</button>
+                    </div>
+                  : <div className="row" style={{ gap: 12, justifyContent: 'space-between' }}>
+                      <span className="muted tiny" style={{ flex: 1 }}>Cadence reads your connected accounts to learn how you write, so posts sound like you.</span>
+                      <button className="btn-primary btn-sm" disabled={analyzing} onClick={onAnalyze}>{analyzing ? '…' : 'Analyze my voice'}</button>
+                    </div>}
+              </div>
+
+              <h2 className="acct-h">Your photos <span className="muted tiny" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>· 5–10 selfies for AI images of you</span></h2>
+              <div className="card acct-card">
+                <div className="photo-grid">
+                  {photos.map(ph => (
+                    <div className="photo-cell" key={ph.id}><img src={ph.url} alt="" /><button className="photo-del" onClick={() => onDeletePhoto(ph.id)}><LX size={12} /></button></div>
+                  ))}
+                  {photos.length < 10 && <label className="photo-add"><Upload size={16} /><input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) onUploadPhoto(f); e.target.value = '' }} /></label>}
+                </div>
+                <div className="muted tiny" style={{ marginTop: 8 }}>{photos.length}/10 uploaded. Used when you turn on “Feature me” on a post image.</div>
+              </div>
+
+              <div className="acct-save" style={{ justifyContent: 'space-between' }}>
+                <button className="btn-ghost" onClick={() => supabase.auth.signOut()}>Sign out</button>
+                <button className="btn-primary" disabled={busy} onClick={save}>{busy ? <span className="dots"><i/><i/><i/></span> : saved ? 'Saved ✓' : 'Save changes'}</button>
+              </div>
+            </div>
+          )}
+
+          {accountTab === 'accounts' && (
+            <div className="acct-sec-wrap">
+              <h2 className="acct-h">X accounts</h2>
+              {xConns.map(c => (
+                <div className={'conn-card card' + (c.is_primary ? ' primary' : '')} key={c.id}>
+                  <div className="conn-icon x-icon"><XGlyph /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="conn-title row" style={{ gap: 6 }}>@{c.username}
+                      {c.is_primary ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span> : <span className="role-badge">Feeder</span>}
+                      {c.needs_reconnect && <span className="role-badge" style={{ background: '#fbe6d4', color: '#b9540a' }}>Reconnect</span>}
+                    </div>
+                  </div>
+                  {c.needs_reconnect && <button className="mini accent" onClick={onConnectX}>Reconnect</button>}
+                  {!c.is_primary && <button className="mini" onClick={() => onMakePrimary(c.id)}>Make primary</button>}
+                  <button className="mini danger" onClick={() => onDisconnectX(c.id)}>Disconnect</button>
+                </div>
+              ))}
+              <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 18 }} onClick={onConnectX}><Plus size={14} /> {connected ? 'Add another X account' : 'Connect X'}</button>
+
+              <h2 className="acct-h">Instagram & TikTok</h2>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+                {igtk.map(a => <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</span>)}
+                <button className="chip" disabled={!socialConfigured} onClick={() => onConnectSocial('instagram')}><Plus size={11} /> Instagram</button>
+                <button className="chip" disabled={!socialConfigured} onClick={() => onConnectSocial('tiktok')}><Plus size={11} /> TikTok</button>
+              </div>
+
+              <h2 className="acct-h">LinkedIn</h2>
+              <div className="card acct-card">
+                <div className="conn-sec" style={{ marginTop: 0 }}>Publish to LinkedIn</div>
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                  {socialAccounts.filter(a => a.platform === 'linkedin').map(a => <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot('linkedin') }} />{a.username || 'LinkedIn'}</span>)}
+                  <button className="chip" disabled={!socialConfigured} onClick={() => onConnectSocial('linkedin')}><Plus size={11} /> {liAcct ? 'Reconnect' : 'Connect'}</button>
+                </div>
+                <div className="conn-sec">Your voice source <span className="muted tiny" style={{ fontWeight: 400 }}>· your own LinkedIn</span></div>
+                <LinkedInSlot account={liSelf[0]} onAdd={(url) => onAddLinkedIn(url, false)} onRemove={onRemoveLinkedIn} self />
+                <div className="conn-sec row" style={{ gap: 7 }}><Star size={12} /> Inspiration <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3, read-only</span></div>
+                {[0, 1, 2].map(i => <LinkedInSlot key={i} account={liMentors[i]} onAdd={(url) => onAddLinkedIn(url, true)} onRemove={onRemoveLinkedIn} />)}
+              </div>
+            </div>
+          )}
+
+          {accountTab === 'billing' && (
+            <div className="acct-sec-wrap">
+              <h2 className="acct-h">Your plan</h2>
+              <div className="card acct-card">
+                {!billingOn ? (
+                  <div>
+                    <div className="row" style={{ gap: 9, marginBottom: 6 }}><span className="pro-pill"><Crown size={12} /> All features unlocked</span></div>
+                    <div className="muted tiny">Billing isn’t configured on this instance yet, so every feature is on. Add Stripe keys on the server to turn on plans.</div>
+                  </div>
+                ) : isPro ? (
+                  <div>
+                    <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <div className="row" style={{ gap: 9 }}>
+                          <span className="pro-pill"><Crown size={12} /> {planKey ? PLANS[planKey].name : 'Pro'}</span>
+                          {me?.seats > 1 && <span className="role-badge">{me.seats} seats</span>}
+                        </div>
+                        <div className="muted tiny" style={{ marginTop: 8 }}>
+                          {me?.planInterval === 'annual' ? 'Billed annually' : 'Billed monthly'}{me?.periodEnd ? ` · renews ${fmt(me.periodEnd)}` : ''}
+                        </div>
+                      </div>
+                      <button className="btn-ghost btn-sm" onClick={onPortal}>Manage</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
+                    <div><div style={{ fontWeight: 700 }}>Free</div><div className="muted tiny">Upgrade to unlock auto-posting, AI images, voice & campaigns.</div></div>
+                    <button className="btn-primary btn-sm" onClick={() => setAccountTab('pricing')}>See plans</button>
+                  </div>
+                )}
+              </div>
+
+              <h2 className="acct-h">Usage</h2>
+              <div className="stat-tiles" style={{ margin: 0 }}>
+                <div className="stat-tile"><div className="stat-num">{fmtNum(stats.posted || 0)}</div><div className="stat-lbl">Posted</div></div>
+                <div className="stat-tile"><div className="stat-num">{fmtNum(stats.queued || 0)}</div><div className="stat-lbl">Queued</div></div>
+                <div className="stat-tile"><div className="stat-num">{fmtNum(xConns.length + socialAccounts.length)}</div><div className="stat-lbl">Accounts</div></div>
+              </div>
+              {billingOn && (
+                <div style={{ marginTop: 18 }}><button className="btn-ghost" onClick={onPortal}><CreditCard size={14} style={{ marginRight: 7, verticalAlign: 'middle' }} />Payment methods & invoices</button></div>
+              )}
+            </div>
+          )}
+
+          {accountTab === 'pricing' && (
+            <div className="acct-sec-wrap">
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                <h2 className="acct-h" style={{ margin: 0 }}>Choose your plan</h2>
+                <div className="seg">
+                  {[['monthly', 'Monthly'], ['annual', 'Annual · save 20%']].map(([k, l]) => (
+                    <button key={k} className={'seg-btn' + (interval === k ? ' on' : '')} onClick={() => setIntervalSel(k)}>
+                      {interval === k && <motion.span layoutId="bill-pill" className="seg-pill" transition={spring} />}
+                      <span style={{ position: 'relative', zIndex: 1 }}>{l}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {!billingOn && <div className="notice" style={{ margin: '12px 0 4px' }}>Billing isn’t live on this instance yet — these are the plans that will be offered once Stripe is connected. Every feature is currently unlocked.</div>}
+              <div className="plan-grid">
+                {PLAN_LIST.map(plan => (
+                  <PlanCard key={plan.key} plan={plan} interval={interval} currentPlan={planKey} seats={teamSeats} setSeats={setTeamSeats} onChoose={chooseplan} busy={false} />
+                ))}
+              </div>
+              <div className="muted tiny" style={{ textAlign: 'center', marginTop: 16 }}>Prices in USD. Cancel anytime · taxes may apply at checkout.</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 function App({ session }) {
   const token = session.access_token
@@ -1194,8 +1557,11 @@ function App({ session }) {
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
   const [compose, setCompose] = useState(null); const [composeBusy, setComposeBusy] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
-  const [upgrade, setUpgrade] = useState(false); const [settings, setSettings] = useState(false)
+  const [account, setAccount] = useState(null) // null | { tab: 'profile'|'accounts'|'billing'|'pricing' }
   const [xConnect, setXConnect] = useState(false)
+  const [xStats, setXStats] = useState(null)
+  const [chatScope, setChatScope] = useState([]) // [] = all platforms
+  const [feederAgents, setFeederAgents] = useState([])
   const inputRef = useRef(null); const bottomRef = useRef(null)
 
   const loadQueue = useCallback(async () => { const { data } = await supabase.from('posts').select('*').order('scheduled_for', { ascending: true }).limit(300); if (data) setPosts(data) }, [])
@@ -1210,8 +1576,17 @@ function App({ session }) {
   const loadBrand = useCallback(async () => { const r = await authed('/api/brand-campaigns'); const d = await r.json(); setBrandCampaigns(d.campaigns || []) }, [authed])
   const loadInspoX = useCallback(async () => { const r = await authed('/api/inspiration?platform=x'); const d = await r.json(); setInspoX(d.accounts || []) }, [authed])
   const loadClips = useCallback(async () => { const r = await authed('/api/clips'); const d = await r.json(); setClipJobs(d.jobs || []) }, [authed])
+  // In-flight guard: rapid tab toggles must not stack concurrent paid X reads.
+  const xStatsBusy = useRef(false)
+  const loadXStats = useCallback(async () => {
+    if (xStatsBusy.current) return
+    xStatsBusy.current = true
+    try { const r = await authed('/api/x/stats'); const d = await r.json(); if (d.stats) setXStats(d.stats) }
+    catch {} finally { xStatsBusy.current = false }
+  }, [authed])
+  const loadAgents = useCallback(async () => { const r = await authed('/api/feeder-agents'); const d = await r.json(); setFeederAgents(d.agents || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents])
 
   // Poll clip jobs while any is queued/processing so progress streams in live.
   useEffect(() => {
@@ -1231,13 +1606,13 @@ function App({ session }) {
     window.history.replaceState({}, '', window.location.pathname)
   }, [loadSocial])
 
-  // While any campaign or rule is mid-run, keep its live status fresh.
-  const anyRunning = brandCampaigns.some(c => c.running) || engRules.some(r => r.running)
+  // While any campaign, rule, or agent is mid-run, keep its live status fresh.
+  const anyRunning = brandCampaigns.some(c => c.running) || engRules.some(r => r.running) || feederAgents.some(a => a.running)
   useEffect(() => {
     if (!anyRunning) return
-    const t = setInterval(() => { loadBrand(); loadEngagement() }, 2000)
+    const t = setInterval(() => { loadBrand(); loadEngagement(); loadAgents() }, 2000)
     return () => clearInterval(t)
-  }, [anyRunning, loadBrand, loadEngagement])
+  }, [anyRunning, loadBrand, loadEngagement, loadAgents])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
@@ -1248,6 +1623,21 @@ function App({ session }) {
     if (q.get('x') || q.get('billing')) window.history.replaceState({}, '', '/')
   }, [loadX, loadMe])
   useEffect(() => { if (!banner) return; const t = setTimeout(() => setBanner(''), 4500); return () => clearTimeout(t) }, [banner])
+
+  // Pull live X account stats (followers etc.) when the X tab is open.
+  useEffect(() => { if (tab === 'x' && xConns.length) loadXStats() }, [tab, xConns.length, loadXStats])
+  // The chat follows the active tab onto a platform focus — but a HAND-PICKED
+  // selection survives tab switches (auto-sync resumes after "All").
+  const scopeDirty = useRef(false)
+  useEffect(() => {
+    if (scopeDirty.current) return
+    setChatScope(tab === 'x' ? ['x'] : tab === 'linkedin' ? ['linkedin'] : tab === 'social' ? ['instagram', 'tiktok'] : [])
+  }, [tab])
+  function toggleScope(k) {
+    if (k === 'all') { scopeDirty.current = false; return setChatScope([]) }
+    scopeDirty.current = true
+    setChatScope(s => s.includes(k) ? s.filter(x => x !== k) : [...s, k])
+  }
 
   const connected = xConns.length > 0
   const isPro = me?.profile?.is_pro || (me && !me.billingConfigured)
@@ -1260,6 +1650,25 @@ function App({ session }) {
   const posted = posts.filter(p => p.status === 'posted').sort((a, b) => new Date(b.posted_at || b.scheduled_for) - new Date(a.posted_at || a.scheduled_for))
   const collapseQueue = queue.length > 4
   const hasPhotos = photos.length > 0
+
+  // Per-platform campaigns: a brand campaign "belongs" to a tab when every one of
+  // its targets is on that tab's platform(s). The Campaigns tab keeps the full
+  // cross-platform view.
+  const campPlatforms = c => [...new Set((c.targets || []).map(t => t.platform))]
+  const campsFor = plats => brandCampaigns.filter(c => (c.targets?.length) && campPlatforms(c).every(p => plats.includes(p)))
+  // Cross-platform campaigns also post to a tab's platform without "belonging"
+  // to it — the badge and a hint reflect them so the tab never lies about
+  // something actively publishing there.
+  const campsTouching = plats => brandCampaigns.filter(c => (c.targets || []).some(t => plats.includes(t.platform)))
+  const CrossCampHint = ({ plats }) => {
+    const extra = campsTouching(plats).length - campsFor(plats).length
+    return extra > 0 ? <div className="muted tiny" style={{ padding: '6px 2px 0' }}>{extra} cross-platform campaign{extra > 1 ? 's' : ''} also post{extra > 1 ? '' : 's'} here — manage in Campaigns.</div> : null
+  }
+  const primaryX = xConns.find(c => c.is_primary) || xConns[0]
+  const liAccount = socialAccounts.find(a => a.platform === 'linkedin')
+  const xCampTargets = primaryX ? [{ kind: 'x', id: primaryX.id, platform: 'x', label: '@' + primaryX.username }] : []
+  const liCampTargets = liAccount ? [{ kind: 'social', id: liAccount.id, platform: 'linkedin', label: '@' + (liAccount.username || 'LinkedIn') }] : []
+  const igtkCampTargets = socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).map(a => ({ kind: 'social', id: a.id, platform: a.platform, label: '@' + (a.username || a.platform) }))
 
   // Opens a short guide first — X authorizes whichever account is active on x.com,
   // and OAuth 2.0 has no force-login, so we let the user switch accounts before authorizing.
@@ -1293,6 +1702,26 @@ function App({ session }) {
   }
   async function deleteEngagement(id) { if (!confirm('Delete this engagement rule?')) return; await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); loadQueue() }
 
+  // Feeder agents
+  async function spawnAgent(connId, interests) {
+    const r = await authed('/api/feeder-agents', { method: 'POST', body: JSON.stringify({ x_connection_id: connId, interests }) })
+    const d = await r.json()
+    if (d.error) { setBanner(d.error); return false }
+    setBanner(`“${d.agent?.name || 'Agent'}” is ready — flip it on when you are`); loadAgents(); return true
+  }
+  async function patchAgent(id, patch, note) { await authed('/api/feeder-agents', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); if (note) setBanner(note); loadAgents(); loadQueue() }
+  async function deleteAgent(id) { if (!confirm('Delete this agent and its unpublished posts?')) return; await authed('/api/feeder-agents', { method: 'DELETE', body: JSON.stringify({ id }) }); loadAgents(); loadQueue() }
+  async function runAgent(id) {
+    setBanner('Agent thinking…'); loadAgents()
+    const poll = setInterval(loadAgents, 1500)
+    try { await authed('/api/feeder-agents', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }) } finally { clearInterval(poll); loadAgents(); loadQueue() }
+  }
+  async function rerollAgent(id) {
+    setBanner('Reinventing the persona…')
+    const r = await authed('/api/feeder-agents', { method: 'POST', body: JSON.stringify({ action: 'reroll', id }) }); const d = await r.json()
+    setBanner(d.error || `Meet “${d.agent?.name}”`); loadAgents()
+  }
+
   // Social (Instagram/TikTok/LinkedIn via Zernio)
   async function connectSocial(platform) {
     const r = await authed('/api/social', { method: 'POST', body: JSON.stringify({ action: 'connect', platform }) })
@@ -1301,7 +1730,9 @@ function App({ session }) {
     else setBanner(d.error || 'Could not start connection')
   }
   async function syncSocial() { setBanner('Refreshing connected accounts…'); await loadSocial(true) }
-  async function toggleReplies(platform, patch) { await authed('/api/social-engagement', { method: 'PATCH', body: JSON.stringify({ platform, ...patch }) }); loadSocialEng() }
+  // The single auto-reply toggle promises approve-first, so enabling it also
+  // clears any legacy auto_post=true left by the old two-toggle UI.
+  async function toggleReplies(platform, patch) { await authed('/api/social-engagement', { method: 'PATCH', body: JSON.stringify({ platform, ...patch, ...(patch.enabled !== undefined ? { auto_post: false } : {}) }) }); loadSocialEng() }
   async function runReplies(platform) {
     setBanner(`Checking ${platform} comments…`)
     const r = await authed('/api/social-engagement', { method: 'POST', body: JSON.stringify({ action: 'run', platform }) }); const d = await r.json()
@@ -1393,11 +1824,11 @@ function App({ session }) {
   async function analyzeVoice() {
     setAnalyzing(true); setBanner('')
     const r = await authed('/api/persona', { method: 'POST' }); const d = await r.json(); setAnalyzing(false)
-    if (r.status === 402) return setUpgrade(true)
+    if (r.status === 402) return setAccount('pricing')
     if (d.error) setBanner(d.error); else { setBanner('Voice profile updated'); loadMe() }
   }
-  function openNew() { setCompose({ mode: 'new', content: '', when: defaultWhen(defaultHour), imgOn: imgDefault, img: '', connId: xConns[0]?.id || '', personal: false }) }
-  function openSchedule(p) { setCompose({ mode: p.status === 'draft' ? 'draft' : 'edit', id: p.id, content: p.content, when: toLocalInput(new Date(p.scheduled_for)), imgOn: !!p.image_url, img: p.image_url || '', connId: p.x_connection_id || xConns[0]?.id || '', personal: false }) }
+  function openNew() { setCompose({ mode: 'new', platform: 'x', content: '', when: defaultWhen(defaultHour), imgOn: imgDefault, img: '', connId: xConns[0]?.id || '', personal: false }) }
+  function openSchedule(p) { setCompose({ mode: p.status === 'draft' ? 'draft' : 'edit', id: p.id, platform: p.platform || 'x', content: p.content, when: toLocalInput(new Date(p.scheduled_for)), imgOn: !!p.image_url, img: p.image_url || '', connId: p.x_connection_id || xConns[0]?.id || '', personal: false }) }
   async function saveEdit(id, content) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, content }) }); loadQueue() }
   async function composeGenImg() {
     setCompose(c => ({ ...c, imgBusy: true }))
@@ -1405,7 +1836,7 @@ function App({ session }) {
     const d = await r.json(); setCompose(c => c ? { ...c, img: d.url || '', imgBusy: false } : c)
   }
   async function saveCompose(postNow) {
-    const c = (compose.content || '').trim(); if (!c || c.length > MAX) return
+    const c = (compose.content || '').trim(); if (!c || c.length > capFor(compose)) return
     setComposeBusy(true)
     try {
       let id = compose.id; const iso = new Date(compose.when).toISOString(); const imageUrl = compose.imgOn ? compose.img : null
@@ -1428,12 +1859,15 @@ function App({ session }) {
     const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id, action: 'post_now' }) }); const d = await r.json()
     setBanner(d.status === 'posted' ? `Posted as @${d.as}` : `Failed: ${d.error || 'error'}`); loadQueue(); if (d.reconnect) loadX()
   }
-  async function startUpgrade() { const r = await authed('/api/stripe/checkout', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Billing not available yet.') }
+  async function startCheckout(plan, interval, seats) {
+    const r = await authed('/api/stripe/checkout', { method: 'POST', body: JSON.stringify({ plan, interval, seats }) })
+    const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Billing isn’t live on this instance yet.')
+  }
   function usePreset(text) { setInput(text); inputRef.current?.focus() }
   async function send(text) {
     const t = (text ?? input).trim(); if (!t || loading) return
     setInput(''); const next = [...messages, { role: 'user', content: t }]; setMessages(next); setLoading(true)
-    try { const res = await authed('/api/chat', { method: 'POST', body: JSON.stringify({ messages: next }) }); const data = await res.json(); setMessages(p => [...p, { role: 'assistant', content: data.reply, proposal: data.proposal || null }]); loadQueue() }
+    try { const res = await authed('/api/chat', { method: 'POST', body: JSON.stringify({ messages: next, platforms: chatScope }) }); const data = await res.json(); setMessages(p => [...p, { role: 'assistant', content: data.reply, proposal: data.proposal || null }]); loadQueue() }
     catch (e) { setMessages(p => [...p, { role: 'assistant', content: '⚠️ ' + e.message }]) } finally { setLoading(false) }
   }
 
@@ -1449,8 +1883,8 @@ function App({ session }) {
           <span className="muted tiny">{stats.queued || 0} queued · {stats.posted || 0} posted</span>
         </div>
         <div className="row" style={{ gap: 12 }}>
-          {!isPro && <motion.button className="btn-primary btn-sm" onClick={() => setUpgrade(true)} whileTap={{ scale: 0.96 }}>Upgrade</motion.button>}
-          <button className="avatar" onClick={() => setSettings(true)} title="Settings">{initials}</button>
+          {!isPro && <motion.button className="btn-primary btn-sm" onClick={() => setAccount('pricing')} whileTap={{ scale: 0.96 }}>Upgrade</motion.button>}
+          <button className="avatar" onClick={() => setAccount('profile')} title="Account">{initials}</button>
         </div>
       </header>
 
@@ -1463,7 +1897,7 @@ function App({ session }) {
               {['queue', 'x', 'linkedin', 'social', 'campaigns'].map(t => (
                 <button key={t} onClick={() => setTab(t)} className={'seg-btn' + (tab === t ? ' on' : '')}>
                   {tab === t && <motion.span layoutId="seg-pill" className="seg-pill" transition={spring} />}
-                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', social: 'IG/TikTok', campaigns: 'Campaigns' })[t]}{t === 'x' && xDrafts.length > 0 && <span className="dot-badge">{xDrafts.length}</span>}{t === 'linkedin' && liDrafts.length > 0 && <span className="dot-badge">{liDrafts.length}</span>}</span>
+                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', social: 'IG/TikTok', campaigns: 'Campaigns' })[t]}</span>
                 </button>
               ))}
             </div>
@@ -1489,7 +1923,7 @@ function App({ session }) {
                       <span className="src-leg"><span className="dot" style={{ background: '#7c3aed' }} /> Reply</span>
                     </div>
                   )}
-                  {fQueue.length === 0 && schedShows.length === 0 && <Empty icon={<Clock size={26} />}>Nothing queued{qPlatform !== 'all' ? ` for ${qPlatform}` : ''}. Write a post, generate from Chat, or make a slideshow.</Empty>}
+                  {fQueue.length === 0 && schedShows.length === 0 && <Empty icon={<Clock size={26} />}>Nothing queued{qPlatform !== 'all' ? ` for ${qPlatform}` : ''}. Write one or ask the chat.</Empty>}
                   <div>{fQueue.map((p, i) => <QueueCard key={p.id} p={p} i={i} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} defaultCollapsed={collapseQueue} onSaveEdit={saveEdit} onPostNow={postNow} onDelete={delPost} onSchedule={openSchedule} />)}</div>
                   {schedShows.map(s => (
                     <div className="card camp-card" key={s.id}>
@@ -1506,55 +1940,41 @@ function App({ session }) {
                 </>)
               })()}
 
-              {/* X — create + automate X content. Ready-to-post first, then
-                  automation (replies, feeder engagement), then inputs (inspo, voice). */}
-              {/* X — accounts, then "what's ready to go out". Everything else folds. */}
+              {/* X — your personal account. Metrics, then collapsed automation
+                  dropdowns, then what's ready to post. Accounts in the dot. */}
               {tab === 'x' && (<>
                 <BrainBanner theme="x" />
-                <div className="conn-sec" style={{ marginTop: 2 }}>X accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· primary posts, feeders engage</span></div>
-                {xConns.map(c => (
-                  <div className={'conn-card card' + (c.is_primary ? ' primary' : '')} key={c.id}>
-                    <div className="conn-icon x-icon"><XGlyph /></div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="conn-title row" style={{ gap: 6 }}>@{c.username}
-                        {c.is_primary ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span> : <span className="role-badge">Feeder</span>}
-                        {c.needs_reconnect && <span className="role-badge" style={{ background: '#fbe6d4', color: '#b9540a' }}>Reconnect</span>}
-                      </div>
-                      {c.needs_reconnect && <div className="muted tiny" style={{ color: '#b9540a' }}>Authorization expired — posts won&apos;t publish until you reconnect.</div>}
-                    </div>
-                    {c.needs_reconnect && <button className="mini accent" onClick={connectX}>Reconnect</button>}
-                    {!c.is_primary && <button className="mini" onClick={() => makePrimary(c.id)} title="Make this your primary account">Make primary</button>}
-                    <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
-                  </div>
-                ))}
-                {xConns.some(c => c.needs_reconnect) && <div className="notice" style={{ color: '#b9540a', marginBottom: 10 }}>One or more X accounts need reconnecting — scheduled posts on them are failing.</div>}
-                <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginBottom: 14 }} onClick={connectX}><Plus size={14} /> {connected ? 'Connect another X account (feeder)' : 'Connect X'}</button>
+                {connected ? (
+                  <StatTiles tiles={[
+                    { value: xStats?.newFollowers30d == null ? '—' : (xStats.newFollowers30d > 0 ? '+' : '') + fmtNum(xStats.newFollowers30d), label: 'New followers' },
+                    { value: fmtNum(xStats?.impressions30d), label: 'Impressions · 30d' },
+                    { value: fmtNum(queue.filter(p => (p.platform || 'x') === 'x').length), label: 'Queued' },
+                  ]} />
+                ) : (
+                  <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', margin: '8px 0 14px' }} onClick={connectX}><XGlyph /> Connect your X account</button>
+                )}
+                {xConns.some(c => c.needs_reconnect) && <div className="notice" style={{ color: '#b9540a', margin: '4px 0 10px' }}>An X account needs reconnecting — open accounts (bottom-right).</div>}
 
-                <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
-                  onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
+                <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'x')?.enabled} />}>
+                  <AutoReply platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                </Section>
+                <Section title="Engage in your niche" hint="comments on relevant posts as you" badge={<OnBadge on={engRules.some(r => r.active)} />}>
+                  <EngageManager rules={engRules} primaryConn={primaryX} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
+                </Section>
+                <Section title="Campaign" hint="promote a topic on a schedule" badge={<OnBadge on={campsTouching(['x']).some(c => c.active)} />}>
+                  <PlatformCampaign campaigns={campsFor(['x'])} targets={xCampTargets} allowImage canCreate={connected} connectHint="Connect your X account first." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
+                  <CrossCampHint plats={['x']} />
+                </Section>
+                <Section title="Feeder agents" hint="autonomous personas on your other accounts" badge={<OnBadge on={feederAgents.some(a => a.active)} />}>
+                  <FeederAgents agents={feederAgents} xConns={xConns} posts={posts} onSpawn={spawnAgent} onPatch={patchAgent} onDelete={deleteAgent} onRun={runAgent} onReroll={rerollAgent} />
+                </Section>
+                <Section title="Inspiration" hint="accounts the AI studies">
+                  <InspirationAccounts platform="x" accounts={inspoX} onAdd={addInspo} onRemove={removeInspo} />
+                </Section>
 
-                <div style={{ marginTop: 16 }}>
-                  <Section title="Auto-reply to comments" hint="answers replies to your posts, in your voice" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'x')?.enabled} />}>
-                    <ReplyToggles platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
-                  </Section>
-                  <Section title="Feeder engagement" hint="feeders reply to relevant viral posts" badge={<OnBadge on={engRules.some(r => r.active)} />}>
-                    <EngagementManager rules={engRules} xConns={xConns} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
-                  </Section>
-                  <Section title="Voice & inspiration" hint="what the AI learns from">
-                    {persona
-                      ? <div className="card persona" style={{ marginTop: 8 }}>
-                          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-                            <span style={{ fontWeight: 700, fontSize: 14 }}>Your voice <span className="muted tiny">· {persona.tone}</span></span>
-                            <button className="mini" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Re-analyze'}</button>
-                          </div>
-                          <div className="persona-summary">{persona.summary}</div>
-                        </div>
-                      : <div className="row" style={{ gap: 10, margin: '8px 0 10px' }}>
-                          <span className="muted tiny" style={{ flex: 1 }}>Cadence reads your connected accounts automatically — hit analyze and posts will sound like you.</span>
-                          <button className="btn-primary btn-sm" disabled={analyzing} onClick={analyzeVoice}>{analyzing ? '…' : 'Analyze my voice'}</button>
-                        </div>}
-                    <InspirationAccounts platform="x" accounts={inspoX} onAdd={addInspo} onRemove={removeInspo} />
-                  </Section>
+                <div style={{ marginTop: 14 }}>
+                  <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
+                    onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
                 </div>
               </>)}
 
@@ -1565,7 +1985,7 @@ function App({ session }) {
                 <div className="conn-sec row" style={{ gap: 7, marginTop: 10 }}>Accounts
                   <button className="mini" style={{ marginLeft: 'auto' }} onClick={syncSocial}><RefreshCw size={11} /> Refresh</button>
                 </div>
-                {!socialConfigured && <div className="notice" style={{ marginBottom: 10 }}>Connect publishing (Zernio) to post. You can still generate and preview below.</div>}
+                {!socialConfigured && <div className="notice" style={{ marginBottom: 10 }}>Connect Zernio to post — previews work now.</div>}
                 <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
                   {socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).map(a => (
                     <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</span>
@@ -1592,37 +2012,48 @@ function App({ session }) {
                 )}
 
                 <div style={{ marginTop: 16 }}>
-                  <Section title="Auto-reply to comments" hint="on the posts Cadence publishes" badge={<OnBadge on={engSettings.some(s => ['instagram', 'tiktok'].includes(s.platform) && s.enabled)} />}>
-                    <ReplyToggles platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                  <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={engSettings.some(s => ['instagram', 'tiktok'].includes(s.platform) && s.enabled)} />}>
+                    <AutoReply platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                  </Section>
+                  <Section title="Engage in your niche" hint="comments on relevant posts as you">
+                    <EngageStub platform="Instagram/TikTok" />
+                  </Section>
+                  <Section title="Campaign" hint="auto-post carousels on a schedule" badge={<OnBadge on={campsTouching(['instagram', 'tiktok']).some(c => c.active)} />}>
+                    <PlatformCampaign campaigns={campsFor(['instagram', 'tiktok'])} targets={igtkCampTargets} supportsCarousel canCreate={igtkCampTargets.length > 0} connectHint="Connect Instagram or TikTok above first." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
+                    <CrossCampHint plats={['instagram', 'tiktok']} />
                   </Section>
                 </div>
               </>)}
 
-              {/* LinkedIn — posts ready to approve up top; the rest folds. */}
+              {/* LinkedIn — same shape as X: stats, ready-to-post, replies, and a
+                  campaign for your personal account. Connect + voice-source +
+                  inspiration live in the floating accounts dot, bottom-right. */}
               {tab === 'linkedin' && (<>
                 <BrainBanner theme="linkedin" />
-                <div className="row" style={{ gap: 6, flexWrap: 'wrap', margin: '10px 0 14px' }}>
-                  {socialAccounts.filter(a => a.platform === 'linkedin').map(a => (
-                    <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot('linkedin') }} />{a.username || 'LinkedIn'}</span>
-                  ))}
-                  <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('linkedin')}><Plus size={11} /> Connect LinkedIn to publish</button>
-                </div>
+                {liAccount ? (
+                  <StatTiles tiles={[
+                    { value: '—', label: 'New followers · soon' },
+                    { value: '—', label: 'Impressions · soon' },
+                    { value: fmtNum(queue.filter(p => p.platform === 'linkedin').length), label: 'Queued' },
+                  ]} />
+                ) : (
+                  <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', margin: '8px 0 14px' }} disabled={!socialConfigured} onClick={() => connectSocial('linkedin')}><LIcon size={15} /> Connect LinkedIn</button>
+                )}
 
-                <Suggestions platform="linkedin" drafts={liDrafts} busy={suggesting === 'linkedin'} canPost={socialAccounts.some(a => a.platform === 'linkedin')}
-                  onGenerate={() => suggestPosts('linkedin')} onPostNow={postNow} onSchedule={scheduleLinkedInDraft} onDiscard={delPost} />
+                <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'linkedin')?.enabled} />}>
+                  <AutoReply platforms={['linkedin']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                </Section>
+                <Section title="Engage in your niche" hint="comments on relevant posts as you">
+                  <EngageStub platform="LinkedIn" />
+                </Section>
+                <Section title="Campaign" hint="promote a topic on a schedule" badge={<OnBadge on={campsTouching(['linkedin']).some(c => c.active)} />}>
+                  <PlatformCampaign campaigns={campsFor(['linkedin'])} targets={liCampTargets} canCreate={!!liAccount} connectHint="Connect LinkedIn first (accounts, bottom-right)." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
+                  <CrossCampHint plats={['linkedin']} />
+                </Section>
 
-                <div style={{ marginTop: 16 }}>
-                  <Section title="Auto-reply to comments" hint="on the posts Cadence publishes" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'linkedin')?.enabled} />}>
-                    <ReplyToggles platforms={['linkedin']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
-                  </Section>
-                  <Section title="Inspiration & voice" hint="who the AI studies, and how you write">
-                    <div className="conn-sec row" style={{ gap: 7, marginTop: 8 }}><Star size={12} /> Inspiration accounts <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3 · read-only, no login needed</span></div>
-                    {[0, 1, 2].map(i => (
-                      <LinkedInSlot key={i} account={liMentors[i]} onAdd={(url) => addLinkedIn(url, true)} onRemove={removeLinkedIn} />
-                    ))}
-                    <div className="conn-sec" style={{ marginTop: 12 }}>Your voice source <span className="muted tiny" style={{ fontWeight: 400 }}>· your own LinkedIn</span></div>
-                    <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
-                  </Section>
+                <div style={{ marginTop: 14 }}>
+                  <Suggestions platform="linkedin" drafts={liDrafts} busy={suggesting === 'linkedin'} canPost={!!liAccount}
+                    onGenerate={() => suggestPosts('linkedin')} onPostNow={postNow} onSchedule={scheduleLinkedInDraft} onDiscard={delPost} />
                 </div>
               </>)}
 
@@ -1630,12 +2061,51 @@ function App({ session }) {
                   the right format per platform, in one voice. */}
               {tab === 'campaigns' && (<>
                 <BrainBanner theme="campaigns" />
-                <div className="muted tiny" style={{ margin: '0 2px 12px', lineHeight: 1.6 }}>A campaign promotes one topic across any mix of your accounts — it writes text posts for X &amp; LinkedIn and carousels for Instagram &amp; TikTok, in your voice, on your schedule.</div>
+                <div className="muted tiny" style={{ margin: '0 2px 12px' }}>All your campaigns. One topic → the right format on each of your accounts.</div>
                 <CrossCampaignManager campaigns={brandCampaigns} xConns={xConns} socialAccounts={socialAccounts} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
               </>)}
 
             </motion.div>
           </div>
+
+          {/* Floating accounts — X & LinkedIn keep account management one tap away
+              without cluttering the create-first flow. */}
+          {tab === 'x' && (
+            <FloatingAccounts glyph={<XGlyph />} count={xConns.length} label="X accounts">
+              {xConns.map(c => (
+                <div className={'conn-card card' + (c.is_primary ? ' primary' : '')} key={c.id} style={{ marginBottom: 8 }}>
+                  <div className="conn-icon x-icon"><XGlyph /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="conn-title row" style={{ gap: 6 }}>@{c.username}
+                      {c.is_primary ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Primary</span> : <span className="role-badge">Feeder</span>}
+                      {c.needs_reconnect && <span className="role-badge" style={{ background: '#fbe6d4', color: '#b9540a' }}>Reconnect</span>}
+                    </div>
+                  </div>
+                  {c.needs_reconnect && <button className="mini accent" onClick={connectX}>Reconnect</button>}
+                  {!c.is_primary && <button className="mini" onClick={() => makePrimary(c.id)} title="Make this your primary account">Make primary</button>}
+                  <button className="mini danger" onClick={() => disconnectX(c.id)}>Disconnect</button>
+                </div>
+              ))}
+              <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center' }} onClick={connectX}><Plus size={14} /> {connected ? 'Add another account (feeder)' : 'Connect X'}</button>
+            </FloatingAccounts>
+          )}
+          {tab === 'linkedin' && (
+            <FloatingAccounts glyph={<LIcon size={15} />} count={socialAccounts.filter(a => a.platform === 'linkedin').length} label="LinkedIn">
+              <div className="conn-sec" style={{ marginTop: 0 }}>Publish to LinkedIn</div>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
+                {socialAccounts.filter(a => a.platform === 'linkedin').map(a => (
+                  <span className="acct-chip" key={a.id}><span className="status-dot" style={{ background: platformDot('linkedin') }} />{a.username || 'LinkedIn'}</span>
+                ))}
+                <button className="chip" disabled={!socialConfigured} onClick={() => connectSocial('linkedin')}><Plus size={11} /> {liAccount ? 'Reconnect' : 'Connect'}</button>
+              </div>
+              <div className="conn-sec">Your voice source <span className="muted tiny" style={{ fontWeight: 400 }}>· your own LinkedIn</span></div>
+              <LinkedInSlot account={liSelf[0]} onAdd={(url) => addLinkedIn(url, false)} onRemove={removeLinkedIn} self />
+              <div className="conn-sec row" style={{ gap: 7 }}><Star size={12} /> Inspiration <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 3, read-only</span></div>
+              {[0, 1, 2].map(i => (
+                <LinkedInSlot key={i} account={liMentors[i]} onAdd={(url) => addLinkedIn(url, true)} onRemove={removeLinkedIn} />
+              ))}
+            </FloatingAccounts>
+          )}
         </section>
 
         {/* chat */}
@@ -1652,7 +2122,7 @@ function App({ session }) {
                 <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
                   <div className="msg-col" style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
                     <div className={'bubble ' + m.role}>{m.content}</div>
-                    {m.proposal && <DraftProposal proposal={m.proposal} authed={authed} connected={connected} onResolved={loadQueue} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />}
+                    {m.proposal && <DraftProposal proposal={m.proposal} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={loadQueue} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />}
                   </div>
                 </motion.div>
               ))}
@@ -1661,6 +2131,18 @@ function App({ session }) {
             <div ref={bottomRef} />
           </div>
           <div className="composer-wrap">
+            <div className="chat-scope">
+              <span className="muted tiny" style={{ flex: 'none' }}>Focus:</span>
+              {[['all', 'All'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']].map(([k, l]) => {
+                const on = k === 'all' ? chatScope.length === 0 : chatScope.includes(k)
+                return (
+                  <button key={k} className={'scope-chip' + (on ? ' on' : '')} onClick={() => toggleScope(k)}>
+                    {k !== 'all' && <span className="status-dot" style={{ background: platformDot(k), width: 6, height: 6 }} />}{l}
+                    {on && k !== 'all' && <LCheck size={11} strokeWidth={3} style={{ marginLeft: 1 }} />}
+                  </button>
+                )
+              })}
+            </div>
             <div className="presets">
               {PRESETS.map(p => <button key={p} className="preset" onClick={() => usePreset(p)}>{p}</button>)}
             </div>
@@ -1686,8 +2168,10 @@ function App({ session }) {
                 {compose.loading && <div className="draft-spin"><span className="dots"><i/><i/><i/></span></div>}
               </div>
               <div className="row" style={{ justifyContent: 'space-between', marginTop: 10 }}>
-                <Toggle on={compose.imgOn} onChange={v => { setCompose(c => ({ ...c, imgOn: v })); if (v && !compose.img) composeGenImg() }} label="Include image" />
-                <span className={'count' + ((compose.content || '').length > MAX ? ' over' : '')}>{(compose.content || '').length}/{MAX}</span>
+                {compose.platform !== 'linkedin'
+                  ? <Toggle on={compose.imgOn} onChange={v => { setCompose(c => ({ ...c, imgOn: v })); if (v && !compose.img) composeGenImg() }} label="Include image" />
+                  : <span className="muted tiny">LinkedIn post</span>}
+                <span className={'count' + ((compose.content || '').length > capFor(compose) ? ' over' : '')}>{(compose.content || '').length}/{capFor(compose)}</span>
               </div>
               <AnimatePresence>
                 {compose.imgOn && (
@@ -1700,7 +2184,7 @@ function App({ session }) {
                   </motion.div>
                 )}
               </AnimatePresence>
-              {xConns.length > 1 && (
+              {compose.platform !== 'linkedin' && xConns.length > 1 && (
                 <select className="field dp-acct" style={{ marginTop: 10 }} value={compose.connId || ''} onChange={e => setCompose(c => ({ ...c, connId: e.target.value }))}>
                   {xConns.map(c => <option key={c.id} value={c.id}>Post as @{c.username}</option>)}
                 </select>
@@ -1709,7 +2193,7 @@ function App({ session }) {
                 <input type="datetime-local" className="field dt" value={compose.when} onChange={e => setCompose(c => ({ ...c, when: e.target.value }))} />
                 <div className="row" style={{ gap: 10 }}>
                   <button className="btn-ghost" disabled={composeBusy} onClick={() => saveCompose(false)}>Schedule</button>
-                  <motion.button className="btn-primary" whileTap={{ scale: 0.97 }} disabled={composeBusy || !connected || (compose.content || '').length > MAX || !(compose.content || '').trim()} onClick={() => saveCompose(true)} title={!connected ? 'Connect X first' : ''}>{composeBusy ? <span className="dots"><i/><i/><i/></span> : 'Post now'}</motion.button>
+                  <motion.button className="btn-primary" whileTap={{ scale: 0.97 }} disabled={composeBusy || (compose.platform === 'linkedin' ? !socialAccounts.some(a => a.platform === 'linkedin') : !connected) || (compose.content || '').length > capFor(compose) || !(compose.content || '').trim()} onClick={() => saveCompose(true)} title={compose.platform === 'linkedin' ? '' : (!connected ? 'Connect X first' : '')}>{composeBusy ? <span className="dots"><i/><i/><i/></span> : 'Post now'}</motion.button>
                 </div>
               </div>
             </motion.div>
@@ -1717,29 +2201,20 @@ function App({ session }) {
         )}
       </AnimatePresence>
 
-      {/* upgrade modal */}
+      {/* account page (full-screen): profile · accounts · billing · pricing */}
       <AnimatePresence>
-        {upgrade && (
-          <motion.div className="overlay" onClick={() => setUpgrade(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <motion.div className="card modal upgrade" onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.96 }} transition={spring}>
-              <div className="row" style={{ justifyContent: 'space-between' }}><span className="wordmark" style={{ fontSize: 21 }}>Cadence Pro</span><button className="x-close" onClick={() => setUpgrade(false)}><LX size={18} /></button></div>
-              <div className="price">${me?.proPrice || 19}<span className="muted" style={{ fontSize: 15, fontWeight: 500 }}>/mo</span></div>
-              <ul className="perks">
-                <li><Brain size={15} /> A voice engine that learns your style and writes posts for you</li>
-                <li><Sparkles size={15} /> Unlimited posts generated in your voice</li>
-                <li><LImage size={15} /> AI images on your posts</li>
-                <li><Clock size={15} /> Unlimited scheduling & auto-posting</li>
-              </ul>
-              {me && !me.billingConfigured
-                ? <div className="notice" style={{ marginTop: 4 }}>Billing isn&apos;t set up on this instance yet, so all Pro features are unlocked.</div>
-                : <motion.button className="btn-primary" style={{ width: '100%', marginTop: 8, padding: 13 }} onClick={startUpgrade} whileTap={{ scale: 0.98 }}>Upgrade to Pro</motion.button>}
-            </motion.div>
-          </motion.div>
+        {account && me && (
+          <AccountPage
+            me={me} session={session} authed={authed} banner={banner}
+            accountTab={account} setAccountTab={setAccount}
+            photos={photos} onUploadPhoto={uploadPhoto} onDeletePhoto={deletePhoto}
+            persona={persona} analyzing={analyzing} onAnalyze={analyzeVoice}
+            xConns={xConns} connected={connected} onConnectX={connectX} onDisconnectX={disconnectX} onMakePrimary={makePrimary}
+            socialConfigured={socialConfigured} socialAccounts={socialAccounts} onConnectSocial={connectSocial}
+            liSelf={liSelf} liMentors={liMentors} onAddLinkedIn={addLinkedIn} onRemoveLinkedIn={removeLinkedIn}
+            onPortal={openPortal} onCheckout={startCheckout} onReload={loadMe} onClose={() => setAccount(null)}
+          />
         )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {settings && <SettingsModal me={me} session={session} authed={authed} conns={xConns} photos={photos} onUploadPhoto={uploadPhoto} onDeletePhoto={deletePhoto} onConnect={connectX} onClose={() => setSettings(false)} onSaved={() => { setSettings(false); loadMe() }} onDisconnect={disconnectX} onUpgrade={() => { setSettings(false); setUpgrade(true) }} onPortal={openPortal} />}
       </AnimatePresence>
 
       <AnimatePresence>
@@ -1895,7 +2370,6 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .seg { display: inline-flex; gap: 2px; padding: 3px; background: #f0f1f5; border-radius: 11px; }
 .seg-btn { position: relative; background: none; border: none; color: #757b88; font-size: 12.5px; font-weight: 600; font-family: inherit; padding: 6px 13px; border-radius: 8px; cursor: pointer; transition: color .15s; white-space: nowrap; }
 .seg-btn.on { color: #16181d; } .seg-pill { position: absolute; inset: 0; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(20,24,30,0.1); z-index: 0; }
-.dot-badge { margin-left: 6px; font-size: 10px; background: #8b5cf6; color: #fff; border-radius: 10px; padding: 1px 6px; font-weight: 700; }
 .scroll .card { margin-bottom: 10px; }
 .card-body { font-size: 13.5px; line-height: 1.55; color: #2a2f3a; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .qcard { overflow: hidden; }
@@ -1939,9 +2413,8 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .send { width: 42px; height: 42px; padding: 0; border-radius: 12px; flex: none; }
 .dots { display: inline-flex; gap: 4px; align-items: center; } .dots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; animation: blink 1s infinite; } .dots i:nth-child(2) { animation-delay: .2s; } .dots i:nth-child(3) { animation-delay: .4s; }
 @keyframes blink { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
-.overlay { position: fixed; inset: 0; z-index: 50; background: rgba(28,32,48,0.22); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.overlay { position: fixed; inset: 0; z-index: 70; background: rgba(28,32,48,0.22); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 24px; }
 .modal { width: 480px; max-width: 100%; border-radius: 18px; padding: 22px; background: #fff; max-height: 88vh; overflow-y: auto; box-shadow: 0 30px 70px -24px rgba(40,46,80,0.4); }
-.settings { width: 460px; }
 .x-close { background: none; border: none; cursor: pointer; color: #9aa1ad; padding: 4px; display: flex; border-radius: 8px; } .x-close:hover { color: #16181d; background: #f2f3f6; }
 .set-section { padding: 14px 0; border-top: 1px solid #f0f0f4; } .set-section:first-of-type { border-top: none; padding-top: 0; }
 .set-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #9aa1ad; margin-bottom: 10px; }
@@ -1950,9 +2423,6 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .draft-spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #6f8cff; pointer-events: none; }
 .dt { width: auto; padding: 8px 12px; font-size: 13px; color-scheme: light; flex: none; }
 .count { font-size: 12px; color: #9aa1ad; white-space: nowrap; } .count.over { color: #ef4444; font-weight: 600; }
-.upgrade .price { font-size: 38px; font-weight: 800; font-family: 'Sora'; margin: 14px 0 4px; }
-.perks { list-style: none; padding: 0; margin: 16px 0; } .perks li { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: #2a2f3a; padding: 8px 0; border-bottom: 1px solid #f0f0f4; }
-.perks li svg { color: #4f63d8; flex: none; }
 .dp { padding: 14px; width: 320px; max-width: 100%; }
 .dp-head { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 600; color: #8b5cf6; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 9px; }
 .dp-text { font-size: 13.5px; line-height: 1.5; resize: none; }
@@ -2021,7 +2491,6 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .xc-go { flex: 1; padding: 9px 15px; }
 /* engagement */
 .camp-state.auto { color: #6d3bd0; background: #f3eefe; }
-.eng-auto { padding: 11px 13px; margin-top: 10px; background: #fbfaff; border-color: #e7ddfb; }
 .reply-ctx { display: flex; align-items: flex-start; gap: 7px; font-size: 11.5px; color: #6d3bd0; background: #f3eefe; border: 1px solid #e2d4fb; border-radius: 9px; padding: 7px 10px; margin-bottom: 9px; text-decoration: none; line-height: 1.45; }
 .reply-ctx:hover { background: #ece2fd; }
 .reply-ctx svg { flex: none; margin-top: 1px; }
@@ -2033,7 +2502,6 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .act-row { display: flex; gap: 9px; align-items: flex-start; }
 .act-text { font-size: 12.5px; line-height: 1.5; color: #2a2f3a; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 /* comment-style checkboxes */
-.style-grid { display: flex; flex-direction: column; gap: 6px; }
 .style-opt { display: flex; align-items: flex-start; gap: 9px; text-align: left; background: #fff; border: 1px solid #e2e3e9; border-radius: 10px; padding: 9px 11px; cursor: pointer; font-family: inherit; transition: .15s; }
 .style-opt:hover { border-color: #c6cefb; background: #f8f9ff; }
 .style-opt.on { border-color: #8aa0ff; background: #f3f5ff; }
@@ -2075,4 +2543,83 @@ body { background: #fbfbfd; color: #16181d; font-family: 'Inter', system-ui, san
 .qchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 20px; background: #fff; border: 1px solid #e3e4ea; color: #4a4f5a; cursor: pointer; font-family: inherit; }
 .qchip.on { background: #111113; border-color: #111113; color: #fff; }
 .camp-card.on { border-color: #cbb46a; background: #fffdf6; }
+/* left pane anchors the floating accounts dot */
+.left { position: relative; }
+/* stat tiles */
+.stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 8px; margin: 4px 0 16px; }
+.stat-tile { background: #fff; border: 1px solid #ececf1; border-radius: 13px; padding: 12px 10px; text-align: center; box-shadow: 0 1px 2px rgba(20,24,30,0.03); }
+.stat-num { font-family: 'Sora', sans-serif; font-weight: 800; font-size: 19px; letter-spacing: -0.02em; color: #14161b; }
+.stat-lbl { font-size: 11px; color: #8a909c; margin-top: 3px; font-weight: 500; }
+/* clean auto-reply blocks */
+.ar-block { padding: 13px 14px; margin-bottom: 9px; display: block; }
+.ar-block.on { border-color: #cdd6fb; }
+.ar-draft { background: #f9fafc; border: 1px solid #eceef3; border-radius: 11px; padding: 10px 12px; margin-top: 9px; }
+.ar-comment { font-size: 11.5px; color: #757b88; line-height: 1.45; overflow-wrap: anywhere; }
+.ar-author { font-weight: 700; color: #4a4f5a; }
+.ar-reply { font-size: 13px; color: #20242c; line-height: 1.5; margin-top: 5px; overflow-wrap: anywhere; }
+/* floating accounts dot */
+.facct { position: absolute; right: 18px; bottom: 18px; z-index: 20; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.facct-dot { position: relative; width: 46px; height: 46px; border-radius: 50%; border: 1px solid #e6e7ec; background: #fff; color: #16181d; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 18px -6px rgba(40,46,80,0.35); transition: transform .12s, box-shadow .15s; }
+.facct-dot:hover { transform: translateY(-1px); box-shadow: 0 10px 22px -8px rgba(40,46,80,0.4); }
+.facct-dot.on { background: #16181d; color: #fff; border-color: #16181d; }
+.facct-count { position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 10px; background: #4f63d8; color: #fff; font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; border: 2px solid #fff; }
+.facct-panel { width: 320px; max-width: calc(100vw - 40px); max-height: 60vh; overflow-y: auto; padding: 15px 16px; border-radius: 16px; box-shadow: 0 20px 50px -20px rgba(40,46,80,0.45); }
+.facct-body .conn-sec:first-child { margin-top: 4px; }
+/* clearance so the floating accounts dot never covers the last card's buttons */
+.left .scroll { padding-bottom: 96px; }
+/* feeder agents */
+.agent-note { font-size: 11.5px; font-style: italic; color: #6b7280; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* chat platform-scope selector */
+.chat-scope { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-bottom: 9px; }
+.scope-chip { display: inline-flex; align-items: center; gap: 5px; background: #f4f5f8; border: 1px solid #e8e9ee; border-radius: 16px; color: #5b6573; font-size: 11.5px; font-weight: 600; padding: 4px 10px; cursor: pointer; font-family: inherit; transition: .15s; white-space: nowrap; }
+.scope-chip:hover { border-color: #c6cefb; color: #3b4fc0; }
+.scope-chip.on { background: #16181d; border-color: #16181d; color: #fff; }
+/* ── account page ── */
+.acctpage { position: fixed; inset: 0; z-index: 60; background: #fbfbfd; display: flex; flex-direction: column; overflow: hidden; }
+.acct-top { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid #ededf2; background: rgba(255,255,255,0.9); backdrop-filter: blur(10px); }
+.acct-wrap { flex: 1; min-height: 0; display: flex; max-width: 1080px; width: 100%; margin: 0 auto; }
+.acct-nav { width: 232px; flex: none; border-right: 1px solid #ededf2; padding: 18px 14px; display: flex; flex-direction: column; gap: 4px; }
+.acct-id { display: flex; align-items: center; gap: 11px; padding: 6px 8px 16px; min-width: 0; }
+.acct-avatar { width: 40px; height: 40px; border-radius: 50%; background: #4f63d8; color: #fff; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; flex: none; }
+.acct-navbtn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: none; background: none; border-radius: 10px; color: #5b6573; font-size: 13.5px; font-weight: 600; font-family: inherit; cursor: pointer; transition: .15s; text-align: left; }
+.acct-navbtn:hover { background: #f2f3f7; color: #16181d; }
+.acct-navbtn.on { background: #eef1fe; color: #3b4fc0; }
+.acct-content { flex: 1; min-width: 0; overflow-y: auto; padding: 26px 30px 60px; }
+.acct-sec-wrap { max-width: 640px; }
+.acct-h { font-size: 13px; font-weight: 700; color: #16181d; margin: 24px 0 10px; }
+.acct-h:first-child { margin-top: 0; }
+.acct-card { padding: 16px 17px; }
+.acct-card .ob-label:first-child { margin-top: 0; }
+.acct-card .field + .ob-label { margin-top: 14px; }
+.acct-save { margin-top: 22px; display: flex; justify-content: flex-end; }
+/* pricing */
+.plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
+.plan-card { display: flex; flex-direction: column; padding: 20px 19px; border-radius: 18px; }
+.plan-card.team { border-color: #d9def8; background: linear-gradient(180deg, #fbfcff, #fff); }
+.plan-card.current { border-color: #cbb46a; }
+.plan-ic { width: 28px; height: 28px; border-radius: 8px; background: #eef1fe; color: #4f63d8; display: flex; align-items: center; justify-content: center; flex: none; }
+.plan-name { font-family: 'Sora', sans-serif; font-weight: 800; font-size: 17px; letter-spacing: -0.02em; }
+.plan-badge { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #9a7a10; background: #fbf3d6; border: 1px solid #efe0a6; padding: 2px 8px; border-radius: 20px; }
+.plan-price { font-family: 'Sora', sans-serif; font-weight: 800; font-size: 34px; letter-spacing: -0.02em; margin: 12px 0 2px; }
+.plan-feats { list-style: none; padding: 0; margin: 14px 0 18px; display: flex; flex-direction: column; gap: 9px; }
+.plan-feats li { display: flex; align-items: flex-start; gap: 9px; font-size: 12.5px; line-height: 1.45; color: #2a2f3a; }
+.plan-feats li svg { color: #0e9f6e; flex: none; margin-top: 2px; }
+.seat-row { display: flex; align-items: center; gap: 10px; margin: 12px 0 2px; padding: 9px 11px; background: #f6f7fa; border-radius: 11px; }
+.stepper { display: inline-flex; align-items: center; gap: 0; border: 1px solid #e2e3e9; border-radius: 9px; overflow: hidden; background: #fff; }
+.stepper button { width: 28px; height: 28px; border: none; background: #fff; color: #4a4f5a; font-size: 16px; cursor: pointer; font-family: inherit; }
+.stepper button:hover:not(:disabled) { background: #f2f3f7; } .stepper button:disabled { opacity: .35; cursor: default; }
+.stepper span { min-width: 30px; text-align: center; font-weight: 700; font-size: 13.5px; }
+.plan-total { font-weight: 700; font-size: 13px; color: #16181d; white-space: nowrap; }
+.acct-tabstrip { display: none; gap: 6px; padding: 10px 16px 0; overflow-x: auto; }
+@media (max-width: 720px) {
+  .acct-nav { display: none; }
+  .acct-tabstrip { display: flex; }
+  .plan-grid { grid-template-columns: 1fr; }
+}
+/* phones: stack the two panes; the left pane scrolls, chat takes the rest */
+@media (max-width: 860px) {
+  .cols { flex-direction: column; }
+  .left { width: 100%; max-height: 56vh; border-right: none; border-bottom: 1px solid #ededf2; }
+  .seg { flex-wrap: wrap; }
+}
 `

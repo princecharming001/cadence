@@ -20,6 +20,12 @@ export async function GET(req) {
     stats,
     billingConfigured: billingConfigured(),
     proPrice: process.env.NEXT_PUBLIC_PRO_PRICE || '19',
+    // Legacy single-tier subscribers stored plan 'pro' — surface as individual
+    // so the pricing UI marks their card current and routes changes to the portal.
+    plan: (p => (p === 'pro' ? 'individual' : p))(profile?.plan || (profile?.is_pro ? 'individual' : 'free')),
+    seats: profile?.seats || 1,
+    planInterval: profile?.plan_interval || 'monthly',
+    periodEnd: profile?.current_period_end || null,
     xReadEnabled: process.env.X_READ_ENABLED === 'true',
   })
 }

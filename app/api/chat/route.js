@@ -316,7 +316,15 @@ export async function POST(req) {
     const user = await getUser(req)
     if (!user) return Response.json({ reply: 'Please sign in first.' }, { status: 401 })
 
-    const { messages } = await req.json()
+    const { messages, platform: rawPlatform, platforms: rawPlatforms } = await req.json()
+    // Optional platform scope from the chat UI. The agent is locked to the chosen
+    // platform(s) (e.g. on the LinkedIn tab → only LinkedIn; or X + Instagram).
+    const SCOPES = ['x', 'linkedin', 'instagram', 'tiktok']
+    const scopeList = [...new Set([
+      ...(Array.isArray(rawPlatforms) ? rawPlatforms : []),
+      ...(rawPlatform ? [rawPlatform] : []),
+    ].filter(p => SCOPES.includes(p)))]
+    const scope = scopeList.length ? scopeList : null
     // The conversation comes from the client — validate the shape so nobody can
     // stuff fake tool results or unbounded payloads into the agent's context.
     if (!Array.isArray(messages) || messages.length > 60) {
@@ -340,10 +348,22 @@ export async function POST(req) {
       ? `The user has ${conns.length} connected X account(s): ${conns.map(c => '@' + c.username).join(', ')}.`
       : 'The user has not connected an X account yet.'
 
-    const system = `You are Cadence — an agent that runs a user's entire social presence under ONE consistent voice across X, LinkedIn, Instagram, and TikTok, including AI carousels and feeder-account campaigns that promote their brand. You can actually DO things with tools; be decisive and take the action rather than describing it.
+    const SCOPE_LABEL = { x: 'X (Twitter)', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok' }
+    const scopeNames = scope ? scope.map(s => SCOPE_LABEL[s]).join(' and ') : ''
+    const single = scope && scope.length === 1
+    const liScoped = single && scope[0] === 'linkedin'
+    const scopeBlock = scope ? `
+PLATFORM FOCUS — this conversation is scoped to ${scopeNames} ONLY. The user is working on their ${scopeNames} account${single ? '' : 's'}.
+- Everything you draft, suggest, schedule, or act on is for ${scopeNames} and the user's own personal/primary account${single ? '' : 's'} there.
+- Do NOT bring up, draft for, or take actions on any platform outside that set.${(scope.includes('x') || scope.includes('linkedin')) ? ' Use propose_post for X/LinkedIn posts.' : ''}${(scope.includes('instagram') || scope.includes('tiktok')) ? ' Use generate_slideshow for Instagram/TikTok carousels.' : ''}
+${liScoped ? '- propose_post drafts here are LINKEDIN posts: long-form is welcome (up to 1300 chars), no 280 limit.' : ''}
+- If the user clearly asks for something on a platform outside this focus, tell them to add that platform in the chat's Focus selector first.
+` : ''
 
-Current date and time (America/Los_Angeles): ${now}
-${accountsLine}
+    // Split for prompt caching: the big stable block is cacheable ACROSS
+    // requests; everything volatile (clock, accounts, scope, feedback) goes in
+    // a second uncached block so it can't bust the cache.
+    const staticSystem = `You are Cadence — an agent that runs a user's entire social presence under ONE consistent voice across X, LinkedIn, Instagram, and TikTok, including AI carousels and feeder-account campaigns that promote their brand. You can actually DO things with tools; be decisive and take the action rather than describing it.
 
 ${voiceBlock(personaRow)}
 
@@ -356,26 +376,33 @@ After any action, confirm what happened in one or two sentences. Never invent re
 ${CHAT_STYLE}
 
 Whenever you write or rewrite a post, follow this rubric:
-${X_RUBRIC}${feedbackBlock(fb)}
+${X_RUBRIC}
 
 CRITICAL RULE — you never queue or publish a NEW post yourself. To create ANY new post, you call propose_post, which shows the user an editable draft card (text editor + time picker + live countdown + 👍/👎 + Post-now/Schedule/Discard). The user — not you — decides whether it gets scheduled or posted. This applies even when the user says "post this now" or "schedule it": still call propose_post (you can mention you've set it up to post now / for a time, and they just confirm on the card).
 
 More rules:
-- For "write/draft/make a tweet", "repurpose my LinkedIn post", "post about X", etc. → call propose_post with the full tweet text. Then reply in one short line, e.g. "Here's a draft — edit it and approve below."
+- For "write/draft/make a tweet", "repurpose my LinkedIn post", "post about X", etc. → call propose_post with the full post text. Then reply in one short line, e.g. "Here's a draft — edit it and approve below."
 - Set want_image:true + a vivid image_prompt ONLY when the user wants a visual/picture/image on the post.
-- To repurpose LinkedIn content: call list_linkedin_posts, pick the relevant one, rewrite it as a tweet (<=280 chars) unless asked to keep verbatim, then propose_post.
+- To repurpose LinkedIn content: call list_linkedin_posts, pick the relevant one, rewrite it for the target platform, then propose_post.
 - The queue-management tools (reschedule, update, delete, set_status, pause/resume, set_cadence) act on posts the user already approved — those you may call directly when asked.
-- "tomorrow at noon" resolves relative to the current LA time above. Show times in Pacific (PT).
+- Relative times like "tomorrow at noon" resolve against the current LA time given below. Show times in Pacific (PT).
 - Be concise. If a tool errors, say plainly what went wrong.`
+
+    const dynamicSystem = `Current date and time (America/Los_Angeles): ${now}
+${accountsLine}
+${scopeBlock}${feedbackBlock(fb)}`
 
     let convo = safeMessages
     let reply = ''
     let proposal = null   // set when the model proposes a draft-with-image
 
     // Hard cap on agent hops — an unbounded loop is an unbounded token bill.
-    // Cache the (large, stable-within-a-turn) system prompt so hops 2-8 don't
-    // re-pay full input price for it.
-    const systemBlocks = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+    // Block 1 (static) is cached across hops AND across requests; block 2
+    // carries the volatile context and never busts the cache.
+    const systemBlocks = [
+      { type: 'text', text: staticSystem, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: dynamicSystem },
+    ]
 
     for (let hop = 0; hop < 8; hop++) {
       const response = await anthropic.messages.create({
@@ -394,8 +421,10 @@ More rules:
           let result
           if (block.name === 'propose_post') {
             // Stash the proposal for the UI; never queue or publish here.
-            // The 280 limit is enforced server-side, not just in the tool docs.
-            proposal = { content: await enforceLen(String(block.input.content || ''), 'x') }
+            // Platform follows the chat's scope (LinkedIn focus → LinkedIn post,
+            // 1300-char cap); the length limit is enforced server-side.
+            const propPlatform = liScoped ? 'linkedin' : 'x'
+            proposal = { content: await enforceLen(String(block.input.content || ''), propPlatform), platform: propPlatform }
             if (block.input.want_image) {
               const img = await generateImage(block.input.image_prompt || block.input.content, { fromContent: !block.input.image_prompt })
               proposal.image_url = await persistImage(img.url, user.id) // survive until publish
@@ -420,6 +449,6 @@ More rules:
     return Response.json({ reply, proposal })
   } catch (err) {
     console.error('[chat]', err)
-    return Response.json({ reply: `Error: ${err.message}` }, { status: 500 })
+    return Response.json({ reply: 'Something went wrong on my end — try that again.' }, { status: 500 })
   }
 }

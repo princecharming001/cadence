@@ -14,6 +14,7 @@ import { postOne } from '@/lib/posting'
 import { runDueEngagement } from '@/lib/engagement'
 import { runDueBrandCampaigns } from '@/lib/brand-campaigns'
 import { runDueSocialEngagement } from '@/lib/social-engagement'
+import { runDueFeederAgents } from '@/lib/feeder-agents'
 import { releaseStaleClaims, sweepInterruptedPosts } from '@/lib/engine'
 import { isCron } from '@/lib/supabase'
 
@@ -27,7 +28,7 @@ export async function GET(req) {
 
   // 1. Recovery sweeps — cheap, always first.
   await safe(() => sweepInterruptedPosts(10))
-  for (const t of ['brand_campaigns', 'engagement_rules', 'social_engagement']) {
+  for (const t of ['brand_campaigns', 'engagement_rules', 'social_engagement', 'feeder_agents']) {
     await safe(() => releaseStaleClaims(t, 30))
   }
 
@@ -50,6 +51,7 @@ export async function GET(req) {
   const brand = await safe(runDueBrandCampaigns)
   const engagement = await safe(runDueEngagement)
   const social = await safe(runDueSocialEngagement)
+  const agents = await safe(runDueFeederAgents)
 
   // 4 + 5. After the response: clip sweep kick + housekeeping.
   const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
@@ -60,6 +62,6 @@ export async function GET(req) {
 
   return Response.json({
     posted: results.filter(r => r.status === 'posted').length,
-    results, brand, engagement, social,
+    results, brand, engagement, social, agents,
   })
 }
