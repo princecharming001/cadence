@@ -1426,10 +1426,98 @@ function AgentAvatar({ agent, size = 40 }) {
   )
 }
 
+// Everything Cadence pushed to an agent's account (agent output, queue posts,
+// suggestions) — matched by connection id, platform fallback for legacy rows.
+function postsForAgent(posts, a) {
+  return posts.filter(p => p.feeder_agent_id === a.id
+    || (a.x_connection_id && p.x_connection_id === a.x_connection_id)
+    || (a.social_account_id && (p.social_account_id === a.social_account_id || (!p.social_account_id && !p.x_connection_id && p.platform === (a.platform || '')))))
+}
+// Best second stat the platform exposes.
+const agentTile2 = st => st?.posts != null ? [fmtNum(st.posts), 'Acct posts']
+  : st?.reach30 != null ? [fmtNum(st.reach30), 'Reach · 30d'] : ['—', 'Acct posts']
+
+// ── Agent profile — click any agent (fleet, roster) for the full picture:
+// identity, live controls, stats, settings, reflections, and a clean
+// activity timeline. One modal, every surface opens it. ──────────────────────
+function AgentProfile({ agent, xConns, socialAccounts, campaigns = [], posts, onPatch, onRun, onReroll, onDelete, onClose }) {
+  if (!agent) return null
+  const p = agent.persona || {}
+  const handle = agent.x_connection_id
+    ? xConns.find(c => c.id === agent.x_connection_id)?.username
+    : socialAccounts.find(s => s.id === agent.social_account_id)?.username
+  const mine = postsForAgent(posts, agent)
+  const live = mine.filter(x => x.status === 'posted')
+  const pending = mine.filter(x => x.status !== 'posted')
+  const st = agent.stats || {}
+  const tile2 = agentTile2(st)
+  const notes = (agent.memory || []).slice(-3).reverse()
+  const camp = campaigns.find(c => c.id === agent.campaign_id)
+  const isX = !!agent.x_connection_id
+  return (
+    <motion.div className="overlay" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.div className="card modal" style={{ width: 560 }} onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.97 }} transition={spring}>
+        <div className="row" style={{ gap: 13, alignItems: 'flex-start' }}>
+          <AgentAvatar agent={agent} size={56} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="row" style={{ gap: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 16.5 }}>{p.name || agent.name || 'Agent'}</span>
+              {camp && <span className="role-badge" title="On a campaign mission">{camp.name}</span>}
+            </div>
+            <div className="muted tiny" style={{ marginTop: 2 }}>@{handle || '—'} · {agent.platform || 'x'}{p.archetype ? ` · ${p.archetype}` : ''}</div>
+          </div>
+          <button className="x-close" onClick={onClose}><LX size={18} /></button>
+        </div>
+        {p.bio && <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, marginTop: 10 }}>{p.bio}</div>}
+
+        <div className="fleet-stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)', margin: '14px 0 2px' }}>
+          <div><b>{fmtNum(st.followers)}</b><span>Followers</span></div>
+          <div><b>{tile2[0]}</b><span>{tile2[1]}</span></div>
+          <div><b>{live.length}</b><span>Published</span></div>
+          <div><b>{pending.length}</b><span>Queued</span></div>
+        </div>
+
+        <div className="set-section" style={{ marginTop: 12 }}>
+          <div className="row" style={{ gap: 14, flexWrap: 'wrap' }}>
+            <label className="row" style={{ gap: 7, fontSize: 12.5 }}><Toggle on={!!agent.active} onChange={v => onPatch(agent.id, { active: v }, v ? `${p.name || 'Agent'} is live` : `${p.name || 'Agent'} paused`)} /> Live</label>
+            <label className="row" style={{ gap: 7, fontSize: 12.5 }}><Toggle on={!!agent.auto_post} onChange={v => onPatch(agent.id, { auto_post: v }, v ? 'Acts on its own' : 'Drafts for your review')} /> Autonomous</label>
+            <div className="row" style={{ gap: 6, marginLeft: 'auto' }}>
+              <RunNow running={agent.running} onRun={() => onRun(agent.id)} />
+              <button className="mini" title="New persona" onClick={() => onReroll(agent.id)}><RefreshCw size={12} /></button>
+              <button className="mini danger" title="Delete agent" onClick={() => { onDelete(agent.id); onClose() }}><Trash2 size={12} /></button>
+            </div>
+          </div>
+          <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+            <label className="camp-num"><input type="number" min={0} max={6} className="field" value={agent.posts_per_day} onChange={e => onPatch(agent.id, { posts_per_day: e.target.value })} /> posts/day</label>
+            {isX && <label className="camp-num"><input type="number" min={0} max={12} className="field" value={agent.replies_per_day} onChange={e => onPatch(agent.id, { replies_per_day: e.target.value })} /> replies/day</label>}
+            <label className="camp-num">every <input type="number" min={1} className="field" value={agent.interval_hours} onChange={e => onPatch(agent.id, { interval_hours: e.target.value })} /> h</label>
+            {isX && <label className="row" style={{ gap: 6, fontSize: 12 }}><Toggle on={!!agent.support_primary} onChange={v => onPatch(agent.id, { support_primary: v })} /> backs your primary</label>}
+          </div>
+        </div>
+
+        <LiveStatus running={agent.running} detail={agent.status_detail} lastAt={agent.last_activity_at} />
+
+        {notes.length > 0 && (
+          <div className="set-section">
+            <div className="set-h">What it's been thinking</div>
+            {notes.map((n, i) => <div className="agent-note" key={i} style={{ marginTop: i ? 6 : 0 }}>“{n.note}”</div>)}
+          </div>
+        )}
+
+        <div className="set-section">
+          <div className="set-h">Activity</div>
+          <ActivityList pending={pending.slice(0, 12)} live={live.slice(0, 12)} />
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 // ── Fleet strip — every feeder agent across platforms at a glance: real
 // profile pictures ringed in their platform color, live dot, and a hover card
 // with the numbers (followers, account posts, published/queued via Cadence).
-function AgentFleet({ agents, xConns, socialAccounts, posts }) {
+// Click an agent to open its full profile.
+function AgentFleet({ agents, xConns, socialAccounts, posts, onOpen }) {
   const [hover, setHover] = useState(null)
   const handleOf = a => a.x_connection_id
     ? xConns.find(c => c.id === a.x_connection_id)?.username
@@ -1440,21 +1528,13 @@ function AgentFleet({ agents, xConns, socialAccounts, posts }) {
       <div className="conn-sec" style={{ margin: '0 0 12px' }}>Your fleet <span className="muted tiny" style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {agents.length} agent{agents.length === 1 ? '' : 's'} across platforms</span></div>
       <div className="fleet-row">
         {agents.map(a => {
-          // Published/Queued are ACCOUNT-scoped: everything Cadence pushed to
-          // this account (agent output, queue posts, suggestions), matched by
-          // connection id — or by platform when older rows never carried one.
-          const mine = posts.filter(p => p.feeder_agent_id === a.id
-            || (a.x_connection_id && p.x_connection_id === a.x_connection_id)
-            || (a.social_account_id && (p.social_account_id === a.social_account_id || (!p.social_account_id && !p.x_connection_id && p.platform === (a.platform || '')))))
+          const mine = postsForAgent(posts, a)
           const live = mine.filter(p => p.status === 'posted')
           const pending = mine.filter(p => p.status !== 'posted')
           const st = a.stats || {}
-          // Second tile: best real number this platform exposes — account post
-          // count (X/TikTok), tracked LinkedIn posts, or IG 30-day reach.
-          const tile2 = st.posts != null ? [fmtNum(st.posts), 'Acct posts']
-            : st.reach30 != null ? [fmtNum(st.reach30), 'Reach · 30d'] : ['—', 'Acct posts']
+          const tile2 = agentTile2(st)
           return (
-            <div key={a.id} className="fleet-cell" onMouseEnter={() => setHover(a.id)} onMouseLeave={() => setHover(h => (h === a.id ? null : h))}>
+            <div key={a.id} className="fleet-cell" role="button" title="Open agent profile" onClick={() => onOpen && onOpen(a.id)} onMouseEnter={() => setHover(a.id)} onMouseLeave={() => setHover(h => (h === a.id ? null : h))}>
               <div className="fleet-ava" style={{ borderColor: platformDot(a.platform || 'x') }}>
                 <AgentAvatar agent={a} size={52} />
                 <span className={'fleet-dot' + (a.active ? ' on' : '')} title={a.active ? 'Live' : 'Paused'} />
@@ -1574,13 +1654,22 @@ const INTENSITY_OPTS = [
   ['loud', 'Loud', 'most posts'],
 ]
 
-function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent }) {
+function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent, onOpenAgent }) {
   const [form, setForm] = useState(null)        // create-campaign draft
   const [busy, setBusy] = useState(false)
   const [manageFor, setManageFor] = useState(null) // campaign id with the crew panel open
+  const [editFor, setEditFor] = useState(null)      // campaign id being edited
+  const [edit, setEdit] = useState({ product: '', link: '' })
   const [deployAcct, setDeployAcct] = useState('')  // 'x:<id>' | 's:<id>'
   const [deploySeed, setDeploySeed] = useState('')
   const [spawning, setSpawning] = useState(false)
+  function startEdit(c) { setEdit({ product: c.product || '', link: c.link || '' }); setEditFor(c.id) }
+  async function saveEdit(c) {
+    const t = edit.product.trim()
+    if (!t) return
+    await onPatchCamp(c.id, { product: t, link: edit.link.trim() || null, name: t.length > 42 ? t.slice(0, 42).trimEnd() + '…' : t }, 'Campaign updated')
+    setEditFor(null)
+  }
 
   const handleOf = a => a.x_connection_id
     ? xConns.find(c => c.id === a.x_connection_id)?.username
@@ -1623,9 +1712,19 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
         const pending = roster.reduce((n, a) => n + activityFor(posts, 'feeder_agent_id', a.id).pending.length, 0)
         return (
           <div className={'card camp2' + (c.active ? ' live' : '')} key={c.id}>
+            {editFor === c.id ? (
+              <div>
+                <textarea className="field" rows={2} placeholder="What are the agents promoting?" value={edit.product} onChange={e => setEdit(s => ({ ...s, product: e.target.value }))} autoFocus />
+                <input className="field" style={{ marginTop: 8 }} placeholder="Link (optional)" value={edit.link} onChange={e => setEdit(s => ({ ...s, link: e.target.value }))} />
+                <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+                  <button className="mini" onClick={() => setEditFor(null)}>Cancel</button>
+                  <button className="btn-primary btn-sm" disabled={!edit.product.trim()} onClick={() => saveEdit(c)}>Save</button>
+                </div>
+              </div>
+            ) : (
             <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div className="camp2-name">{c.name}</div>
+              <div className="camp2-title" role="button" title="Edit campaign" onClick={() => startEdit(c)}>
+                <div className="camp2-name">{c.name} <Pencil size={12} className="camp2-pencil" /></div>
                 <div className="camp2-sub">{c.product}{c.link ? ' · link attached' : ''}</div>
               </div>
               <button className={'live-pill' + (c.active ? ' on' : '')} title={c.active ? 'Pause the campaign' : 'Set it live'}
@@ -1634,6 +1733,7 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
               </button>
               <button className="hist-del" title="Delete campaign" onClick={() => onDeleteCamp(c.id)}><Trash2 size={13} /></button>
             </div>
+            )}
 
             <div className="camp2-row">
               <div className="facepile" role="button" title="Manage the crew" onClick={() => { setManageFor(manageFor === c.id ? null : c.id); setDeployAcct('') }}>
@@ -1657,10 +1757,12 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
                       const p = a.persona || {}
                       return (
                         <div className="row" key={a.id} style={{ gap: 9, padding: '5px 0', minWidth: 0 }}>
-                          <AgentAvatar agent={a} size={26} />
-                          <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || a.name}</span>
-                          <span className="status-dot" style={{ background: platformDot(a.platform || 'x'), width: 6, height: 6 }} />
-                          <span className="muted tiny" style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{handleOf(a) || '—'}{a.active ? '' : ' · off'}</span>
+                          <div className="row" role="button" title="Open agent profile" style={{ gap: 9, minWidth: 0, flex: 1, cursor: 'pointer' }} onClick={() => onOpenAgent && onOpenAgent(a.id)}>
+                            <AgentAvatar agent={a} size={26} />
+                            <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || a.name}</span>
+                            <span className="status-dot" style={{ background: platformDot(a.platform || 'x'), width: 6, height: 6 }} />
+                            <span className="muted tiny" style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{handleOf(a) || '—'}{a.active ? '' : ' · off'}</span>
+                          </div>
                           <RunNow running={a.running} onRun={() => onRunAgent(a.id)} />
                           <button className="mini" title="Remove from campaign (agent keeps running)" onClick={() => onPatchAgent(a.id, { campaign_id: null })}><LX size={11} /></button>
                         </div>
@@ -2032,6 +2134,7 @@ function App({ session }) {
   const [feederAgents, setFeederAgents] = useState([])
   const [agentCampaigns, setAgentCampaigns] = useState([])
   const [chatList, setChatList] = useState([]); const [historyOpen, setHistoryOpen] = useState(false)
+  const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
   const chatIdRef = useRef(null) // current saved-chat id; null until first save
   const inputRef = useRef(null); const bottomRef = useRef(null)
   const [leftPct, setLeftPct] = useState(47); const colsRef = useRef(null); const [dragging, setDragging] = useState(false)
@@ -2654,11 +2757,11 @@ function App({ session }) {
                   the right format per platform, in one voice. */}
               {tab === 'campaigns' && (<>
                 <BrainBanner theme="campaigns" />
-                <AgentFleet agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts} />
+                <AgentFleet agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts} onOpen={setAgentProfileId} />
                 <div className="muted tiny" style={{ margin: '0 2px 12px' }}>Missions for your agents. Pick something to promote, deploy agents across platforms — each one works it into its own posting, in its own voice.</div>
                 <AgentCampaigns campaigns={agentCampaigns} agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts}
                   onSaveCamp={saveAgentCamp} onPatchCamp={patchAgentCamp} onDeleteCamp={deleteAgentCamp}
-                  onSpawn={spawnAgent} onPatchAgent={patchAgent} onRunAgent={runAgent} />
+                  onSpawn={spawnAgent} onPatchAgent={patchAgent} onRunAgent={runAgent} onOpenAgent={setAgentProfileId} />
               </>)}
 
             </motion.div>
@@ -2798,6 +2901,17 @@ function App({ session }) {
           </div>
         </section>
       </div>
+
+      {/* agent profile modal — opened from the fleet or a campaign roster */}
+      <AnimatePresence>
+        {agentProfileId && (() => {
+          const a = feederAgents.find(x => x.id === agentProfileId)
+          return a ? (
+            <AgentProfile agent={a} xConns={xConns} socialAccounts={socialAccounts} campaigns={agentCampaigns} posts={posts}
+              onPatch={patchAgent} onRun={runAgent} onReroll={rerollAgent} onDelete={deleteAgent} onClose={() => setAgentProfileId(null)} />
+          ) : null
+        })()}
+      </AnimatePresence>
 
       {/* compose modal */}
       <AnimatePresence>
@@ -3262,7 +3376,11 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 /* fleet strip — feeder agents across platforms at a glance */
 .fleet { padding: 14px 16px 12px; margin-bottom: 12px; overflow: visible; }
 .fleet-row { display: flex; gap: 18px; flex-wrap: wrap; }
-.fleet-cell { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 66px; }
+.fleet-cell { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 66px; cursor: pointer; }
+.fleet-cell:hover .fleet-ava { border-color: var(--accent) !important; }
+.camp2-title { cursor: pointer; min-width: 0; flex: 1; }
+.camp2-pencil { opacity: 0; transition: opacity .15s; color: var(--faint); }
+.camp2-title:hover .camp2-pencil { opacity: 1; }
 .fleet-ava { position: relative; border: 2.5px solid var(--line2); border-radius: 50%; padding: 2.5px; background: var(--surface); }
 .fleet-ava .agent-pfp { border: none; display: flex; }
 .fleet-dot { position: absolute; right: 0; bottom: 0; width: 13px; height: 13px; border-radius: 50%; background: #C9C5BC; border: 2.5px solid var(--surface); }
