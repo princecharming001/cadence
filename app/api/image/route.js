@@ -18,7 +18,20 @@ export async function POST(req) {
   }
 
   try {
-    const img = await generateImage(prompt, { seed, fromContent, referenceImages })
+    // `personal` is the user's explicit override; otherwise raw post text goes
+    // through the planner (auto), which may itself choose the personal mode.
+    const img = personal
+      ? await generateImage(prompt, { seed, fromContent, referenceImages })
+      : fromContent
+        ? await generateImage(prompt, { seed, auto: true, userId: user.id })
+        : await generateImage(prompt, { seed })
+    if (img.skipped) {
+      // The planner judged this post better with no image — make one anyway
+      // (the user explicitly asked) but as a grounded illustrative scene.
+      const fallback = await generateImage(prompt, { seed, fromContent: true })
+      fallback.url = await persistImage(fallback.url, user.id)
+      return Response.json(fallback)
+    }
     // Persist to our bucket so a scheduled post's image is still live at post time.
     img.url = await persistImage(img.url, user.id)
     return Response.json(img)

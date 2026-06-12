@@ -426,7 +426,14 @@ ${scopeBlock}${feedbackBlock(fb)}`
             const propPlatform = liScoped ? 'linkedin' : 'x'
             proposal = { content: await enforceLen(String(block.input.content || ''), propPlatform), platform: propPlatform }
             if (block.input.want_image) {
-              const img = await generateImage(block.input.image_prompt || block.input.content, { fromContent: !block.input.image_prompt })
+              // Explicit image_prompt = the model/user knows what they want.
+              // Otherwise the planner decides personal vs illustrative and
+              // grounds the prompt in the post (skips degrade to illustrative
+              // here — the user asked for an image).
+              let img = block.input.image_prompt
+                ? await generateImage(block.input.image_prompt, {})
+                : await generateImage(block.input.content, { auto: true, userId: user.id })
+              if (img.skipped) img = await generateImage(block.input.content, { fromContent: true })
               proposal.image_url = await persistImage(img.url, user.id) // survive until publish
               proposal.image_prompt = img.prompt
             }

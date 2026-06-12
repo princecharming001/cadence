@@ -13,10 +13,11 @@
 ## Optional / feature-gating
 | Var | Activates |
 |---|---|
-| `APIFY_TOKEN` | LinkedIn scraping (voice + inspiration) |
+| `APIFY_TOKEN` | LinkedIn scraping (voice + inspiration) **and** Instagram/TikTok account-history pulls for voice learning (`apify~instagram-scraper` ~$1.5/1k, `clockworks~tiktok-scraper` ~$1.7/1k). Without it, IG/TikTok voice only sees posts published through Cadence |
 | `ZERNIO_API_KEY` | publishing to LinkedIn / Instagram / TikTok + comment inboxes |
+| `UNIPILE_DSN` + `UNIPILE_API_KEY` | **LinkedIn auto-replies** through the user's own LinkedIn session (Zernio's LI inbox is unreliable; official LinkedIn API is partner-locked). ~€5.5/account/mo flat, min €49/mo, no per-request fees. Users link via `GET /api/unipile` (hosted-auth URL); Unipile's webhook hits `POST /api/unipile` to store the account id. Endpoint shapes live in lib/unipile.js — re-verify against docs.unipile.com when the key first arrives |
 | `X_READ_ENABLED=true` | engagement discovery, niche replies, agent replies, impressions metric (PAID X reads; per-user daily cap 2500 via `bump_x_reads`) |
-| `OPENAI_API_KEY` / `FAL_KEY` / `HIGGSFIELD_API_KEY`+`SECRET` | real AI images (else seeded placeholders). fal required for "Feature me" selfie images. Higgsfield needs credits on the account |
+| `OPENAI_API_KEY` / `FAL_KEY` / `HIGGSFIELD_API_KEY`+`SECRET` | real AI images (else seeded placeholders). **fal is required for the personal-photo image mode** (the planner composites the user doing the thing from their reference photos). Higgsfield needs credits on the account |
 | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` | turns the paywall ON (without them every feature is free) |
 | `STRIPE_PRICE_INDIVIDUAL_MONTHLY` / `STRIPE_PRICE_INDIVIDUAL_ANNUAL` / `STRIPE_PRICE_TEAM_MONTHLY` / `STRIPE_PRICE_TEAM_ANNUAL` | the four pricing-page options. Legacy `STRIPE_PRICE_ID` still covers individual/monthly. Any unset combination 503s at checkout — create all four Prices in Stripe before turning billing on |
 
