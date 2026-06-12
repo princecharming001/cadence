@@ -47,8 +47,10 @@ export async function POST(req) {
     format, captions: b.captions !== false,
     target_len: ['short', 'medium'].includes(b.target_len) ? b.target_len : 'short',
     max_clips: Math.min(Math.max(Number(b.max_clips) || 3, 1), 5),
-    edit_formats: edit_formats.length ? edit_formats : ['clean'],
+    edit_formats: edit_formats.length ? edit_formats : ['captions'],
     watermark: String(b.watermark || '').trim().slice(0, 40) || null,
+    outro: !!b.outro,
+    outro_logo_url: /^https?:\/\//.test(String(b.outro_logo_url || '')) ? String(b.outro_logo_url).slice(0, 500) : null,
   }
   const { data: job, error } = await admin.from('clip_jobs').insert(row).select().single()
   if (error) return Response.json({ error: error.message }, { status: 500 })

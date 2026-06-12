@@ -1127,27 +1127,25 @@ const CLIP_FORMAT_LIST = [
   { key: 'square', label: 'Square 1:1', desc: 'feed-friendly' },
   { key: 'original', label: 'Original', desc: 'keep aspect ratio' },
 ]
-// Edit styles applied on top of clips. Pick one or several — clips rotate
-// through the chosen set. Captions are word-by-word with a yellow highlight;
-// titles are AI-written from the transcript; watermark is your handle.
+// Edit styles applied on top of clips — five formats, each a genuinely
+// different essence (not caption variants). Pick one or several; clips rotate
+// through the chosen set. Copy on the cards is AI-written from the transcript.
 const EDIT_FORMAT_LIST = [
   { key: 'captions', label: 'Captions', desc: 'word-by-word bold captions, yellow highlight' },
-  { key: 'emphasis', label: 'Emphasis pop', desc: 'huge center captions, each line a new color' },
-  { key: 'tweet', label: 'Tweet frame', desc: 'clip under a viral-tweet card with your handle' },
-  { key: 'brand', label: 'Brand + follow', desc: 'pinned handle, ends on a FOLLOW card' },
-  { key: 'cinematic', label: 'Cinematic', desc: 'letterbox bars, minimal elegant captions' },
   { key: 'sludge', label: 'Sludge split', desc: 'your clip on top, gameplay underneath' },
-  { key: 'hook', label: 'Hook + captions', desc: 'big AI title first, captions throughout' },
-  { key: 'clean', label: 'Clean', desc: 'watermark only' },
+  { key: 'tweet', label: 'Tweet quote', desc: 'a real viral-tweet screenshot pinned over the clip' },
+  { key: 'thread', label: 'Thread', desc: 'a 2-3 tweet mini-thread that advances with the clip' },
+  { key: 'reddit', label: 'Reddit story', desc: 'r/ story card opens the clip, captions carry it' },
 ]
 function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, onPost }) {
   const [url, setUrl] = useState(''); const [fileName, setFileName] = useState('')
   const [format, setFormat] = useState('vertical'); const [len, setLen] = useState('short'); const [maxClips, setMaxClips] = useState(3)
   const [busy, setBusy] = useState(false)
-  const fileRef = useRef(null)
+  const fileRef = useRef(null); const logoRef = useRef(null)
   const postable = accounts.filter(a => ['instagram', 'tiktok'].includes(a.platform))
   const [edits, setEdits] = useState(['captions', 'sludge'])
-  const [watermark, setWatermark] = useState('')
+  const [wmOn, setWmOn] = useState(true); const [watermark, setWatermark] = useState('')
+  const [outroOn, setOutroOn] = useState(false); const [logoUrl, setLogoUrl] = useState(''); const [logoBusy, setLogoBusy] = useState(false)
   const wmDefault = postable[0]?.username ? `@${postable[0].username}` : ''
   const toggleEdit = k => setEdits(s => s.includes(k) ? (s.length > 1 ? s.filter(x => x !== k) : s) : [...s, k])
 
@@ -1159,13 +1157,23 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
     if (u) setUrl(u); else setFileName('')
     e.target.value = ''
   }
+  async function pickLogo(e) {
+    const f = e.target.files?.[0]; if (!f) return
+    setLogoBusy(true)
+    const u = await onUpload(f)
+    setLogoBusy(false)
+    if (u) setLogoUrl(u)
+    e.target.value = ''
+  }
   async function go() {
     if (!url.trim()) return
     setBusy(true)
     const ok = await onCreate({
       source_url: url.trim(), source_name: fileName || null, format,
       target_len: len, max_clips: Number(maxClips), captions: true,
-      edit_formats: edits, watermark: (watermark || wmDefault).trim() || null,
+      edit_formats: edits,
+      watermark: wmOn ? ((watermark || wmDefault).trim() || null) : null,
+      outro: outroOn, outro_logo_url: outroOn ? (logoUrl || null) : null,
     })
     setBusy(false)
     if (ok) { setUrl(''); setFileName('') }
@@ -1197,7 +1205,19 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
             </button>
           ))}
         </div>
-        <input className="field" style={{ marginTop: 10 }} placeholder={`Watermark${wmDefault ? ` (default ${wmDefault})` : ' — e.g. @yourhandle'}`} value={watermark} onChange={e => setWatermark(e.target.value)} />
+        <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+          <label className="row" style={{ gap: 7, fontSize: 12.5, flex: 'none' }}><Toggle on={wmOn} onChange={setWmOn} /> Watermark</label>
+          {wmOn && <input className="field" style={{ flex: 1, minWidth: 160 }} placeholder={wmDefault ? `default ${wmDefault}` : '@yourhandle'} value={watermark} onChange={e => setWatermark(e.target.value)} />}
+        </div>
+        <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+          <label className="row" style={{ gap: 7, fontSize: 12.5, flex: 'none' }} title="Every clip ends on a 1.6s card with your logo and a chime"><Toggle on={outroOn} onChange={setOutroOn} /> Brand outro</label>
+          {outroOn && (<>
+            {logoUrl && <img src={logoUrl} alt="logo" style={{ width: 28, height: 28, borderRadius: 7, objectFit: 'cover', border: '1px solid var(--line2)' }} />}
+            <button className="btn-ghost btn-sm" disabled={logoBusy} onClick={() => logoRef.current?.click()}>{logoBusy ? <Loader2 size={12} className="spin" /> : <Upload size={12} />} {logoUrl ? 'Change logo' : 'Upload logo'}</button>
+            <input ref={logoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={pickLogo} />
+            <span className="muted tiny">ends every clip on your logo + a chime</span>
+          </>)}
+        </div>
         <div className="row" style={{ gap: 10, marginTop: 12, justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <div className="row" style={{ gap: 6 }}>
             {[['short', '15–30s'], ['medium', '30–60s']].map(([k, l]) => <button key={k} type="button" className={'chip' + (len === k ? ' on' : '')} onClick={() => setLen(k)}>{l}</button>)}
