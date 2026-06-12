@@ -41,11 +41,7 @@ function sourceMeta(p) {
   if (p.source === 'campaign') return { label: 'Campaign', c: '#c2740a', bg: '#fdf3e3', bd: '#f5dcae' }
   return { label: 'You', c: '#1E4D3B', bg: '#EDF2EE', bd: '#D5E1D8' }
 }
-function SourceTag({ p }) {
-  const m = sourceMeta(p)
-  return <span className="src-tag" style={{ color: m.c, background: m.bg, borderColor: m.bd }}>{m.label}</span>
-}
-const TZS = ['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Kolkata', 'Asia/Singapore', 'Australia/Sydney']
+const TZS =['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Kolkata', 'Asia/Singapore', 'Australia/Sydney']
 
 function fmt(ts) {
   if (!ts) return 'not set'
@@ -648,6 +644,39 @@ function ReplyContext({ p }) {
 }
 
 // ── Posted history (no longer in the active queue) ──────────────────────────────
+// One posted item — a compact collapsed row (matches the queue), expands to
+// the full post + its real engagement. Platform-color dot, no source bars.
+function PostedRow({ p }) {
+  const [open, setOpen] = useState(false)
+  const time = new Date(p.posted_at || p.scheduled_for).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return (
+    <motion.div className={'card qcard' + (open ? ' open' : '')} layout>
+      <button className="qhead" onClick={() => setOpen(o => !o)}>
+        <span className="status-dot" style={{ background: platformDot(p.platform || 'x') }} />
+        <span className="qtime">{time}</span>
+        <span className="qtitle">{titleOf(p.content)}</span>
+        {p.metrics_at && (p.likes || p.reposts) ? <span className="qmeta">♥ {p.likes || 0}</span> : null}
+        <ChevronDown size={15} className="qchev" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', color: 'var(--faint)', flex: 'none' }} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
+            <div className="qbody">
+              {p.image_url && <img src={p.image_url} className="qcard-img" alt="" />}
+              <div className="card-body">{p.content}</div>
+              <div className="muted tiny" style={{ marginTop: 7 }}>
+                Posted {fmt(p.posted_at || p.scheduled_for)}{sourceMeta(p).label !== 'You' ? ` · via ${sourceMeta(p).label.toLowerCase()}` : ''}
+                {p.external_id && (p.platform || 'x') === 'x' ? <> · <a className="link" href={`https://x.com/i/web/status/${p.external_id}`} target="_blank" rel="noreferrer">view</a></> : ''}
+              </div>
+              {p.metrics_at && <div className="row" style={{ gap: 12, marginTop: 7, fontSize: 12, color: 'var(--muted)', fontWeight: 600 }}><span>♥ {p.likes || 0}</span><span>↻ {p.reposts || 0}</span><span>💬 {p.replies || 0}</span>{p.impressions ? <span>{p.impressions.toLocaleString()} views</span> : null}</div>}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
+}
+
 function PostedSection({ posted }) {
   const [open, setOpen] = useState(false)
   return (
@@ -658,18 +687,8 @@ function PostedSection({ posted }) {
       </button>
       <AnimatePresence initial={false}>
         {open && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-            {posted.map(p => (
-              <div className="card posted-card" key={p.id} style={{ borderLeft: `3px solid ${sourceMeta(p).c}` }}>
-                {p.image_url && <img src={p.image_url} className="posted-thumb" alt="" />}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="row" style={{ justifyContent: 'space-between', gap: 8, marginBottom: 4 }}><SourceTag p={p} /></div>
-                  <div className="card-body" style={{ fontSize: 12.5 }}>{p.content}</div>
-                  <div className="muted tiny" style={{ marginTop: 5 }}>Posted {fmt(p.posted_at || p.scheduled_for)}{p.external_id && (p.platform || 'x') === 'x' ? <> · <a className="link" href={`https://x.com/i/web/status/${p.external_id}`} target="_blank" rel="noreferrer">view</a></> : ''}</div>
-                  {p.metrics_at && <div className="row" style={{ gap: 10, marginTop: 5, fontSize: 11.5, color: 'var(--muted)', fontWeight: 600 }}><span>♥ {p.likes || 0}</span><span>↻ {p.reposts || 0}</span><span>💬 {p.replies || 0}</span>{p.impressions ? <span>{p.impressions.toLocaleString()} views</span> : null}</div>}
-                </div>
-              </div>
-            ))}
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden', paddingTop: 8 }}>
+            {posted.map(p => <PostedRow key={p.id} p={p} />)}
           </motion.div>
         )}
       </AnimatePresence>
@@ -2859,8 +2878,6 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .posted-wrap { margin-top: 14px; }
 .posted-toggle { display: flex; align-items: center; gap: 7px; background: none; border: none; cursor: pointer; font-family: inherit; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); padding: 4px 2px; }
 .posted-toggle:hover { color: var(--muted); }
-.posted-card { display: flex; gap: 11px; padding: 11px 13px; align-items: flex-start; }
-.posted-thumb { width: 42px; height: 42px; border-radius: 7px; object-fit: cover; flex: none; }
 /* campaigns */
 .camp-card { padding: 13px 15px; margin-bottom: 10px; }
 .camp-state { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); background: var(--bg2); border-radius: 999px; padding: 2px 8px; }
@@ -2914,8 +2931,6 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .style-opt .mini-check { margin-top: 1px; }
 .style-name { display: block; font-size: 13px; font-weight: 600; color: var(--ink); }
 .style-desc { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; line-height: 1.4; }
-/* source tag (posted history) */
-.src-tag { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
 /* account roles */
 .conn-card.primary { border-color: var(--gold-line); background: linear-gradient(0deg, #F8F4E9, var(--surface)); }
 .role-badge { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; color: var(--muted); background: var(--bg2); border: 1px solid var(--line); display: inline-flex; align-items: center; gap: 3px; }
