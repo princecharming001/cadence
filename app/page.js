@@ -2573,6 +2573,11 @@ export default function Home() {
   const [session, setSession] = useState(undefined)
   const [me, setMe] = useState(undefined)
   const [landingAuth, setLandingAuth] = useState(null) // null = landing; 'signin'|'signup' = auth screen
+  // The static marketing page (public/landing.html) links here with ?auth=…
+  useEffect(() => {
+    const m = new URLSearchParams(window.location.search).get('auth')
+    if (m === 'signin' || m === 'signup') setLandingAuth(m)
+  }, [])
 
   const loadMe = useCallback(async (s) => {
     if (!s) { setMe(null); return }
