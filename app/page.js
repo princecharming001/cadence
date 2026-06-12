@@ -2570,7 +2570,7 @@ function App({ session }) {
       <AnimatePresence>{banner && <motion.div className="banner" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={spring}>{banner}</motion.div>}</AnimatePresence>
 
       <div className="cols" ref={colsRef} style={{ '--left-pct': leftPct + '%' }}>
-        <section className="pane left">
+        <section className={'pane left' + (['x', 'linkedin', 'instagram', 'tiktok'].includes(tab) ? ` plat-${tab}` : '')}>
           <div className="left-head">
             <div className="seg">
               {['queue', 'x', 'linkedin', 'instagram', 'tiktok', 'campaigns'].map(t => (
@@ -3115,7 +3115,7 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .row { display: flex; align-items: center; }
 .field { width: 100%; background: var(--raise); border: 1px solid var(--line2); border-radius: 8px; color: var(--ink); font-size: 14px; padding: 10px 13px; font-family: inherit; transition: border-color .2s ease, box-shadow .2s ease; outline: none; }
 .field::placeholder { color: var(--faint); }
-.field:focus { border-color: #CE8A6B; box-shadow: 0 0 0 3px rgba(194,113,79,0.12); }
+.field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
 .field:disabled { opacity: .6; }
 .btn-primary { background: var(--ink); border: 1px solid var(--ink); border-radius: 8px; color: #FAF9F7; font-weight: 500; font-size: 13.5px; padding: 9px 15px; cursor: pointer; font-family: inherit; transition: background .2s ease, transform .1s ease; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 .btn-primary:hover:not(:disabled) { background: #33312C; } .btn-primary:active:not(:disabled) { transform: scale(0.98); } .btn-primary:disabled { opacity: .38; cursor: default; }
@@ -3370,6 +3370,24 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 /* stat tiles */
 .stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 8px; margin: 4px 0 16px; }
 .stat-tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 10px; text-align: center; }
+
+/* ── Platform-scoped accents ──────────────────────────────────────────────────
+   Each platform tab carries its OWN hue — selected states, focus rings, swatch
+   rings, form borders all re-tint via the accent variables instead of the
+   global terracotta. Queue/Campaigns keep the warm default. */
+.plat-x { --accent: #16181B; --accent-deep: #000; --accent-soft: #EEEFF1; --accent-line: #DBDDE1; --accent-text: #16181B; }
+.plat-linkedin { --accent: #0A66C2; --accent-deep: #084E95; --accent-soft: #E9F1FA; --accent-line: #C6DDF2; --accent-text: #0A66C2; }
+.plat-instagram { --accent: #D6336C; --accent-deep: #B02458; --accent-soft: #FBEAF1; --accent-line: #F3CADB; --accent-text: #C2255C; }
+.plat-tiktok { --accent: #0CA8A0; --accent-deep: #08766F; --accent-soft: #E4F6F5; --accent-line: #BFE8E5; --accent-text: #0B8F88; }
+/* Brand hairline across the stat tiles — quiet identity, not a paint job. */
+.plat-x .stat-tile, .plat-linkedin .stat-tile, .plat-instagram .stat-tile, .plat-tiktok .stat-tile { position: relative; overflow: hidden; }
+.plat-x .stat-tile::before, .plat-linkedin .stat-tile::before, .plat-instagram .stat-tile::before, .plat-tiktok .stat-tile::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2.5px;
+}
+.plat-x .stat-tile::before { background: var(--ink); }
+.plat-linkedin .stat-tile::before { background: linear-gradient(90deg, #0A66C2, #5EA8E8); }
+.plat-instagram .stat-tile::before { background: linear-gradient(90deg, #F58529, #DD2A7B 55%, #8134AF); }
+.plat-tiktok .stat-tile::before { background: linear-gradient(90deg, #25F4EE, #0CA8A0 50%, #FE2C55); }
 .stat-num { font-family: var(--serif); font-weight: 600; font-size: 21px; letter-spacing: -0.01em; color: var(--ink); }
 .stat-lbl { font-size: 10.5px; color: var(--faint); margin-top: 3px; font-weight: 500; text-transform: uppercase; letter-spacing: .07em; }
 /* clean auto-reply blocks */
