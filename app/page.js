@@ -1436,8 +1436,19 @@ function AgentFleet({ agents, xConns, socialAccounts, posts }) {
       <div className="conn-sec" style={{ margin: '0 0 12px' }}>Your fleet <span className="muted tiny" style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· {agents.length} agent{agents.length === 1 ? '' : 's'} across platforms</span></div>
       <div className="fleet-row">
         {agents.map(a => {
-          const { live, pending } = activityFor(posts, 'feeder_agent_id', a.id)
+          // Published/Queued are ACCOUNT-scoped: everything Cadence pushed to
+          // this account (agent output, queue posts, suggestions), matched by
+          // connection id — or by platform when older rows never carried one.
+          const mine = posts.filter(p => p.feeder_agent_id === a.id
+            || (a.x_connection_id && p.x_connection_id === a.x_connection_id)
+            || (a.social_account_id && (p.social_account_id === a.social_account_id || (!p.social_account_id && !p.x_connection_id && p.platform === (a.platform || '')))))
+          const live = mine.filter(p => p.status === 'posted')
+          const pending = mine.filter(p => p.status !== 'posted')
           const st = a.stats || {}
+          // Second tile: best real number this platform exposes — account post
+          // count (X/TikTok), tracked LinkedIn posts, or IG 30-day reach.
+          const tile2 = st.posts != null ? [fmtNum(st.posts), 'Acct posts']
+            : st.reach30 != null ? [fmtNum(st.reach30), 'Reach · 30d'] : ['—', 'Acct posts']
           return (
             <div key={a.id} className="fleet-cell" onMouseEnter={() => setHover(a.id)} onMouseLeave={() => setHover(h => (h === a.id ? null : h))}>
               <div className="fleet-ava" style={{ borderColor: platformDot(a.platform || 'x') }}>
@@ -1458,7 +1469,7 @@ function AgentFleet({ agents, xConns, socialAccounts, posts }) {
                     {a.persona?.archetype && <div className="muted tiny" style={{ marginTop: 7 }}>{a.persona.archetype}</div>}
                     <div className="fleet-stats">
                       <div><b>{fmtNum(st.followers)}</b><span>Followers</span></div>
-                      <div><b>{fmtNum(st.posts)}</b><span>Acct posts</span></div>
+                      <div><b>{tile2[0]}</b><span>{tile2[1]}</span></div>
                       <div><b>{live.length}</b><span>Published</span></div>
                       <div><b>{pending.length}</b><span>Queued</span></div>
                     </div>

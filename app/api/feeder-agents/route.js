@@ -29,7 +29,7 @@ export async function GET(req) {
   // Never show blank agents: when any agent has no stats at all, refresh
   // INLINE so the first paint has real numbers + the real profile picture;
   // otherwise refresh in the background on the 24h TTL.
-  if ((data || []).some(a => !a.stats)) {
+  if ((data || []).some(a => !a.stats || a.stats.v !== 2)) {
     await refreshAgentStats(user.id).catch(() => {})
     data = (await admin.from('feeder_agents').select('*').eq('user_id', user.id).order('created_at', { ascending: true })).data
   } else {
