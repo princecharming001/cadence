@@ -543,19 +543,23 @@ function QueueCard({ p, i, connected, socialPlatforms, defaultCollapsed, onSaveE
   const [draft, setDraft] = useState(p.content)
   const [busy, setBusy] = useState(false)
   async function save() { setBusy(true); await onSaveEdit(p.id, draft); setBusy(false); setEditing(false); setOpen(true) }
+  const needsAttention = ['failed', 'posting', 'paused', 'draft'].includes(p.status)
+  const qTime = new Date(p.scheduled_for).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
   return (
-    <motion.div className={'card qcard' + (open ? ' open' : '')} style={{ borderLeft: `3px solid ${sourceMeta(p).c}` }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03, ...spring }} layout>
+    <motion.div className={'card qcard' + (open ? ' open' : '') + (p.status === 'failed' ? ' bad' : '')} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 12) * 0.02, ...spring }} layout>
       <button className="qhead" onClick={() => !editing && setOpen(o => !o)}>
-        <span className="status-dot" style={{ background: s.c }} />
-        <span className="qtitle">{open ? <span className="muted tiny">{fmt(p.scheduled_for)} · {s.label}</span> : titleOf(p.content)}</span>
-        <SourceTag p={p} />
-        {p.thread_id && <span className="src-tag" style={{ color: 'var(--plum)', background: 'var(--plum-soft)', borderColor: 'var(--plum-line)' }}>thread {(p.thread_index ?? 0) + 1}</span>}
-        <ChevronDown size={15} className="qchev" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', color: '#A39E94', flex: 'none' }} />
+        <span className="status-dot" style={{ background: platformDot(p.platform || 'x') }} />
+        <span className="qtime">{qTime}</span>
+        <span className="qtitle">{titleOf(p.content)}</span>
+        {p.thread_id != null && p.thread_index != null && <span className="qmeta">🧵 {(p.thread_index ?? 0) + 1}</span>}
+        {needsAttention && <span className={'qstate' + (p.status === 'failed' ? ' bad' : '')}>{s.label}</span>}
+        <ChevronDown size={15} className="qchev" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', color: 'var(--faint)', flex: 'none' }} />
       </button>
       <AnimatePresence initial={false}>
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
             <div className="qbody">
+              <div className="muted tiny" style={{ marginBottom: 8 }}>{fmt(p.scheduled_for)} · {s.label}{sourceMeta(p).label !== 'You' ? ` · via ${sourceMeta(p).label.toLowerCase()}` : ''}</div>
               <ReplyContext p={p} />
               {p.image_url && <img src={p.image_url} className="qcard-img" alt="" />}
               {p.status === 'failed' && p.error && <div className="notice" style={{ color: '#B3372F', marginBottom: 8 }}>{p.error}</div>}
@@ -1971,7 +1975,7 @@ function App({ session }) {
   const liDrafts = drafts.filter(p => p.platform === 'linkedin')
   const queue = posts.filter(p => p.status !== 'draft' && p.status !== 'posted')
   const posted = posts.filter(p => p.status === 'posted').sort((a, b) => new Date(b.posted_at || b.scheduled_for) - new Date(a.posted_at || a.scheduled_for))
-  const collapseQueue = queue.length > 4
+  const collapseQueue = true // queue rows stay compact; expand one to act on it
   const hasPhotos = photos.length > 0
 
   // Per-platform campaigns: a brand campaign "belongs" to a tab when every one of
@@ -2251,9 +2255,9 @@ function App({ session }) {
                 const fQueue = queue.filter(matchP)
                 const schedShows = slideshows.filter(s => ['scheduled', 'posted'].includes(s.status) && (qPlatform === 'all' || qPlatform === 'instagram' || qPlatform === 'tiktok'))
                 const chips = [['all', 'All'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']]
-                const failed = fQueue.filter(p => p.status === 'failed')
-                const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999)
-                const goingToday = fQueue.filter(p => p.status === 'queued' && new Date(p.scheduled_for) <= todayEnd)
+                const replies = fQueue.filter(p => p.reply_to_tweet_id)
+                const shown = showReplies ? fQueue : fQueue.filter(p => !p.reply_to_tweet_id)
+                const failed = shown.filter(p => p.status === 'failed')
                 const dayOf = iso => { const d = new Date(iso), t = new Date()
                   if (d.toDateString() === t.toDateString()) return 'Today'
                   const tm = new Date(t); tm.setDate(t.getDate() + 1)
@@ -2262,32 +2266,18 @@ function App({ session }) {
                 return (<>
                   <div className="qfilter">
                     {chips.map(([k, l]) => <button key={k} className={'qchip' + (qPlatform === k ? ' on' : '')} onClick={() => setQPlatform(k)}>{k !== 'all' && <span className="status-dot" style={{ background: platformDot(k) }} />}{l}</button>)}
+                    {replies.length > 0 && (
+                      <label className="row" style={{ gap: 6, marginLeft: 'auto', fontSize: 11.5, color: 'var(--muted)', cursor: 'pointer' }}>
+                        replies · {replies.length}
+                        <Toggle on={showReplies} onChange={setShowReplies} />
+                      </label>
+                    )}
                   </div>
                   {failed.length > 0 && (
                     <div className="fail-banner">⚠ {failed.length} post{failed.length === 1 ? '' : 's'} failed — open the cards below to retry or fix.</div>
                   )}
-                  {goingToday.length > 0 && (
-                    <div className="card today-strip">
-                      <div className="conn-sec" style={{ margin: '0 0 7px' }}>Going out today · {goingToday.length}</div>
-                      {goingToday.slice(0, 6).map(p => (
-                        <div className="row" key={p.id} style={{ gap: 8, padding: '4px 0', minWidth: 0 }}>
-                          <span className="muted tiny" style={{ flex: 'none', width: 62 }}>{new Date(p.scheduled_for).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
-                          <span className="status-dot" style={{ background: platformDot(p.platform || 'x') }} />
-                          <span style={{ flex: 1, fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{titleOf(p.content)}</span>
-                          <button className="mini" title="Hold this one (back to draft)" onClick={() => pausePost(p.id)}>Hold</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {fQueue.length > 0 && (
-                    <div className="src-legend">
-                      <span className="src-leg"><span className="dot" style={{ background: '#1E4D3B' }} /> You</span>
-                      <span className="src-leg"><span className="dot" style={{ background: '#c2740a' }} /> Campaign</span>
-                      <span className="src-leg"><span className="dot" style={{ background: '#7A5EA8' }} /> Reply</span>
-                    </div>
-                  )}
-                  {fQueue.length === 0 && schedShows.length === 0 && <Empty icon={<Clock size={26} />}>Nothing queued{qPlatform !== 'all' ? ` for ${qPlatform}` : ''}. Write one or ask the chat.</Empty>}
-                  <div>{fQueue.map((p, i) => {
+                  {shown.length === 0 && schedShows.length === 0 && <Empty icon={<Clock size={26} />}>Nothing queued{qPlatform !== 'all' ? ` for ${qPlatform}` : ''}. Write one or ask the chat.</Empty>}
+                  <div>{shown.map((p, i) => {
                     const day = ['queued', 'posting'].includes(p.status) ? dayOf(p.scheduled_for) : null
                     const head = day && day !== lastDay ? <div className="day-head">{day}</div> : null
                     if (day) lastDay = day
@@ -2708,8 +2698,8 @@ export default function Home() {
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&display=swap');
 :root {
-  --bg: #FAF9F7; --bg2: #F0EDE8; --surface: #F5F3EF; --raise: #FCFBF9;
-  --line: #E8E4DC; --line2: #DCD7CD; --line-hover: #D4CFC8;
+  --bg: #FFFFFF; --bg2: #F5F5F3; --surface: #FFFFFF; --raise: #FAFAF9;
+  --line: #EBEAE6; --line2: #DEDCD6; --line-hover: #CFCDC6;
   --ink: #1A1A18; --body: #3A3833; --muted: #6B6860; --faint: #A09D98;
   --accent: #C2714F; --accent-deep: #A85B3D; --accent-soft: #F5E7DF; --accent-line: #E8CFC0; --accent-text: #A85B3D;
   --gold: #8A6A1F; --gold-soft: #F8F2E1; --gold-line: #E6D9B4;
@@ -2778,12 +2768,18 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--bg2); border-radius: 9px; }
 .seg-btn { position: relative; background: none; border: none; color: var(--muted); font-size: 12.5px; font-weight: 600; font-family: inherit; padding: 6px 13px; border-radius: 7px; cursor: pointer; transition: color .15s; white-space: nowrap; }
 .seg-btn.on { color: var(--ink); } .seg-pill { position: absolute; inset: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; z-index: 0; }
-.scroll .card { margin-bottom: 10px; }
+.scroll .card { margin-bottom: 8px; }
 .card-body { font-size: 13.5px; line-height: 1.55; color: var(--body); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .qcard { overflow: hidden; }
-.qhead { width: 100%; display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }
+.qcard.bad { border-color: var(--bad-line); background: #FFFBFA; }
+.qhead { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 13px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }
+.qhead:hover .qtitle { color: var(--ink); }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.qtitle { flex: 1; min-width: 0; font-size: 13px; color: var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qtime { flex: none; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 52px; }
+.qmeta { flex: none; font-size: 10.5px; color: var(--faint); }
+.qstate { flex: none; font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: var(--bg2); border-radius: 999px; padding: 2px 8px; }
+.qstate.bad { color: var(--bad); background: var(--bad-soft); }
+.qtitle { flex: 1; min-width: 0; font-size: 13px; color: var(--body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color .15s; }
 .qbody { padding: 0 14px 13px; }
 .qcard-img { width: 100%; border-radius: 8px; margin-bottom: 10px; display: block; max-height: 220px; object-fit: cover; }
 .qrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 11px; }
@@ -2917,11 +2913,8 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .style-opt .mini-check { margin-top: 1px; }
 .style-name { display: block; font-size: 13px; font-weight: 600; color: var(--ink); }
 .style-desc { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; line-height: 1.4; }
-/* source tag + legend */
+/* source tag (posted history) */
 .src-tag { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
-.src-legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 2px 2px 10px; }
-.src-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
-.src-leg .dot { width: 9px; height: 9px; border-radius: 3px; }
 /* account roles */
 .conn-card.primary { border-color: var(--gold-line); background: linear-gradient(0deg, #F8F4E9, var(--surface)); }
 .role-badge { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; color: var(--muted); background: var(--bg2); border: 1px solid var(--line); display: inline-flex; align-items: center; gap: 3px; }
@@ -2950,7 +2943,6 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .clip-vid { width: 100%; aspect-ratio: 9/16; object-fit: cover; border-radius: 8px; background: #1A1A18; border: 1px solid var(--line); }
 .qfilter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 .fail-banner { font-size: 12.5px; font-weight: 600; color: var(--bad); background: var(--bad-soft); border: 1px solid var(--bad-line); border-radius: 8px; padding: 10px 13px; margin-bottom: 12px; }
-.today-strip { padding: 12px 14px; margin-bottom: 12px; border-color: var(--accent-line); }
 .day-head { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); margin: 16px 0 8px; }
 .day-head:first-child { margin-top: 2px; }
 .qchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: transparent; border: 1px solid var(--line2); color: var(--muted); cursor: pointer; font-family: inherit; }
