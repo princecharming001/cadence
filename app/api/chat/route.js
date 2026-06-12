@@ -55,6 +55,26 @@ const tools = [
     },
   },
   {
+    name: 'propose_thread',
+    description: 'Propose an X THREAD (2-8 connected tweets) as an editable draft card in the chat. Use whenever the user wants a thread, or asks to "turn this into a thread" — break ONE idea into sequential tweets: a hook tweet that earns the read, development tweets that each carry one point, and a closer with the payoff. Each part <=280 chars, numbered naturally only if it fits the voice. Like propose_post, the USER approves it from the card; nothing is queued by this call.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        posts: { type: 'array', items: { type: 'string' }, description: 'The thread parts in order (2-8 items, each a complete tweet <=280 chars).' },
+      },
+      required: ['posts'],
+    },
+  },
+  {
+    name: 'ingest_url',
+    description: 'Fetch a URL (article, blog post, LinkedIn post, YouTube page) and return its readable text + title, so you can repurpose existing content into posts. Use when the user pastes a link and wants posts made from it. After ingesting, draft via propose_post or propose_thread.',
+    input_schema: {
+      type: 'object',
+      properties: { url: { type: 'string', description: 'The http(s) URL to read.' } },
+      required: ['url'],
+    },
+  },
+  {
     name: 'reschedule_post',
     description: 'Move a post to a new time.',
     input_schema: {
@@ -246,6 +266,32 @@ async function executeTool(name, input, userId) {
       return { rescheduled_count: posts.length }
     }
 
+    case 'ingest_url': {
+      // SSRF-guarded fetch → readable text. Enough for articles, LinkedIn
+      // public posts, and YouTube titles/descriptions.
+      let u
+      try { u = new URL(String(input.url)) } catch { return { error: 'Not a valid URL.' } }
+      if (!/^https?:$/.test(u.protocol)) return { error: 'Only http(s) URLs.' }
+      if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.|\[::1\])/.test(u.hostname) || /^172\.(1[6-9]|2\d|3[01])\./.test(u.hostname)) {
+        return { error: 'That host is not reachable.' }
+      }
+      try {
+        const res = await fetch(u.toString(), {
+          redirect: 'follow', signal: AbortSignal.timeout(10000),
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CadenceBot/1.0)', Accept: 'text/html,application/xhtml+xml' },
+        })
+        const html = (await res.text()).slice(0, 400000)
+        const title = (html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] || '').trim()
+        const desc = (html.match(/<meta[^>]+(?:name="description"|property="og:description")[^>]+content="([^"]*)"/i)?.[1] || '').trim()
+        const text = html
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<nav[\s\S]*?<\/nav>/gi, ' ').replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim()
+        if (!text && !title) return { error: 'Could not read that page.' }
+        return { title, description: desc, text: text.slice(0, 6000), note: 'Repurpose into the user\'s voice — never copy verbatim.' }
+      } catch (e) { return { error: `Fetch failed: ${String(e.message || '').slice(0, 120)}` } }
+    }
+
     case 'get_overview': {
       const [{ data: accts }, { data: posts }, { data: camps }, { data: bcamps }, { data: eng }] = await Promise.all([
         admin.from('social_accounts').select('platform,username').eq('user_id', userId),
@@ -382,6 +428,8 @@ CRITICAL RULE — you never queue or publish a NEW post yourself. To create ANY 
 
 More rules:
 - For "write/draft/make a tweet", "repurpose my LinkedIn post", "post about X", etc. → call propose_post with the full post text. Then reply in one short line, e.g. "Here's a draft — edit it and approve below."
+- For "make a thread" / "turn this into a thread" → propose_thread with 2-8 parts: hook tweet, one point per tweet, closer with the payoff.
+- When the user pastes a link to repurpose → ingest_url first, then draft from what it returns in THEIR voice (never copy the source verbatim).
 - Set want_image:true + a vivid image_prompt ONLY when the user wants a visual/picture/image on the post.
 - To repurpose LinkedIn content: call list_linkedin_posts, pick the relevant one, rewrite it for the target platform, then propose_post.
 - The queue-management tools (reschedule, update, delete, set_status, pause/resume, set_cadence) act on posts the user already approved — those you may call directly when asked.
@@ -419,7 +467,16 @@ ${scopeBlock}${feedbackBlock(fb)}`
         for (const block of response.content) {
           if (block.type !== 'tool_use') continue
           let result
-          if (block.name === 'propose_post') {
+          if (block.name === 'propose_thread') {
+            const parts = (Array.isArray(block.input.posts) ? block.input.posts : [])
+              .map(t => String(t || '').trim()).filter(Boolean).slice(0, 8)
+            if (parts.length < 2) {
+              result = { error: 'A thread needs 2-8 parts — call propose_thread again with the full parts array.' }
+            } else {
+              proposal = { thread: await Promise.all(parts.map(t => enforceLen(t, 'x'))), platform: 'x' }
+              result = { ok: true, parts: parts.length, note: 'Thread proposed to the user for inline review — they will edit/schedule/post or discard it.' }
+            }
+          } else if (block.name === 'propose_post') {
             // Stash the proposal for the UI; never queue or publish here.
             // Platform follows the chat's scope (LinkedIn focus → LinkedIn post,
             // 1300-char cap); the length limit is enforced server-side.

@@ -413,21 +413,39 @@ function useCountdown(whenLocal) {
 // proposal.platform follows the chat's Focus (LinkedIn focus → LinkedIn post,
 // 1300-char cap, publishes via Zernio instead of an X connection). ─────────────
 function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolved, defaultHour, xConns = [], hasPhotos }) {
+  const isThread = Array.isArray(proposal.thread) && proposal.thread.length > 1
   const platform = proposal.platform === 'linkedin' ? 'linkedin' : 'x'
   const isLi = platform === 'linkedin'
   const cap = isLi ? 1300 : MAX
   const canPost = isLi ? canPostLinkedIn : connected
   const [content, setContent] = useState(proposal.content || '')
+  const [parts, setParts] = useState(isThread ? proposal.thread : [])
   const [img, setImg] = useState(proposal.image_url || '')
   const [imgOn, setImgOn] = useState(!!proposal.image_url)
   const [personal, setPersonal] = useState(false)
   const [when, setWhen] = useState(defaultWhen(defaultHour))
+  const [smartSlot, setSmartSlot] = useState(false)
+  const whenTouched = useRef(false)
   const [connId, setConnId] = useState(xConns[0]?.id || '')
   const [busy, setBusy] = useState(false); const [regen, setRegen] = useState(false); const [done, setDone] = useState(null)
   const [rating, setRating] = useState(null); const [err, setErr] = useState(''); const [doneErr, setDoneErr] = useState('')
   const countdown = useCountdown(when)
 
   useEffect(() => { if (!connId && xConns[0]?.id) setConnId(xConns[0].id) }, [xConns, connId])
+
+  // Prefill the time picker with the user's next SMART slot (their windows,
+  // weighted by what's actually earned engagement). Editing the picker wins.
+  useEffect(() => {
+    let on = true
+    authed(`/api/schedule?platform=${platform}`).then(r => r.json()).then(d => {
+      if (on && d.when && !whenTouched.current) {
+        const t = new Date(d.when); const z = n => String(n).padStart(2, '0')
+        setWhen(`${t.getFullYear()}-${z(t.getMonth() + 1)}-${z(t.getDate())}T${z(t.getHours())}:${z(t.getMinutes())}`)
+        setSmartSlot(true)
+      }
+    }).catch(() => {})
+    return () => { on = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function regenerate() {
     setRegen(true)
@@ -439,10 +457,14 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
     setRating(r)
     authed('/api/feedback', { method: 'POST', body: JSON.stringify({ content, rating: r }) }).catch(() => {})
   }
+  const threadInvalid = isThread && (parts.some(t => !t.trim() || t.length > 280) || parts.filter(t => t.trim()).length < 2)
   async function approve(postNow) {
-    if (!content.trim() || content.length > cap) return
+    if (isThread ? threadInvalid : (!content.trim() || content.length > cap)) return
     setBusy(true)
-    const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ content, platform, scheduledFor: new Date(when).toISOString(), imageUrl: imgOn ? img : null, xConnectionId: isLi ? null : (connId || null) }) })
+    const body = isThread
+      ? { thread: parts.filter(t => t.trim()), scheduledFor: new Date(when).toISOString(), xConnectionId: connId || null }
+      : { content, platform, scheduledFor: new Date(when).toISOString(), imageUrl: imgOn ? img : null, xConnectionId: isLi ? null : (connId || null) }
+    const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify(body) })
     const d = await r.json()
     if (!r.ok || d.error || !d.post?.id) { setBusy(false); setErr(d.error || 'Could not save the post.'); return }
     let result = 'scheduled', errMsg = ''
@@ -454,18 +476,28 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
     }
     setBusy(false); setDoneErr(errMsg); setDone(result); onResolved && onResolved()
   }
-  if (done) return <div className={'dp-done ' + done}>{done === 'posted' ? (isLi ? 'Posted to LinkedIn' : 'Posted to X') : done === 'failed' ? `Failed — saved to Queue. ${doneErr}` : done === 'discarded' ? 'Discarded' : `Scheduled · ${fmt(new Date(when).toISOString())}`}</div>
+  if (done) return <div className={'dp-done ' + done}>{done === 'posted' ? (isThread ? 'Thread started — the rest follows in order' : isLi ? 'Posted to LinkedIn' : 'Posted to X') : done === 'failed' ? `Failed — saved to Queue. ${doneErr}` : done === 'discarded' ? 'Discarded' : `Scheduled · ${fmt(new Date(when).toISOString())}`}</div>
   return (
     <motion.div className="card dp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
       <div className="dp-head">
-        <span>Draft preview</span>
+        <span>{isThread ? `Thread draft · ${parts.length} parts` : 'Draft preview'}</span>
         <div className="row" style={{ gap: 8 }}>
           <button className={'thumb' + (rating === 'up' ? ' on up' : '')} title="More like this" onClick={() => rate('up')}><ThumbsUp size={13} /></button>
           <button className={'thumb' + (rating === 'down' ? ' on down' : '')} title="Less like this" onClick={() => rate('down')}><ThumbsDown size={13} /></button>
-          <Toggle on={imgOn} onChange={toggleImg} label="image" />
+          {!isThread && <Toggle on={imgOn} onChange={toggleImg} label="image" />}
         </div>
       </div>
-      <textarea className="field dp-text" rows={isLi ? 9 : 5} maxLength={cap + 100} value={content} onChange={e => setContent(e.target.value)} />
+      {isThread
+        ? <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {parts.map((t, i) => (
+              <div key={i} style={{ position: 'relative' }}>
+                <textarea className="field dp-text" style={{ minHeight: 72 }} rows={3} maxLength={380} value={t}
+                  onChange={e => setParts(ps => ps.map((x, j) => j === i ? e.target.value : x))} />
+                <span className={'count' + (t.length > 280 ? ' over' : '')} style={{ position: 'absolute', right: 10, bottom: 8, fontSize: 10.5 }}>{i + 1}/{parts.length} · {t.length}/280</span>
+              </div>
+            ))}
+          </div>
+        : <textarea className="field dp-text" rows={isLi ? 9 : 5} maxLength={cap + 100} value={content} onChange={e => setContent(e.target.value)} />}
       <AnimatePresence>
         {imgOn && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
@@ -484,16 +516,16 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
       )}
       <div className="row" style={{ justifyContent: 'space-between', marginTop: 10, gap: 8 }}>
         <div className="row" style={{ gap: 8, minWidth: 0 }}>
-          <input type="datetime-local" className="field dt" value={when} onChange={e => setWhen(e.target.value)} />
-          <span className="cd-pill"><Clock size={11} /> {countdown}</span>
+          <input type="datetime-local" className="field dt" value={when} onChange={e => { whenTouched.current = true; setSmartSlot(false); setWhen(e.target.value) }} />
+          <span className="cd-pill" title={smartSlot ? 'Picked from your posting windows + engagement history' : ''}><Clock size={11} /> {countdown}{smartSlot ? ' · smart' : ''}</span>
         </div>
-        <span className={'count' + (content.length > cap ? ' over' : '')}>{content.length}/{cap}</span>
+        {!isThread && <span className={'count' + (content.length > cap ? ' over' : '')}>{content.length}/{cap}</span>}
       </div>
       {err && <div className="notice" style={{ color: '#B3372F', marginTop: 8 }}>{err}</div>}
       <div className="dp-actions">
         <button className="icon-btn x" title="Discard" onClick={() => setDone('discarded')}><Ex /></button>
-        <button className="icon-btn check" title="Approve & schedule" disabled={busy || content.length > cap || !content.trim()} onClick={() => approve(false)}><Check /> <span>Schedule</span></button>
-        <motion.button className="btn-primary btn-sm" whileTap={{ scale: 0.96 }} disabled={busy || !canPost || content.length > cap} onClick={() => approve(true)} title={!canPost ? (isLi ? 'Connect LinkedIn first' : 'Connect X first') : 'Post now'}>Post now</motion.button>
+        <button className="icon-btn check" title="Approve & schedule" disabled={busy || (isThread ? threadInvalid : (content.length > cap || !content.trim()))} onClick={() => approve(false)}><Check /> <span>Schedule</span></button>
+        <motion.button className="btn-primary btn-sm" whileTap={{ scale: 0.96 }} disabled={busy || !canPost || (isThread ? threadInvalid : content.length > cap)} onClick={() => approve(true)} title={!canPost ? (isLi ? 'Connect LinkedIn first' : 'Connect X first') : 'Post now'}>Post now</motion.button>
       </div>
     </motion.div>
   )
@@ -517,6 +549,7 @@ function QueueCard({ p, i, connected, socialPlatforms, defaultCollapsed, onSaveE
         <span className="status-dot" style={{ background: s.c }} />
         <span className="qtitle">{open ? <span className="muted tiny">{fmt(p.scheduled_for)} · {s.label}</span> : titleOf(p.content)}</span>
         <SourceTag p={p} />
+        {p.thread_id && <span className="src-tag" style={{ color: 'var(--plum)', background: 'var(--plum-soft)', borderColor: 'var(--plum-line)' }}>thread {(p.thread_index ?? 0) + 1}</span>}
         <ChevronDown size={15} className="qchev" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', color: '#A39E94', flex: 'none' }} />
       </button>
       <AnimatePresence initial={false}>
@@ -629,6 +662,7 @@ function PostedSection({ posted }) {
                   <div className="row" style={{ justifyContent: 'space-between', gap: 8, marginBottom: 4 }}><SourceTag p={p} /></div>
                   <div className="card-body" style={{ fontSize: 12.5 }}>{p.content}</div>
                   <div className="muted tiny" style={{ marginTop: 5 }}>Posted {fmt(p.posted_at || p.scheduled_for)}{p.external_id && (p.platform || 'x') === 'x' ? <> · <a className="link" href={`https://x.com/i/web/status/${p.external_id}`} target="_blank" rel="noreferrer">view</a></> : ''}</div>
+                  {p.metrics_at && <div className="row" style={{ gap: 10, marginTop: 5, fontSize: 11.5, color: 'var(--muted)', fontWeight: 600 }}><span>♥ {p.likes || 0}</span><span>↻ {p.reposts || 0}</span><span>💬 {p.replies || 0}</span>{p.impressions ? <span>{p.impressions.toLocaleString()} views</span> : null}</div>}
                 </div>
               </div>
             ))}
@@ -1551,6 +1585,9 @@ function AccountPage({ me, session, accountTab, setAccountTab, authed, banner, p
   const [goals, setGoals] = useState(p.goals || '')
   const [tz, setTz] = useState(p.timezone || 'America/Los_Angeles')
   const [hour, setHour] = useState(p.default_post_hour ?? 9)
+  const [windows, setWindows] = useState(Array.isArray(p.posting_windows) && p.posting_windows.length
+    ? p.posting_windows
+    : [{ start: '08:30', end: '10:30' }, { start: '12:00', end: '13:30' }, { start: '17:00', end: '19:30' }])
   const [imgDefault, setImgDefault] = useState(!!p.include_image_default)
   const [busy, setBusy] = useState(false); const [saved, setSaved] = useState(false)
   const [interval, setIntervalSel] = useState(me?.planInterval === 'annual' ? 'annual' : 'monthly')
@@ -1565,7 +1602,7 @@ function AccountPage({ me, session, accountTab, setAccountTab, authed, banner, p
 
   async function save() {
     setBusy(true)
-    await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ full_name: name, role, goals, timezone: tz, default_post_hour: Number(hour), include_image_default: imgDefault }) })
+    await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ full_name: name, role, goals, timezone: tz, default_post_hour: Number(hour), include_image_default: imgDefault, posting_windows: windows }) })
     setBusy(false); setSaved(true); setTimeout(() => setSaved(false), 1800); onReload && onReload()
   }
   function chooseplan(plan) {
@@ -1628,6 +1665,20 @@ function AccountPage({ me, session, accountTab, setAccountTab, authed, banner, p
               <div className="card acct-card">
                 <div className="set-row"><span>Timezone</span><select className="field set-input" value={tz} onChange={e => setTz(e.target.value)}>{TZS.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}</select></div>
                 <div className="set-row"><span>Default post time</span><select className="field set-input" value={hour} onChange={e => setHour(e.target.value)}>{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{((h % 12) || 12) + (h < 12 ? ' AM' : ' PM')}</option>)}</select></div>
+                <div className="set-row" style={{ alignItems: 'flex-start' }}>
+                  <span>Posting windows<br /><span className="muted tiny" style={{ fontWeight: 400 }}>Cadence picks the exact moment inside these</span></span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                    {windows.map((w, i) => (
+                      <div className="row" key={i} style={{ gap: 6 }}>
+                        <input type="time" className="field set-input" value={w.start} onChange={e => setWindows(ws => ws.map((x, j) => j === i ? { ...x, start: e.target.value } : x))} />
+                        <span className="muted tiny">–</span>
+                        <input type="time" className="field set-input" value={w.end} onChange={e => setWindows(ws => ws.map((x, j) => j === i ? { ...x, end: e.target.value } : x))} />
+                        <button className="mini danger" disabled={windows.length <= 1} onClick={() => setWindows(ws => ws.filter((_, j) => j !== i))}><LX size={11} /></button>
+                      </div>
+                    ))}
+                    {windows.length < 5 && <button className="mini" onClick={() => setWindows(ws => [...ws, { start: '20:00', end: '21:30' }])}><Plus size={11} /> Add window</button>}
+                  </div>
+                </div>
                 <div className="set-row"><span>Attach an AI image by default</span><Toggle on={imgDefault} onChange={setImgDefault} /></div>
               </div>
 
@@ -1851,6 +1902,14 @@ function App({ session }) {
   const loadAgentCamps = useCallback(async () => { const r = await authed('/api/agent-campaigns'); const d = await r.json(); setAgentCampaigns(d.campaigns || []) }, [authed])
 
   useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps])
+
+  // Capture the browser timezone once, so smart scheduling thinks in THEIR time.
+  useEffect(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    if (me?.profile && tz && !me.profile.timezone) {
+      authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ timezone: tz }) }).catch(() => {})
+    }
+  }, [me?.profile, authed]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll clip jobs while any is queued/processing so progress streams in live.
   useEffect(() => {
@@ -2109,6 +2168,7 @@ function App({ session }) {
   function openNew() { setCompose({ mode: 'new', platform: 'x', content: '', when: defaultWhen(defaultHour), imgOn: imgDefault, img: '', connId: xConns[0]?.id || '', personal: false }) }
   function openSchedule(p) { setCompose({ mode: p.status === 'draft' ? 'draft' : 'edit', id: p.id, platform: p.platform || 'x', content: p.content, when: toLocalInput(new Date(p.scheduled_for)), imgOn: !!p.image_url, img: p.image_url || '', connId: p.x_connection_id || xConns[0]?.id || '', personal: false }) }
   async function saveEdit(id, content) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, content }) }); loadQueue() }
+  async function pausePost(id) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, status: 'paused' }) }); setBanner('Held — it won’t go out until you resume it'); loadQueue() }
   async function composeGenImg() {
     setCompose(c => ({ ...c, imgBusy: true }))
     const r = await authed('/api/image', { method: 'POST', body: JSON.stringify({ prompt: compose.content || 'social post', fromContent: true, personal: !!compose.personal, seed: Math.floor(Math.random() * 1e5) }) })
@@ -2191,10 +2251,34 @@ function App({ session }) {
                 const fQueue = queue.filter(matchP)
                 const schedShows = slideshows.filter(s => ['scheduled', 'posted'].includes(s.status) && (qPlatform === 'all' || qPlatform === 'instagram' || qPlatform === 'tiktok'))
                 const chips = [['all', 'All'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']]
+                const failed = fQueue.filter(p => p.status === 'failed')
+                const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999)
+                const goingToday = fQueue.filter(p => p.status === 'queued' && new Date(p.scheduled_for) <= todayEnd)
+                const dayOf = iso => { const d = new Date(iso), t = new Date()
+                  if (d.toDateString() === t.toDateString()) return 'Today'
+                  const tm = new Date(t); tm.setDate(t.getDate() + 1)
+                  return d.toDateString() === tm.toDateString() ? 'Tomorrow' : d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) }
+                let lastDay = null
                 return (<>
                   <div className="qfilter">
                     {chips.map(([k, l]) => <button key={k} className={'qchip' + (qPlatform === k ? ' on' : '')} onClick={() => setQPlatform(k)}>{k !== 'all' && <span className="status-dot" style={{ background: platformDot(k) }} />}{l}</button>)}
                   </div>
+                  {failed.length > 0 && (
+                    <div className="fail-banner">⚠ {failed.length} post{failed.length === 1 ? '' : 's'} failed — open the cards below to retry or fix.</div>
+                  )}
+                  {goingToday.length > 0 && (
+                    <div className="card today-strip">
+                      <div className="conn-sec" style={{ margin: '0 0 7px' }}>Going out today · {goingToday.length}</div>
+                      {goingToday.slice(0, 6).map(p => (
+                        <div className="row" key={p.id} style={{ gap: 8, padding: '4px 0', minWidth: 0 }}>
+                          <span className="muted tiny" style={{ flex: 'none', width: 62 }}>{new Date(p.scheduled_for).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
+                          <span className="status-dot" style={{ background: platformDot(p.platform || 'x') }} />
+                          <span style={{ flex: 1, fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{titleOf(p.content)}</span>
+                          <button className="mini" title="Hold this one (back to draft)" onClick={() => pausePost(p.id)}>Hold</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {fQueue.length > 0 && (
                     <div className="src-legend">
                       <span className="src-leg"><span className="dot" style={{ background: '#1E4D3B' }} /> You</span>
@@ -2203,7 +2287,17 @@ function App({ session }) {
                     </div>
                   )}
                   {fQueue.length === 0 && schedShows.length === 0 && <Empty icon={<Clock size={26} />}>Nothing queued{qPlatform !== 'all' ? ` for ${qPlatform}` : ''}. Write one or ask the chat.</Empty>}
-                  <div>{fQueue.map((p, i) => <QueueCard key={p.id} p={p} i={i} connected={connected} socialPlatforms={new Set(socialAccounts.map(a => a.platform))} defaultCollapsed={collapseQueue} onSaveEdit={saveEdit} onPostNow={postNow} onDelete={delPost} onSchedule={openSchedule} />)}</div>
+                  <div>{fQueue.map((p, i) => {
+                    const day = ['queued', 'posting'].includes(p.status) ? dayOf(p.scheduled_for) : null
+                    const head = day && day !== lastDay ? <div className="day-head">{day}</div> : null
+                    if (day) lastDay = day
+                    return (
+                      <div key={p.id}>
+                        {head}
+                        <QueueCard p={p} i={i} connected={connected} socialPlatforms={new Set(socialAccounts.map(a => a.platform))} defaultCollapsed={collapseQueue} onSaveEdit={saveEdit} onPostNow={postNow} onDelete={delPost} onSchedule={openSchedule} />
+                      </div>
+                    )
+                  })}</div>
                   {schedShows.map(s => (
                     <div className="card camp-card" key={s.id}>
                       <div className="row" style={{ gap: 10 }}>
@@ -2397,7 +2491,12 @@ function App({ session }) {
             {messages.length === 0 && (
               <div className="chat-welcome">
                 <div className="wordmark" style={{ fontSize: 19, marginBottom: 4 }}>How can I help?</div>
-                <div className="muted" style={{ fontSize: 13 }}>Post, schedule, make carousels, run replies — across X, LinkedIn, Instagram & TikTok. Just ask.</div>
+                <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>Post, schedule, make carousels, run replies — across X, LinkedIn, Instagram & TikTok. Just ask.</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
+                  {["Write a post about what I'm building this week", 'Turn my last LinkedIn post into a thread', "Make a carousel: 5 lessons from this month"].map(ex => (
+                    <button key={ex} className="preset" style={{ fontSize: 12.5 }} onClick={() => usePreset(ex)}>{ex}</button>
+                  ))}
+                </div>
               </div>
             )}
             <AnimatePresence initial={false}>
@@ -2850,6 +2949,10 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .clip-card { min-width: 0; }
 .clip-vid { width: 100%; aspect-ratio: 9/16; object-fit: cover; border-radius: 8px; background: #1A1A18; border: 1px solid var(--line); }
 .qfilter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.fail-banner { font-size: 12.5px; font-weight: 600; color: var(--bad); background: var(--bad-soft); border: 1px solid var(--bad-line); border-radius: 8px; padding: 10px 13px; margin-bottom: 12px; }
+.today-strip { padding: 12px 14px; margin-bottom: 12px; border-color: var(--accent-line); }
+.day-head { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); margin: 16px 0 8px; }
+.day-head:first-child { margin-top: 2px; }
 .qchip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: transparent; border: 1px solid var(--line2); color: var(--muted); cursor: pointer; font-family: inherit; }
 .qchip.on { background: var(--ink); border-color: var(--ink); color: #FAF9F7; }
 .camp-card.on { border-color: var(--gold-line); background: #F8F4E9; }

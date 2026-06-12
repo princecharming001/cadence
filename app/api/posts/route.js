@@ -1,6 +1,8 @@
 // Direct queue CRUD + manual "post now", all scoped to the authenticated user.
+import { randomUUID } from 'crypto'
 import { admin, getUser } from '@/lib/supabase'
 import { postOne } from '@/lib/posting'
+import { nextSmartSlot } from '@/lib/scheduling'
 import { PLATFORM } from '@/lib/prompts'
 
 const capOf = p => (PLATFORM[p] || PLATFORM.x).cap
@@ -31,12 +33,34 @@ export async function POST(req) {
     return Response.json(result, { status: code })
   }
 
-  const content = (body.content || '').trim()
-  if (!content) return Response.json({ error: 'Content required.' }, { status: 400 })
-  const scheduled = body.scheduledFor || new Date().toISOString()
   // All four platforms are first-class queue citizens (IG/TikTok publish via
   // Zernio and need media; the poster enforces that at publish time).
   const platform = Object.hasOwn(PLATFORM, body.platform) ? body.platform : 'x'
+  // scheduledFor 'auto' → the smart slot picker chooses the moment.
+  const scheduled = !body.scheduledFor || body.scheduledFor === 'auto'
+    ? (body.scheduledFor === 'auto' ? await nextSmartSlot(user.id, { platform }) : new Date().toISOString())
+    : body.scheduledFor
+
+  // THREAD: { thread: [part1, part2, ...] } → one row per part, chained at
+  // publish time (each part replies to the previous; the poster enforces order).
+  if (Array.isArray(body.thread) && body.thread.length > 1) {
+    const parts = body.thread.map(t => String(t || '').trim()).filter(Boolean).slice(0, 8)
+    if (parts.length < 2) return Response.json({ error: 'A thread needs at least 2 parts.' }, { status: 400 })
+    for (const t of parts) if (t.length > capOf('x')) return Response.json({ error: 'A thread part is over 280 characters.' }, { status: 400 })
+    const threadId = randomUUID()
+    const rows = parts.map((content, i) => ({
+      content, scheduled_for: scheduled, status: 'queued', user_id: user.id, platform: 'x',
+      thread_id: threadId, thread_index: i,
+      x_connection_id: body.xConnectionId || null,
+      image_url: i === 0 ? (body.imageUrl || null) : null,
+    }))
+    const { data, error } = await admin.from('posts').insert(rows).select()
+    if (error) return Response.json({ error: error.message }, { status: 500 })
+    return Response.json({ post: data[0], thread: data })
+  }
+
+  const content = (body.content || '').trim()
+  if (!content) return Response.json({ error: 'Content required.' }, { status: 400 })
   if (content.length > capOf(platform)) {
     return Response.json({ error: `Over the ${capOf(platform)}-character ${PLATFORM[platform].label} limit.` }, { status: 400 })
   }
