@@ -25,10 +25,16 @@ const ZERNIO_PLATFORMS = ['linkedin', 'instagram', 'tiktok']
 export async function GET(req) {
   const user = await getUser(req)
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  const { data } = await admin.from('feeder_agents').select('*').eq('user_id', user.id).order('created_at', { ascending: true })
-  // Refresh follower stats / real profile pictures in the background (24h TTL
-  // per agent) — this response stays fast; the next poll shows fresh numbers.
-  refreshAgentStats(user.id).catch(() => {})
+  let { data } = await admin.from('feeder_agents').select('*').eq('user_id', user.id).order('created_at', { ascending: true })
+  // Never show blank agents: when any agent has no stats at all, refresh
+  // INLINE so the first paint has real numbers + the real profile picture;
+  // otherwise refresh in the background on the 24h TTL.
+  if ((data || []).some(a => !a.stats)) {
+    await refreshAgentStats(user.id).catch(() => {})
+    data = (await admin.from('feeder_agents').select('*').eq('user_id', user.id).order('created_at', { ascending: true })).data
+  } else {
+    refreshAgentStats(user.id).catch(() => {})
+  }
   return Response.json({ agents: data || [] })
 }
 

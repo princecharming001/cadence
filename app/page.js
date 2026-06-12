@@ -737,7 +737,7 @@ const PLATFORMS = [
 ]
 function platformDot(p) { return ({ x: '#15171A', instagram: '#E1306C', tiktok: '#00b8b0', linkedin: '#0A66C2', facebook: '#1877F2' }[p] || '#888') }
 
-function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, onGenerate, onSave, onDelete, hideAccounts }) {
+function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, onGenerate, onSave, onDelete, hideAccounts, platformFocus }) {
   const [topic, setTopic] = useState('')
   const [format, setFormat] = useState('listicle'); const [style, setStyle] = useState('bold')
   const [count, setCount] = useState(6)
@@ -745,7 +745,11 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
   const [pickedAccts, setPickedAccts] = useState([]); const [when, setWhen] = useState('')
 
   // Every platform that takes an image carousel — Instagram, TikTok, LinkedIn, Facebook.
+  // On a platform tab, that platform's accounts are the default target and the
+  // rest become an explicit "Cross-post to" choice.
   const igLike = accounts.filter(a => ['instagram', 'tiktok', 'linkedin', 'facebook'].includes(a.platform))
+  const focusAccts = platformFocus ? igLike.filter(a => a.platform === platformFocus) : igLike
+  const crossAccts = platformFocus ? igLike.filter(a => a.platform !== platformFocus) : []
   const toggleAcct = id => setPickedAccts(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
 
   async function gen() {
@@ -755,6 +759,7 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
     setBusy(false)
     if (d.error) return
     setDeck({ ...d, topic: topic.trim() })
+    if (platformFocus) setPickedAccts(focusAccts.map(a => a.id)) // this tab's platform is pre-selected
   }
   async function schedule(post) {
     if (!deck) return
@@ -827,8 +832,14 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
           {igLike.length > 0 && <>
             <div className="muted tiny" style={{ margin: '12px 0 6px' }}>Post to:</div>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-              {igLike.map(a => <button key={a.id} type="button" className={'chip' + (pickedAccts.includes(a.id) ? ' on' : '')} onClick={() => toggleAcct(a.id)}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</button>)}
+              {focusAccts.map(a => <button key={a.id} type="button" className={'chip' + (pickedAccts.includes(a.id) ? ' on' : '')} onClick={() => toggleAcct(a.id)}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</button>)}
             </div>
+            {crossAccts.length > 0 && <>
+              <div className="muted tiny" style={{ margin: '10px 0 6px' }}>Cross-post to:</div>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                {crossAccts.map(a => <button key={a.id} type="button" className={'chip' + (pickedAccts.includes(a.id) ? ' on' : '')} onClick={() => toggleAcct(a.id)}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform} · {a.platform}</button>)}
+              </div>
+            </>}
             <input type="datetime-local" className="field" style={{ marginTop: 10 }} value={when} onChange={e => setWhen(e.target.value)} />
           </>}
           <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
@@ -1137,12 +1148,15 @@ const EDIT_FORMAT_LIST = [
   { key: 'thread', label: 'Thread', desc: 'a 2-3 tweet mini-thread that advances with the clip' },
   { key: 'reddit', label: 'Reddit story', desc: 'r/ story card opens the clip, captions carry it' },
 ]
-function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, onPost }) {
+function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, onPost, platformFocus }) {
   const [url, setUrl] = useState(''); const [fileName, setFileName] = useState('')
   const [format, setFormat] = useState('vertical'); const [len, setLen] = useState('short'); const [maxClips, setMaxClips] = useState(3)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef(null); const logoRef = useRef(null)
   const postable = accounts.filter(a => ['instagram', 'tiktok'].includes(a.platform))
+  // On a platform tab: that platform posts first-class, the other is cross-post.
+  const focusPost = platformFocus ? postable.filter(a => a.platform === platformFocus) : postable
+  const crossPost = platformFocus ? postable.filter(a => a.platform !== platformFocus) : []
   const [edits, setEdits] = useState(['captions', 'sludge'])
   const [wmOn, setWmOn] = useState(true); const [watermark, setWatermark] = useState('')
   const [outroOn, setOutroOn] = useState(false); const [logoUrl, setLogoUrl] = useState(''); const [logoBusy, setLogoBusy] = useState(false)
@@ -1247,11 +1261,21 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
                   <div className="muted tiny">{c.end - c.start}s{c.edit ? ` · ${(EDIT_FORMAT_LIST.find(f => f.key === c.edit) || {}).label || c.edit}` : ''}{c.caption ? ` · ${c.caption.slice(0, 60)}` : ''}</div>
                   {postable.length > 0 && configured && (
                     <div className="row" style={{ gap: 5, marginTop: 7, flexWrap: 'wrap' }}>
-                      {postable.map(a => (
+                      {focusPost.map(a => (
                         <button key={a.id} className="chip" style={{ fontSize: 11 }} onClick={() => onPost(j.id, i, [a.id])}>
                           <span className="status-dot" style={{ background: platformDot(a.platform) }} />Post @{a.username}
                         </button>
                       ))}
+                      {crossPost.map(a => (
+                        <button key={a.id} className="chip" style={{ fontSize: 11 }} title={`Cross-post this clip to ${a.platform}`} onClick={() => onPost(j.id, i, [a.id])}>
+                          <span className="status-dot" style={{ background: platformDot(a.platform) }} />Cross-post @{a.username}
+                        </button>
+                      ))}
+                      {focusPost.length > 0 && crossPost.length > 0 && (
+                        <button className="chip" style={{ fontSize: 11, fontWeight: 600 }} title="Post to every connected account at once" onClick={() => onPost(j.id, i, postable.map(a => a.id))}>
+                          Post everywhere
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2061,7 +2085,7 @@ function App({ session }) {
     const params = new URLSearchParams(window.location.search)
     const connected = params.get('connected')
     if (!connected) return
-    setTab(connected === 'linkedin' ? 'linkedin' : 'social')
+    setTab(['linkedin', 'instagram', 'tiktok'].includes(connected) ? connected : 'instagram')
     loadSocial(true).then(() => setBanner(`${connected[0].toUpperCase() + connected.slice(1)} connected`))
     window.history.replaceState({}, '', window.location.pathname)
   }, [loadSocial])
@@ -2091,7 +2115,7 @@ function App({ session }) {
   const scopeDirty = useRef(false)
   useEffect(() => {
     if (scopeDirty.current) return
-    setChatScope(tab === 'x' ? ['x'] : tab === 'linkedin' ? ['linkedin'] : tab === 'social' ? ['instagram', 'tiktok'] : [])
+    setChatScope(['x', 'linkedin', 'instagram', 'tiktok'].includes(tab) ? [tab] : [])
   }, [tab])
   function toggleScope(k) {
     if (k === 'all') { scopeDirty.current = false; return setChatScope([]) }
@@ -2128,7 +2152,6 @@ function App({ session }) {
   const liAccount = socialAccounts.find(a => a.platform === 'linkedin')
   const xCampTargets = primaryX ? [{ kind: 'x', id: primaryX.id, platform: 'x', label: '@' + primaryX.username }] : []
   const liCampTargets = liAccount ? [{ kind: 'social', id: liAccount.id, platform: 'linkedin', label: '@' + (liAccount.username || 'LinkedIn') }] : []
-  const igtkCampTargets = socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).map(a => ({ kind: 'social', id: a.id, platform: a.platform, label: '@' + (a.username || a.platform) }))
 
   // Opens a short guide first — X authorizes whichever account is active on x.com,
   // and OAuth 2.0 has no force-login, so we let the user switch accounts before authorizing.
@@ -2426,10 +2449,10 @@ function App({ session }) {
         <section className="pane left">
           <div className="left-head">
             <div className="seg">
-              {['queue', 'x', 'linkedin', 'social', 'campaigns'].map(t => (
+              {['queue', 'x', 'linkedin', 'instagram', 'tiktok', 'campaigns'].map(t => (
                 <button key={t} onClick={() => setTab(t)} className={'seg-btn' + (tab === t ? ' on' : '')}>
                   {tab === t && <motion.span layoutId="seg-pill" className="seg-pill" transition={spring} />}
-                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', social: 'IG/TikTok', campaigns: 'Campaigns' })[t]}</span>
+                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok', campaigns: 'Campaigns' })[t]}</span>
                 </button>
               ))}
             </div>
@@ -2526,45 +2549,59 @@ function App({ session }) {
                 </div>
               </>)}
 
-              {/* IG/TikTok — both brains, accounts, then ONE create area with a
-                  Carousels | Clips switcher. Automation + voice fold away. */}
-              {tab === 'social' && (<>
-                <BrainBanner theme="instagram" dual="tiktok" />
-                {!socialConfigured && <div className="notice" style={{ margin: '10px 0' }}>Connect Zernio to post — previews work now.</div>}
-                {socialConfigured && socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).length === 0 && (
-                  <div className="muted tiny" style={{ margin: '8px 2px 12px' }}>No Instagram or TikTok connected yet — accounts live in the dot, bottom-right.</div>
-                )}
+              {/* Instagram / TikTok — one tab per platform: its brain, REAL
+                  stats, the Carousels|Clips studio scoped to that platform
+                  (with a cross-post option after generating), automations. */}
+              {['instagram', 'tiktok'].includes(tab) && (() => {
+                const plat = tab
+                const platLabel = plat === 'instagram' ? 'Instagram' : 'TikTok'
+                const platAccts = socialAccounts.filter(a => a.platform === plat)
+                const platCampTargets = platAccts.map(a => ({ kind: 'social', id: a.id, platform: plat, label: '@' + (a.username || plat) }))
+                const followers = platAccts.reduce((n, a) => n + (a.followers || 0), 0)
+                return (<>
+                  <BrainBanner theme={plat} />
+                  {platAccts.length ? (
+                    <StatTiles tiles={[
+                      { value: platAccts.some(a => a.followers != null) ? fmtNum(followers) : '—', label: 'Followers' },
+                      { value: fmtNum(posts.filter(p => p.platform === plat && p.status === 'posted').length), label: 'Posted' },
+                      { value: fmtNum(queue.filter(p => p.platform === plat).length), label: 'Queued' },
+                    ]} />
+                  ) : (
+                    <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', margin: '8px 0 14px' }} disabled={!socialConfigured} onClick={() => connectSocial(plat)}>{plat === 'instagram' ? <IGGlyph size={15} /> : <TTGlyph size={15} />} Connect {platLabel}</button>
+                  )}
+                  {!socialConfigured && <div className="notice" style={{ margin: '0 0 10px' }}>Connect Zernio to post — previews work now.</div>}
 
-                <div className="seg" style={{ marginBottom: 12, marginTop: 10 }}>
-                  {[['carousels', 'Carousels'], ['clips', 'Clips']].map(([k, l]) => (
-                    <button key={k} className={'seg-btn' + (igMode === k ? ' on' : '')} onClick={() => setIgMode(k)}>
-                      {igMode === k && <motion.span layoutId="ig-pill" className="seg-pill" transition={spring} />}
-                      <span style={{ position: 'relative', zIndex: 1 }}>{l}</span>
-                    </button>
-                  ))}
-                </div>
-                {igMode === 'carousels' && (
-                  <SlideshowStudio hideAccounts accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows}
-                    onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} />
-                )}
-                {igMode === 'clips' && (
-                  <ClipStudio jobs={clipJobs} accounts={socialAccounts} configured={socialConfigured}
-                    onCreate={createClipJob} onUpload={uploadClipFile} onDelete={deleteClipJob} onPost={postClip} />
-                )}
+                  <div className="seg" style={{ marginBottom: 12 }}>
+                    {[['carousels', 'Carousels'], ['clips', plat === 'instagram' ? 'Reels' : 'Clips']].map(([k, l]) => (
+                      <button key={k} className={'seg-btn' + (igMode === k ? ' on' : '')} onClick={() => setIgMode(k)}>
+                        {igMode === k && <motion.span layoutId="ig-pill" className="seg-pill" transition={spring} />}
+                        <span style={{ position: 'relative', zIndex: 1 }}>{l}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {igMode === 'carousels' && (
+                    <SlideshowStudio hideAccounts platformFocus={plat} accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows}
+                      onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} />
+                  )}
+                  {igMode === 'clips' && (
+                    <ClipStudio platformFocus={plat} jobs={clipJobs} accounts={socialAccounts} configured={socialConfigured}
+                      onCreate={createClipJob} onUpload={uploadClipFile} onDelete={deleteClipJob} onPost={postClip} />
+                  )}
 
-                <div style={{ marginTop: 16 }}>
-                  <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={engSettings.some(s => ['instagram', 'tiktok'].includes(s.platform) && s.enabled)} />}>
-                    <AutoReply platforms={['instagram', 'tiktok']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
-                  </Section>
-                  <Section title="Engage in your niche" hint="comments on relevant posts as you">
-                    <EngageStub platform="Instagram/TikTok" />
-                  </Section>
-                  <Section title="Campaign" hint="auto-post carousels on a schedule" badge={<OnBadge on={campsTouching(['instagram', 'tiktok']).some(c => c.active)} />}>
-                    <PlatformCampaign campaigns={campsFor(['instagram', 'tiktok'])} targets={igtkCampTargets} supportsCarousel canCreate={igtkCampTargets.length > 0} connectHint="Connect Instagram or TikTok above first." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
-                    <CrossCampHint plats={['instagram', 'tiktok']} />
-                  </Section>
-                </div>
-              </>)}
+                  <div style={{ marginTop: 16 }}>
+                    <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={engSettings.some(s => s.platform === plat && s.enabled)} />}>
+                      <AutoReply platforms={[plat]} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                    </Section>
+                    <Section title="Engage in your niche" hint="comments on relevant posts as you">
+                      <EngageStub platform={platLabel} />
+                    </Section>
+                    <Section title="Campaign" hint="auto-post carousels on a schedule" badge={<OnBadge on={campsTouching([plat]).some(c => c.active)} />}>
+                      <PlatformCampaign campaigns={campsFor([plat])} targets={platCampTargets} supportsCarousel canCreate={platCampTargets.length > 0} connectHint={`Connect ${platLabel} first (accounts, bottom-right).`} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
+                      <CrossCampHint plats={[plat]} />
+                    </Section>
+                  </div>
+                </>)
+              })()}
 
               {/* LinkedIn — same shape as X: stats, ready-to-post, replies, and a
                   campaign for your personal account. Connect + voice-source +
@@ -2652,17 +2689,16 @@ function App({ session }) {
               ))}
             </FloatingAccounts>
           )}
-          {tab === 'social' && (
-            <FloatingAccounts glyph={<IGGlyph size={15} />} count={socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).length} label="Instagram & TikTok">
+          {['instagram', 'tiktok'].includes(tab) && (
+            <FloatingAccounts glyph={tab === 'instagram' ? <IGGlyph size={15} /> : <TTGlyph size={15} />} count={socialAccounts.filter(a => a.platform === tab).length} label={tab === 'instagram' ? 'Instagram accounts' : 'TikTok accounts'}>
               <div className="conn-sec row" style={{ marginTop: 0, gap: 7 }}>Your accounts
                 <button className="mini" style={{ marginLeft: 'auto' }} onClick={syncSocial}><RefreshCw size={11} /> Refresh</button>
               </div>
-              {socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform)).map(a => (
-                <AccountRow key={a.id} platform={a.platform} title={a.username || a.platform} subtitle="publishes your posts"
+              {socialAccounts.filter(a => a.platform === tab).map(a => (
+                <AccountRow key={a.id} platform={a.platform} title={a.username || a.platform} subtitle={a.followers != null ? `${fmtNum(a.followers)} followers` : 'publishes your posts'}
                   actions={<button className="mini danger" onClick={() => disconnectSocial(a.id)}>Disconnect</button>} />
               ))}
-              <ConnectBtn disabled={!socialConfigured} onClick={() => connectSocial('instagram')} title={!socialConfigured ? 'Publishing not configured yet' : ''}>Connect Instagram</ConnectBtn>
-              <ConnectBtn disabled={!socialConfigured} onClick={() => connectSocial('tiktok')} title={!socialConfigured ? 'Publishing not configured yet' : ''}>Connect TikTok</ConnectBtn>
+              <ConnectBtn disabled={!socialConfigured} onClick={() => connectSocial(tab)} title={!socialConfigured ? 'Publishing not configured yet' : ''}>Connect {tab === 'instagram' ? 'Instagram' : 'TikTok'}</ConnectBtn>
             </FloatingAccounts>
           )}
         </section>
