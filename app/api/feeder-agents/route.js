@@ -1,6 +1,6 @@
 // /api/feeder-agents — CRUD + run-now + persona re-roll for feeder-account agents.
 import { admin, getUser, isCron } from '@/lib/supabase'
-import { buildAgentPersona, runDueFeederAgents, runFeederAgentById } from '@/lib/feeder-agents'
+import { buildAgentPersona, agentAvatar, runDueFeederAgents, runFeederAgentById } from '@/lib/feeder-agents'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // a think-cycle does several LLM calls + X reads
@@ -58,9 +58,10 @@ export async function POST(req) {
       handle = acct?.username || handle
     }
     const persona = await buildAgentPersona({ interests: agent.interests, handle, previous: agent.persona, platform: agent.platform || 'x' })
+    const avatar = await agentAvatar(persona, user.id) // new face for the new identity
     // Fresh identity → fresh memory; keep cycle count for evolution cadence.
     const { data, error } = await admin.from('feeder_agents')
-      .update({ persona, name: persona.name, memory: [] }).eq('id', agent.id).select().single()
+      .update({ persona, name: persona.name, memory: [], avatar_url: avatar }).eq('id', agent.id).select().single()
     if (error) return Response.json({ error: error.message }, { status: 500 })
     return Response.json({ agent: data })
   }
@@ -81,7 +82,7 @@ export async function POST(req) {
     if (!acct) return Response.json({ error: 'That account is not connected.' }, { status: 404 })
     if (!ZERNIO_PLATFORMS.includes(acct.platform)) return Response.json({ error: 'Agents support X, LinkedIn, Instagram, and TikTok accounts.' }, { status: 400 })
     const persona = await buildAgentPersona({ interests, handle: acct.username || acct.platform, platform: acct.platform })
-    insert = { user_id: user.id, social_account_id: acct.id, platform: acct.platform, interests, persona, name: persona.name, active: false, support_primary: false }
+    insert = { user_id: user.id, social_account_id: acct.id, platform: acct.platform, interests, persona, name: persona.name, active: false, support_primary: false, avatar_url: await agentAvatar(persona, user.id) }
   } else {
     if (!body.x_connection_id) return Response.json({ error: 'Pick an account for the agent.' }, { status: 400 })
     const { data: conn } = await admin.from('x_connections')
@@ -89,7 +90,7 @@ export async function POST(req) {
     if (!conn) return Response.json({ error: 'That X account is not connected.' }, { status: 404 })
     if (conn.is_primary) return Response.json({ error: 'Agents run on feeder accounts — your primary stays yours.' }, { status: 400 })
     const persona = await buildAgentPersona({ interests, handle: conn.username })
-    insert = { user_id: user.id, x_connection_id: conn.id, platform: 'x', interests, persona, name: persona.name, active: false }
+    insert = { user_id: user.id, x_connection_id: conn.id, platform: 'x', interests, persona, name: persona.name, active: false, avatar_url: await agentAvatar(persona, user.id) }
   }
   if (campaignId) insert.campaign_id = campaignId
 

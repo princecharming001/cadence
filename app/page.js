@@ -981,28 +981,34 @@ function StatTiles({ tiles }) {
 // Single-platform campaign: promote a topic on the user's OWN account for this
 // platform, in their voice, on a cadence. Reuses the brand-campaign engine with
 // targets locked to this tab's platform.
-function PlatformCampaign({ campaigns, targets, supportsCarousel, allowImage, canCreate, connectHint, onSave, onPatch, onDelete, onRun }) {
+// Minimal by design: one topic box, a cadence, go. The campaign name derives
+// from the topic; carousel style/format and images use sane defaults instead
+// of asking — the engine is the product, not the form.
+const CADENCES = [[12, '2× a day'], [24, 'Daily'], [72, 'Every 3 days'], [168, 'Weekly']]
+const cadenceLabel = hrs => (CADENCES.find(([h]) => h === Number(hrs)) || [])[1] || `every ${hrs}h`
+
+function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, connectHint, onSave, onPatch, onDelete, onRun }) {
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState(''); const [topic, setTopic] = useState('')
+  const [topic, setTopic] = useState('')
   const [hours, setHours] = useState(24)
-  const [style, setStyle] = useState('bold'); const [format, setFormat] = useState('listicle'); const [img, setImg] = useState(false)
   const [picked, setPicked] = useState([]); const [busy, setBusy] = useState(false)
   const single = targets.length === 1
   function startNew() { setPicked(targets.map(t => t.id)); setOpen(true) }
   const chosen = single ? targets : targets.filter(t => picked.includes(t.id))
   async function submit() {
-    if (!name.trim() || !topic.trim() || !chosen.length) return
+    if (!topic.trim() || !chosen.length) return
     setBusy(true)
+    const t = topic.trim()
     const payload = {
-      name: name.trim(), topic: topic.trim(),
+      name: t.length > 42 ? t.slice(0, 42).trimEnd() + '…' : t,
+      topic: t,
       targets: chosen.map(t => ({ kind: t.kind, id: t.id, platform: t.platform })),
-      interval_hours: Number(hours), include_image: img,
+      interval_hours: Number(hours), include_image: false, active: true,
     }
-    if (supportsCarousel) { payload.carousel_style = style; payload.carousel_format = format }
-    payload.active = true
+    if (supportsCarousel) { payload.carousel_style = 'bold'; payload.carousel_format = 'listicle' }
     const ok = await onSave(payload)
     setBusy(false)
-    if (ok) { setOpen(false); setName(''); setTopic(''); setPicked([]) }
+    if (ok) { setOpen(false); setTopic(''); setPicked([]) }
   }
   return (
     <>
@@ -1011,13 +1017,12 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, allowImage, ca
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
             <div style={{ minWidth: 0 }}>
               <div className="conn-title">{c.name}</div>
-              <div className="muted tiny" style={{ marginTop: 2 }}>{c.topic}</div>
-              {c.status_detail && <div className="muted tiny" style={{ marginTop: 6 }}>{c.running && <Loader2 size={10} className="spin" />} {c.status_detail}</div>}
+              {c.status_detail && <div className="muted tiny" style={{ marginTop: 4 }}>{c.running && <Loader2 size={10} className="spin" />} {c.status_detail}</div>}
             </div>
             <Toggle on={!!c.active} onChange={v => onPatch(c.id, { active: v })} />
           </div>
           <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-            <span className="muted tiny" style={{ marginRight: 'auto' }}>every {c.interval_hours}h</span>
+            <span className="muted tiny" style={{ marginRight: 'auto' }}>{cadenceLabel(c.interval_hours)}</span>
             <button className="mini" onClick={() => onRun(c.id)} disabled={c.running}><Play size={11} /> Run now</button>
             <button className="mini danger" onClick={() => onDelete(c.id)}><Trash2 size={12} /></button>
           </div>
@@ -1025,32 +1030,19 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, allowImage, ca
       ))}
       {open ? (
         <div className="card camp-form">
-          <input className="field" placeholder="Campaign name (e.g. Launch week)" value={name} onChange={e => setName(e.target.value)} />
-          <textarea className="field" rows={2} style={{ marginTop: 8 }} placeholder="What to promote — written in your voice" value={topic} onChange={e => setTopic(e.target.value)} />
+          <textarea className="field" rows={2} placeholder="What should it promote? (written in your voice)" value={topic} onChange={e => setTopic(e.target.value)} autoFocus />
           {!single && (<>
             <label className="ob-label">Post to</label>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
               {targets.map(t => <button type="button" key={t.id} className={'chip' + (picked.includes(t.id) ? ' on' : '')} onClick={() => setPicked(p => p.includes(t.id) ? p.filter(x => x !== t.id) : [...p, t.id])}><span className="status-dot" style={{ background: platformDot(t.platform) }} />{t.label}</button>)}
             </div>
           </>)}
-          {supportsCarousel && (
-            <div style={{ marginTop: 10 }}>
-              <label className="ob-label">Carousel style</label>
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                {SLIDE_STYLE_LIST.map(s => <button type="button" key={s.key} className={'sw-chip' + (style === s.key ? ' on' : '')} onClick={() => setStyle(s.key)}><span className="sw" style={{ background: s.swatch.startsWith('linear') ? undefined : s.swatch, backgroundImage: s.swatch.startsWith('linear') ? s.swatch : undefined, color: s.fg }}>Aa</span>{s.label}</button>)}
-              </div>
-              <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                {SLIDESHOW_FORMATS.map(f => <button type="button" key={f.key} className={'chip' + (format === f.key ? ' on' : '')} onClick={() => setFormat(f.key)}>{f.label}</button>)}
-              </div>
-            </div>
-          )}
-          <div className="row" style={{ gap: 12, marginTop: 12, alignItems: 'center', justifyContent: 'space-between' }}>
-            <label className="camp-num">every <input type="number" min={1} className="field" value={hours} onChange={e => setHours(e.target.value)} /> hours</label>
-            {allowImage && !supportsCarousel && <label className="row" style={{ gap: 7, fontSize: 12.5 }}><Toggle on={img} onChange={setImg} /> AI image</label>}
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
+            {CADENCES.map(([h, l]) => <button type="button" key={h} className={'chip' + (Number(hours) === h ? ' on' : '')} onClick={() => setHours(h)}>{l}</button>)}
           </div>
           <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
             <button className="mini" onClick={() => setOpen(false)}>Cancel</button>
-            <button className="btn-primary btn-sm" disabled={busy || !name.trim() || !topic.trim() || !chosen.length} onClick={submit}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start campaign'}</button>
+            <button className="btn-primary btn-sm" disabled={busy || !topic.trim() || !chosen.length} onClick={submit}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start campaign'}</button>
           </div>
         </div>
       ) : (
@@ -1100,6 +1092,10 @@ const CLIP_FORMAT_LIST = [
 // titles are AI-written from the transcript; watermark is your handle.
 const EDIT_FORMAT_LIST = [
   { key: 'captions', label: 'Captions', desc: 'word-by-word bold captions, yellow highlight' },
+  { key: 'emphasis', label: 'Emphasis pop', desc: 'huge center captions, each line a new color' },
+  { key: 'tweet', label: 'Tweet frame', desc: 'clip under a viral-tweet card with your handle' },
+  { key: 'brand', label: 'Brand + follow', desc: 'pinned handle, ends on a FOLLOW card' },
+  { key: 'cinematic', label: 'Cinematic', desc: 'letterbox bars, minimal elegant captions' },
   { key: 'sludge', label: 'Sludge split', desc: 'your clip on top, gameplay underneath' },
   { key: 'hook', label: 'Hook + captions', desc: 'big AI title first, captions throughout' },
   { key: 'clean', label: 'Clean', desc: 'watermark only' },
@@ -1351,6 +1347,19 @@ const EngageStub = ({ platform }) => <div className="muted tiny" style={{ paddin
 // ── Feeder agents — an autonomous persona per feeder account. Each one thinks
 // on a cadence, posts and replies as ITSELF, quietly backs the primary, and
 // evolves its own identity from what it does. ──────────────────────────────────
+// Agent identity: AI-generated profile picture when we have one, else a
+// deterministic colored initial — the card leads with WHO the agent is.
+function AgentAvatar({ agent, size = 40 }) {
+  const name = agent?.persona?.name || agent?.name || 'A'
+  if (agent?.avatar_url) return <img src={agent.avatar_url} alt={name} className="agent-pfp" style={{ width: size, height: size }} />
+  const hue = Math.abs([...name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) | 0, 0)) % 360
+  return (
+    <span className="agent-pfp" style={{ width: size, height: size, background: `hsl(${hue} 48% 84%)`, color: `hsl(${hue} 52% 32%)`, fontSize: Math.round(size * 0.42) }}>
+      {name[0]?.toUpperCase() || 'A'}
+    </span>
+  )
+}
+
 function FeederAgents({ agents, xConns, posts, campaigns = [], onSpawn, onPatch, onDelete, onRun, onReroll }) {
   const feeders = xConns.filter(c => !c.is_primary)
   const [seed, setSeed] = useState({})        // connId -> interests draft
@@ -1383,12 +1392,15 @@ function FeederAgents({ agents, xConns, posts, campaigns = [], onSpawn, onPatch,
         return (
           <div className={'card camp-card' + (a.active ? ' on' : '')} key={c.id} style={{ display: 'block' }}>
             <div className="row" style={{ justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-              <div style={{ minWidth: 0 }}>
-                <div className="conn-title row" style={{ gap: 7 }}><Bot size={14} /> {p.name || a.name || 'Agent'} <span className="muted tiny" style={{ fontWeight: 400 }}>· @{c.username}</span>
-                  {a.campaign_id && <span className="role-badge" title="On a campaign mission">{campaigns.find(cp => cp.id === a.campaign_id)?.name || 'campaign'}</span>}
+              <div className="row" style={{ gap: 11, minWidth: 0, alignItems: 'flex-start' }}>
+                <AgentAvatar agent={a} size={42} />
+                <div style={{ minWidth: 0 }}>
+                  <div className="conn-title row" style={{ gap: 7 }}>{p.name || a.name || 'Agent'}
+                    {a.campaign_id && <span className="role-badge" title="On a campaign mission">{campaigns.find(cp => cp.id === a.campaign_id)?.name || 'campaign'}</span>}
+                  </div>
+                  <div className="muted tiny" style={{ marginTop: 2 }}>@{c.username}{p.archetype ? ` · ${p.archetype}` : ''}</div>
+                  {lastNote && <div className="agent-note">“{lastNote}”</div>}
                 </div>
-                <div className="muted tiny" style={{ marginTop: 3 }}>{p.archetype}{p.tone ? ` · ${p.tone}` : ''}</div>
-                {lastNote && <div className="agent-note">“{lastNote}”</div>}
               </div>
               <Toggle on={!!a.active} onChange={v => onPatch(a.id, { active: v }, v ? `${p.name || 'Agent'} is live` : `${p.name || 'Agent'} paused`)} />
             </div>
@@ -1506,9 +1518,10 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
             {roster.map(a => {
               const p = a.persona || {}
               return (
-                <div className="row" key={a.id} style={{ gap: 8, padding: '7px 0 0', minWidth: 0 }}>
-                  <span className="status-dot" style={{ background: platformDot(a.platform || 'x') }} />
-                  <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Bot size={12} style={{ verticalAlign: -2 }} /> {p.name || a.name}</span>
+                <div className="row" key={a.id} style={{ gap: 9, padding: '7px 0 0', minWidth: 0 }}>
+                  <AgentAvatar agent={a} size={26} />
+                  <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name || a.name}</span>
+                  <span className="status-dot" style={{ background: platformDot(a.platform || 'x'), width: 6, height: 6 }} />
                   <span className="muted tiny" style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{handleOf(a) || '—'}{a.active ? '' : ' · off'}</span>
                   <RunNow running={a.running} onRun={() => onRunAgent(a.id)} />
                   <button className="mini" title="Remove from campaign (agent keeps running)" onClick={() => onPatchAgent(a.id, { campaign_id: null })}><LX size={11} /></button>
@@ -1553,10 +1566,8 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
       {/* Create */}
       {form ? (
         <div className="card camp-form">
-          <input className="field" placeholder="Campaign name (e.g. Cadence launch)" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-          <input className="field" style={{ marginTop: 8 }} placeholder="What are the agents promoting?" value={form.product} onChange={e => setForm(f => ({ ...f, product: e.target.value }))} />
+          <input className="field" placeholder="What are the agents promoting?" value={form.product} onChange={e => setForm(f => ({ ...f, product: e.target.value, name: e.target.value.length > 42 ? e.target.value.slice(0, 42).trimEnd() + '…' : e.target.value }))} autoFocus />
           <input className="field" style={{ marginTop: 8 }} placeholder="Link (optional)" value={form.link} onChange={e => setForm(f => ({ ...f, link: e.target.value }))} />
-          <textarea className="field" style={{ marginTop: 8 }} rows={2} placeholder="Angle guidance (optional) — audience, what to emphasize" value={form.brief} onChange={e => setForm(f => ({ ...f, brief: e.target.value }))} />
           <div className="row" style={{ gap: 6, marginTop: 10 }}>
             {INTENSITY_OPTS.map(([k, l, hint]) => (
               <button key={k} className={'chip' + (form.intensity === k ? ' on' : '')} title={hint} onClick={() => setForm(f => ({ ...f, intensity: k }))}>{l}</button>
@@ -1564,7 +1575,7 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
           </div>
           <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
             <button className="mini" onClick={() => setForm(null)}>Cancel</button>
-            <button className="btn-primary btn-sm" disabled={busy || !form.name.trim() || !form.product.trim()} onClick={create}>{busy ? <Loader2 size={13} className="spin" /> : 'Create campaign'}</button>
+            <button className="btn-primary btn-sm" disabled={busy || !form.product.trim()} onClick={create}>{busy ? <Loader2 size={13} className="spin" /> : 'Create campaign'}</button>
           </div>
         </div>
       ) : (
@@ -3088,6 +3099,7 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .left .scroll { padding-bottom: 96px; }
 /* feeder agents */
 .agent-note { font-size: 11.5px; font-style: italic; font-family: var(--serif); color: var(--muted); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.agent-pfp { border-radius: 50%; object-fit: cover; flex: none; border: 1px solid var(--line2); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-family: var(--serif); }
 /* chat platform-scope selector */
 .chat-scope { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-bottom: 9px; }
 .scope-chip { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--line2); border-radius: 999px; color: var(--muted); font-size: 11.5px; font-weight: 600; padding: 4px 10px; cursor: pointer; font-family: inherit; transition: .15s; white-space: nowrap; }
