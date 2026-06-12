@@ -567,7 +567,9 @@ function QueueCard({ p, i, connected, socialPlatforms, defaultCollapsed, onSaveE
             <div className="qbody">
               <div className="muted tiny" style={{ marginBottom: 8 }}>{fmt(p.scheduled_for)} · {s.label}{sourceMeta(p).label !== 'You' ? ` · via ${sourceMeta(p).label.toLowerCase()}` : ''}</div>
               <ReplyContext p={p} />
-              {p.image_url && <img src={p.image_url} className="qcard-img" alt="" />}
+              {Array.isArray(p.image_urls) && p.image_urls.length > 1
+                ? <div className="ss-preview" style={{ marginBottom: 8 }}>{p.image_urls.map((u, k) => <img key={k} src={u} className="ss-slide" alt={`slide ${k + 1}`} />)}</div>
+                : p.image_url && <img src={p.image_url} className="qcard-img" alt="" />}
               {p.status === 'failed' && p.error && <div className="notice" style={{ color: '#B3372F', marginBottom: 8 }}>{p.error}</div>}
               {editing
                 ? <textarea className="field" rows={5} value={draft} maxLength={cap + 40} onChange={e => setDraft(e.target.value)} autoFocus />
@@ -672,7 +674,9 @@ function PostedRow({ p }) {
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
             <div className="qbody">
-              {p.image_url && <img src={p.image_url} className="qcard-img" alt="" />}
+              {Array.isArray(p.image_urls) && p.image_urls.length > 1
+                ? <div className="ss-preview" style={{ marginBottom: 8 }}>{p.image_urls.map((u, k) => <img key={k} src={u} className="ss-slide" alt={`slide ${k + 1}`} />)}</div>
+                : p.image_url && <img src={p.image_url} className="qcard-img" alt="" />}
               <div className="card-body">{p.content}</div>
               <div className="muted tiny" style={{ marginTop: 7 }}>
                 Posted {fmt(p.posted_at || p.scheduled_for)}{sourceMeta(p).label !== 'You' ? ` · via ${sourceMeta(p).label.toLowerCase()}` : ''}
