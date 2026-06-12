@@ -494,16 +494,21 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
         </div>
       </div>
       {isThread
-        ? <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        ? <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {parts.map((t, i) => (
-              <div key={i} style={{ position: 'relative' }}>
-                <textarea className="field dp-text" style={{ minHeight: 96 }} rows={4} maxLength={380} value={t}
-                  onChange={e => setParts(ps => ps.map((x, j) => j === i ? e.target.value : x))} />
-                <span className={'count' + (t.length > 280 ? ' over' : '')} style={{ position: 'absolute', right: 10, bottom: 8, fontSize: 10.5 }}>{i + 1}/{parts.length} · {t.length}/280</span>
+              <div key={i} className="dp-part">
+                <span className="dp-part-n">{i + 1}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <textarea className="field dp-text dp-grow" rows={3} maxLength={380} value={t}
+                    onChange={e => setParts(ps => ps.map((x, j) => j === i ? e.target.value : x))} />
+                  <div className="row" style={{ justifyContent: 'flex-end', padding: '2px 2px 0' }}>
+                    <span className={'count' + (t.length > 280 ? ' over' : '')} style={{ fontSize: 10.5 }}>{t.length}/280</span>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
-        : <textarea className="field dp-text" rows={isLi ? 12 : 7} maxLength={cap + 100} value={content} onChange={e => setContent(e.target.value)} />}
+        : <textarea className="field dp-text dp-grow" rows={isLi ? 12 : 7} maxLength={cap + 100} value={content} onChange={e => setContent(e.target.value)} />}
       <AnimatePresence>
         {imgOn && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
@@ -803,24 +808,25 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
       <div className="card camp-form">
         <textarea className="field" rows={2} placeholder="What's the slideshow about? e.g. how small creators grow on Instagram in 2026" value={topic} onChange={e => setTopic(e.target.value)} />
         <label className="ob-label">Format</label>
-        <div className="ss-grid">
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
           {SLIDESHOW_FORMATS.map(f => (
-            <button key={f.key} type="button" className={'style-opt' + (format === f.key ? ' on' : '')} onClick={() => setFormat(f.key)}>
-              <span><span className="style-name">{f.label}</span><span className="style-desc">{f.desc}</span></span>
-            </button>
+            <button key={f.key} type="button" className={'chip' + (format === f.key ? ' on' : '')} title={f.desc} onClick={() => setFormat(f.key)}>{f.label}</button>
           ))}
         </div>
         <label className="ob-label">Style</label>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <div className="sw-row">
           {SLIDE_STYLE_LIST.map(s => (
-            <button key={s.key} type="button" className={'sw-chip' + (style === s.key ? ' on' : '')} onClick={() => setStyle(s.key)} title={s.ai ? 'AI-generated backgrounds' : 'Typographic template'}>
-              <span className="sw" style={{ background: s.swatch.startsWith('linear') ? undefined : s.swatch, backgroundImage: s.swatch.startsWith('linear') ? s.swatch : undefined, color: s.fg }}>Aa</span>
-              {s.label}{s.ai ? ' ✨' : ''}
+            <button key={s.key} type="button" className={'sw-tile' + (style === s.key ? ' on' : '')} onClick={() => setStyle(s.key)} title={s.ai ? 'AI-generated backgrounds' : 'Typographic template'}>
+              <span className="sw-tile-swatch" style={{ background: s.swatch.startsWith('linear') ? undefined : s.swatch, backgroundImage: s.swatch.startsWith('linear') ? s.swatch : undefined, color: s.fg }}>Aa</span>
+              <span className="sw-tile-label">{s.label}{s.ai ? ' ✨' : ''}</span>
             </button>
           ))}
         </div>
-        <div className="row" style={{ gap: 10, marginTop: 12, justifyContent: 'space-between' }}>
-          <label className="camp-num"><input type="number" min={3} max={10} className="field" value={count} onChange={e => setCount(e.target.value)} /> slides</label>
+        <div className="row" style={{ gap: 10, marginTop: 14, justifyContent: 'space-between' }}>
+          <div className="row" style={{ gap: 5 }}>
+            {[4, 5, 6, 8].map(n => <button key={n} type="button" className={'chip' + (Number(count) === n ? ' on' : '')} onClick={() => setCount(n)}>{n}</button>)}
+            <span className="muted tiny" style={{ marginLeft: 4 }}>slides</span>
+          </div>
           <button className="btn-primary btn-sm" disabled={busy || !topic.trim()} onClick={gen}>{busy ? <span className="dots"><i/><i/><i/></span> : <><Wand2 size={13} /> Generate</>}</button>
         </div>
       </div>
@@ -3233,6 +3239,19 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .dp { padding: 16px; width: 100%; }
 .dp-head { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 600; color: var(--accent-text); text-transform: uppercase; letter-spacing: .09em; margin-bottom: 10px; }
 .dp-text { font-size: 14.5px; line-height: 1.6; resize: vertical; min-height: 150px; }
+/* Auto-growing editors: the box fits the text — no inner scrollbars, no
+   clipped lines (field-sizing is supported in all current Chromium/Safari). */
+.dp-grow { field-sizing: content; max-height: 540px; overflow-y: auto; }
+.dp-part { display: flex; gap: 10px; align-items: flex-start; }
+.dp-part .dp-text { min-height: 60px; }
+.dp-part-n { width: 22px; height: 22px; border-radius: 50%; background: var(--bg2); border: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; margin-top: 10px; }
+/* slideshow style picker — swatch tiles */
+.sw-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.sw-tile { display: flex; flex-direction: column; align-items: center; gap: 5px; background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
+.sw-tile-swatch { width: 56px; height: 42px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; border: 1px solid var(--line2); transition: box-shadow .15s, border-color .15s; }
+.sw-tile.on .sw-tile-swatch { border-color: transparent; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.sw-tile-label { font-size: 10.5px; font-weight: 600; color: var(--muted); }
+.sw-tile.on .sw-tile-label { color: var(--accent-text); }
 .dp-img-wrap { position: relative; margin-top: 10px; border-radius: 8px; overflow: hidden; }
 .dp-img { width: 100%; display: block; border-radius: 8px; aspect-ratio: 1/1; object-fit: cover; background: var(--bg2); }
 .dp-placeholder { display: flex; align-items: center; justify-content: center; color: var(--faint); }

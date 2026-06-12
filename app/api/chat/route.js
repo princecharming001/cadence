@@ -181,6 +181,57 @@ const tools = [
     description: 'Run the comment auto-reply engine right now for a platform (reads new comments on the user\'s posts, drafts or posts replies in their voice).',
     input_schema: { type: 'object', properties: { platform: { type: 'string', enum: SOCIAL_ENGAGEMENT_PLATFORMS } }, required: ['platform'] },
   },
+  {
+    name: 'list_agents',
+    description: 'List the user\'s feeder agents (autonomous personas living on their other accounts): id, name, platform, handle, active, autonomous, campaign. Use before managing agents or feeder campaigns.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'create_feeder_campaign',
+    description: 'Create a feeder-agent campaign — a promotion MISSION the agents weave into their own posting in their own voices. Goes live immediately and (by default) every unassigned agent joins it. Use when the user says "launch a feeder campaign", "have my agents promote X", etc.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        product: { type: 'string', description: 'What the agents promote, e.g. "cherries".' },
+        link: { type: 'string', description: 'Optional link to weave in.' },
+        intensity: { type: 'string', enum: ['subtle', 'balanced', 'loud'], description: 'How often it shows up in their posting (default balanced).' },
+        assign_all: { type: 'boolean', description: 'Assign every unassigned agent (default true). Set false to create empty and assign manually with set_agent.' },
+      },
+      required: ['product'],
+    },
+  },
+  {
+    name: 'set_agent',
+    description: 'Update a feeder agent: activate/pause (active), let it post autonomously vs draft-for-review (auto_post), or put it on / pull it off a campaign (campaign_id; null unassigns).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        active: { type: 'boolean' },
+        auto_post: { type: 'boolean' },
+        campaign_id: { type: ['string', 'null'] },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'run_agent',
+    description: 'Run a feeder agent\'s think-post cycle right now. Output lands as drafts (or queued when the agent is autonomous).',
+    input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'create_promo_campaign',
+    description: 'Create a recurring promo campaign on the user\'s OWN accounts (primary X / their LinkedIn / Instagram / TikTok): a topic posted on a cadence in THEIR voice. Different from feeder campaigns (those run on agent accounts).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', description: 'What to promote, written like a brief.' },
+        platforms: { type: 'array', items: { type: 'string', enum: ['x', 'linkedin', 'instagram', 'tiktok'] } },
+        interval_hours: { type: 'number', description: 'Hours between posts (default 24).' },
+      },
+      required: ['topic', 'platforms'],
+    },
+  },
 ]
 
 // ── Tool executor — every query is scoped to the authenticated user ─────────────
@@ -351,6 +402,96 @@ async function executeTool(name, input, userId) {
       return await runSocialEngagement(userId, input.platform)
     }
 
+    case 'list_agents': {
+      const [{ data: agents }, { data: xs }, { data: ss }, { data: camps }] = await Promise.all([
+        admin.from('feeder_agents').select('id, name, platform, active, auto_post, campaign_id, x_connection_id, social_account_id, persona').eq('user_id', userId),
+        admin.from('x_connections').select('id, username').eq('user_id', userId),
+        admin.from('social_accounts').select('id, username').eq('user_id', userId),
+        admin.from('agent_campaigns').select('id, name').eq('user_id', userId),
+      ])
+      return {
+        agents: (agents || []).map(a => ({
+          id: a.id, name: a.persona?.name || a.name, platform: a.platform || 'x',
+          handle: a.x_connection_id ? (xs || []).find(c => c.id === a.x_connection_id)?.username : (ss || []).find(s => s.id === a.social_account_id)?.username,
+          active: !!a.active, autonomous: !!a.auto_post,
+          campaign: a.campaign_id ? (camps || []).find(c => c.id === a.campaign_id)?.name || a.campaign_id : null,
+        })),
+      }
+    }
+
+    case 'create_feeder_campaign': {
+      const product = String(input.product || '').slice(0, 300).trim()
+      if (!product) return { error: 'Say what the agents should promote.' }
+      const name = product.length > 42 ? product.slice(0, 42).trimEnd() + '…' : product
+      const { data: camp, error } = await admin.from('agent_campaigns').insert({
+        user_id: userId, name, product,
+        link: String(input.link || '').slice(0, 300).trim() || null,
+        intensity: ['subtle', 'balanced', 'loud'].includes(input.intensity) ? input.intensity : 'balanced',
+        active: true,
+      }).select().single()
+      if (error) return { error: error.message }
+      let assigned = []
+      if (input.assign_all !== false) {
+        const { data: free } = await admin.from('feeder_agents').select('id, name, persona').eq('user_id', userId).is('campaign_id', null)
+        for (const a of free || []) {
+          await admin.from('feeder_agents').update({ campaign_id: camp.id }).eq('id', a.id)
+          assigned.push(a.persona?.name || a.name)
+        }
+      }
+      return { campaign: { id: camp.id, name: camp.name, intensity: camp.intensity }, agents_assigned: assigned, note: 'Live — agents weave it into their next cycles. They appear on the Campaigns tab.' }
+    }
+
+    case 'set_agent': {
+      const patch = {}
+      if (input.active !== undefined) patch.active = !!input.active
+      if (input.auto_post !== undefined) patch.auto_post = !!input.auto_post
+      if (input.campaign_id !== undefined) {
+        if (input.campaign_id) {
+          const { data: camp } = await admin.from('agent_campaigns').select('id').eq('id', input.campaign_id).eq('user_id', userId).single()
+          if (!camp) return { error: 'Campaign not found.' }
+        }
+        patch.campaign_id = input.campaign_id || null
+      }
+      if (patch.active === true) patch.next_run_at = new Date().toISOString()
+      const { data, error } = await admin.from('feeder_agents').update(patch)
+        .eq('id', input.id).eq('user_id', userId).select('id, name, persona, active, auto_post, campaign_id').single()
+      if (error || !data) return { error: error?.message || 'Agent not found.' }
+      return { agent: { id: data.id, name: data.persona?.name || data.name, active: data.active, autonomous: data.auto_post, campaign_id: data.campaign_id } }
+    }
+
+    case 'run_agent': {
+      const { runFeederAgentById } = await import('@/lib/feeder-agents')
+      return await runFeederAgentById(input.id, userId)
+    }
+
+    case 'create_promo_campaign': {
+      const topic = String(input.topic || '').slice(0, 300).trim()
+      const platforms = (Array.isArray(input.platforms) ? input.platforms : []).filter(p => ['x', 'linkedin', 'instagram', 'tiktok'].includes(p))
+      if (!topic || !platforms.length) return { error: 'Need a topic and at least one platform.' }
+      // Build targets exactly like the campaign UI: primary X connection for X,
+      // the user's first connected account per social platform.
+      const targets = [], missing = []
+      for (const p of platforms) {
+        if (p === 'x') {
+          const { data: conn } = await admin.from('x_connections').select('id').eq('user_id', userId).order('is_primary', { ascending: false }).limit(1).single()
+          if (conn) targets.push({ kind: 'x', id: conn.id, platform: 'x' }); else missing.push('x')
+        } else {
+          const { data: acct } = await admin.from('social_accounts').select('id').eq('user_id', userId).eq('platform', p).limit(1).single()
+          if (acct) targets.push({ kind: 'social', id: acct.id, platform: p }); else missing.push(p)
+        }
+      }
+      if (!targets.length) return { error: `No connected account for ${missing.join(', ')} — connect one first.` }
+      const name = topic.length > 42 ? topic.slice(0, 42).trimEnd() + '…' : topic
+      const { data, error } = await admin.from('brand_campaigns').insert({
+        user_id: userId, name, topic, targets,
+        carousel_style: 'bold', carousel_format: 'listicle', include_image: false,
+        interval_hours: Math.min(Math.max(Number(input.interval_hours) || 24, 1), 168),
+        active: true, next_run_at: new Date().toISOString(),
+      }).select().single()
+      if (error) return { error: error.message }
+      return { campaign: { id: data.id, name: data.name, every_hours: data.interval_hours, platforms: targets.map(t => t.platform) }, ...(missing.length ? { skipped_platforms: missing } : {}), note: 'Live — first run is moments away; posts land in the queue.' }
+    }
+
     default:
       return { error: `Unknown tool: ${name}` }
   }
@@ -416,11 +557,10 @@ export async function POST(req) {
     const single = scope && scope.length === 1
     const liScoped = single && scope[0] === 'linkedin'
     const scopeBlock = scope ? `
-PLATFORM FOCUS — this conversation is scoped to ${scopeNames} ONLY. The user is working on their ${scopeNames} account${single ? '' : 's'}.
-- Everything you draft, suggest, schedule, or act on is for ${scopeNames} and the user's own personal/primary account${single ? '' : 's'} there.
-- Do NOT bring up, draft for, or take actions on any platform outside that set.${(scope.includes('x') || scope.includes('linkedin')) ? ' Use propose_post for X/LinkedIn posts.' : ''}${(scope.includes('instagram') || scope.includes('tiktok')) ? ' Use generate_slideshow for Instagram/TikTok carousels.' : ''}
-${liScoped ? '- propose_post drafts here are LINKEDIN posts: long-form is welcome (up to 1300 chars), no 280 limit.' : ''}
-- If the user clearly asks for something on a platform outside this focus, tell them to add that platform in the chat's Focus selector first.
+PLATFORM FOCUS — the user is currently working on ${scopeNames}. Focus is a DEFAULT, not a wall:
+- When they ask for content without naming a platform, write it for ${scopeNames} (its format, length, and register).${liScoped ? ' LinkedIn drafts are long-form (up to 1300 chars), no 280 limit.' : ''}
+- You keep FULL access to every tool and all cross-platform context — read the queue, LinkedIn corpus, overview, agents, campaigns from ANY platform whenever it helps.
+- If the user explicitly asks for another platform or a cross-platform action (a feeder campaign, an X thread while focused on Instagram, anything), JUST DO IT. Never refuse because of focus and never tell them to change the Focus selector.
 ` : ''
 
     // Split for prompt caching: the big stable block is cacheable ACROSS
@@ -430,10 +570,13 @@ ${liScoped ? '- propose_post drafts here are LINKEDIN posts: long-form is welcom
 
 ${voiceBlock(personaRow)}
 
-Cross-platform powers (use the tools, don't just explain):
+Cross-platform powers (use the tools, don't just explain — the ENTIRE product is drivable from this chat):
 - get_overview: report connected accounts, queue, campaigns, and auto-reply status across all platforms.
 - generate_slideshow: make an Instagram/TikTok carousel on a topic; optionally schedule/post it (post_to + when). Use for any "carousel/slideshow/IG/TikTok post" request.
 - set_replies / run_replies: turn on or off (and run) auto-replies to comments in the user's voice for instagram, tiktok, or linkedin.
+- list_agents / set_agent / run_agent: see and manage the user's feeder agents (autonomous personas on their other accounts) — activate, pause, make autonomous, assign to campaigns, run a cycle now.
+- create_feeder_campaign: launch a promotion mission the agents weave into their own posting ("launch a feeder campaign promoting X").
+- create_promo_campaign: a recurring promo on the user's OWN accounts (their voice, their primary accounts, on a cadence).
 After any action, confirm what happened in one or two sentences. Never invent results — only report what tools returned.
 
 ${CHAT_STYLE}
@@ -503,11 +646,11 @@ ${scopeBlock}${liVoiceBlock}${feedbackBlock(fb)}`
             }
           } else if (block.name === 'propose_post') {
             // Stash the proposal for the UI; never queue or publish here.
-            // Platform: LinkedIn focus forces linkedin; otherwise the model's
-            // declared platform wins when the scope allows it. Length limits
-            // are enforced server-side either way.
-            const liAllowed = !scope || scope.includes('linkedin')
-            const propPlatform = liScoped ? 'linkedin' : (block.input.platform === 'linkedin' && liAllowed ? 'linkedin' : 'x')
+            // Platform: the model's declared platform always wins (focus is a
+            // default, not a wall); undeclared falls back to the focus, then X.
+            const propPlatform = block.input.platform === 'linkedin' ? 'linkedin'
+              : block.input.platform === 'x' ? 'x'
+              : liScoped ? 'linkedin' : 'x'
             const prop = { content: await enforceLen(String(block.input.content || ''), propPlatform), platform: propPlatform }
             if (block.input.want_image) {
               // Explicit image_prompt = the model/user knows what they want.
