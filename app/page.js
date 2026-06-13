@@ -3501,9 +3501,9 @@ function App({ session }) {
                       <PlatformCampaign campaigns={campsFor([plat])} targets={platCampTargets} supportsCarousel canCreate={platCampTargets.length > 0} connectHint={`Connect ${platLabel} first (accounts, bottom-right).`} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
                       <CrossCampHint plats={[plat]} />
                     </Section>
-                    <Section title="What's working now" hint="viral formats in your niche → clip styles" defaultOpen badge={trends.filter(f => f.platform === plat).length ? <span className="camp-state on">{trends.filter(f => f.platform === plat).length}</span> : null}>
-                      <TrendFormats platform={plat} formats={trends} busy={scanning === plat} canScan onScan={() => scanTrends(plat)} onDelete={deleteTrend} />
-                    </Section>
+                    {/* "What's working now" panel removed per user — the niche
+                        scrape still runs (daily harvest cron + find_trends chat
+                        tool) and silently feeds generation via trendingBlock. */}
                   </div>
                 </>)
               })()}
