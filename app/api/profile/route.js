@@ -1,7 +1,7 @@
 // PATCH /api/profile  → update the user's profile / onboarding / settings
 import { admin, getUser } from '@/lib/supabase'
 
-const ALLOWED = ['full_name', 'role', 'goals', 'timezone', 'default_post_hour', 'include_image_default', 'onboarded', 'posting_windows']
+const ALLOWED = ['full_name', 'role', 'goals', 'timezone', 'default_post_hour', 'include_image_default', 'onboarded', 'posting_windows', 'brand_brief']
 const HHMM = /^\d{1,2}:\d{2}$/
 
 export async function PATCH(req) {

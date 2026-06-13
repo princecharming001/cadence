@@ -324,6 +324,9 @@ function Onboarding({ session, me, authed, onDone }) {
   const [name, setName] = useState(saved.name || me?.profile?.full_name || '')
   const [role, setRole] = useState(saved.role || '')
   const [goals, setGoals] = useState(saved.goals || '')
+  const [positioning, setPositioning] = useState(saved.positioning || '')
+  const [tone, setTone] = useState(saved.tone || [])
+  const toggleTone = t => setTone(s => s.includes(t) ? s.filter(x => x !== t) : [...s, t].slice(0, 4))
   const [liUrl, setLiUrl] = useState('')
   const [busy, setBusy] = useState(false); const [obMsg, setObMsg] = useState('')
   const [liDone, setLiDone] = useState(saved.liDone || false)
@@ -345,7 +348,9 @@ function Onboarding({ session, me, authed, onDone }) {
   }
   async function finish() {
     setBusy(true)
-    await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ full_name: name, role, goals, onboarded: true }) })
+    const brand_brief = (positioning.trim() || tone.length)
+      ? { positioning: positioning.trim(), audience: '', pillars: [], tone, goal: goals.trim(), avoid: '' } : undefined
+    await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ full_name: name, role, goals, onboarded: true, ...(brand_brief ? { brand_brief } : {}) }) })
     localStorage.removeItem(OB_KEY); setBusy(false); onDone()
   }
 
@@ -359,6 +364,10 @@ function Onboarding({ session, me, authed, onDone }) {
       <input className="field" value={name} onChange={e => setName(e.target.value)} placeholder="Jane Founder" />
       <label className="ob-label">What do you do?</label>
       <input className="field" value={role} onChange={e => setRole(e.target.value)} placeholder="Building an AI water-infrastructure startup" />
+      <label className="ob-label">How do you want to come across?</label>
+      <input className="field" value={positioning} onChange={e => setPositioning(e.target.value)} placeholder="the founder who shows the real, unglamorous side of building" />
+      <label className="ob-label">Pick your personality <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 4</span></label>
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>{TONE_OPTS.map(t => <button key={t} type="button" className={'chip' + (tone.includes(t) ? ' on' : '')} onClick={() => toggleTone(t)}>{t}</button>)}</div>
       <label className="ob-label">What do you want from X?</label>
       <textarea className="field" rows={2} value={goals} onChange={e => setGoals(e.target.value)} placeholder="Grow an audience of founders & investors" />
       <div className="ob-nav"><span className="link" onClick={() => setStep(0)}>Back</span><button className="btn-primary" disabled={!name.trim()} onClick={() => setStep(2)}>Next</button></div>
@@ -610,8 +619,9 @@ function Empty({ icon, children }) { return <motion.div className="empty" initia
 
 // ── Calendar view of the queue — a clean month grid. Each post is a thin
 // platform-colored chip on its scheduled day; click to open/retime. ──────────
-function QueueCalendar({ posts, onOpen }) {
+function QueueCalendar({ posts, onOpen, onPostNow, onDelete }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
+  const [sel, setSel] = useState(null) // selected day key
   const year = cursor.getFullYear(), month = cursor.getMonth()
   const today = new Date()
   const dayKey = iso => { const d = new Date(iso); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` }
@@ -623,37 +633,69 @@ function QueueCalendar({ posts, onOpen }) {
   for (let i = 0; i < firstWeekday; i++) cells.push(null)
   for (let d = 1; d <= daysInMonth; d++) cells.push(d)
   while (cells.length % 7) cells.push(null)
+  const selPosts = (sel ? (byDay[sel] || []) : []).sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))
+  const selDate = sel ? (() => { const [y, m, d] = sel.split('-').map(Number); return new Date(y, m, d) })() : null
   return (
     <div className="cal">
       <div className="cal-head">
-        <button className="cal-nav" onClick={() => setCursor(new Date(year, month - 1, 1))} aria-label="Previous month"><ChevronDown size={15} style={{ transform: 'rotate(90deg)' }} /></button>
+        <button className="cal-nav" onClick={() => { setCursor(new Date(year, month - 1, 1)); setSel(null) }} aria-label="Previous month"><ChevronDown size={15} style={{ transform: 'rotate(90deg)' }} /></button>
         <span className="cal-title">{cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
-        <button className="cal-nav" onClick={() => setCursor(new Date(year, month + 1, 1))} aria-label="Next month"><ChevronDown size={15} style={{ transform: 'rotate(-90deg)' }} /></button>
-        <button className="cal-today" onClick={() => setCursor(new Date(today.getFullYear(), today.getMonth(), 1))}>Today</button>
+        <button className="cal-nav" onClick={() => { setCursor(new Date(year, month + 1, 1)); setSel(null) }} aria-label="Next month"><ChevronDown size={15} style={{ transform: 'rotate(-90deg)' }} /></button>
+        <button className="cal-today" onClick={() => { setCursor(new Date(today.getFullYear(), today.getMonth(), 1)); setSel(`${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`) }}>Today</button>
       </div>
       <div className="cal-grid cal-dow">{['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i} className="cal-dowcell">{d}</div>)}</div>
       <div className="cal-grid">
         {cells.map((d, i) => {
           if (d == null) return <div key={i} className="cal-cell empty" />
+          const key = `${year}-${month}-${d}`
           const dt = new Date(year, month, d)
           const isToday = dt.toDateString() === today.toDateString()
-          const dayPosts = (byDay[`${year}-${month}-${d}`] || []).sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))
+          const dayPosts = (byDay[key] || []).sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))
           return (
-            <div key={i} className={'cal-cell' + (isToday ? ' today' : '')}>
+            <button key={i} className={'cal-cell' + (isToday ? ' today' : '') + (sel === key ? ' sel' : '') + (dayPosts.length ? ' has' : '')} onClick={() => setSel(sel === key ? null : key)}>
               <div className="cal-daynum">{d}</div>
               <div className="cal-chips">
                 {dayPosts.slice(0, 3).map(p => (
-                  <button key={p.id} className={'cal-chip' + (p.status === 'posted' ? ' done' : '') + (p.status === 'failed' ? ' bad' : '')} onClick={() => onOpen(p)} title={(p.content || '').slice(0, 90)}>
+                  <span key={p.id} className={'cal-chip' + (p.status === 'posted' ? ' done' : '') + (p.status === 'failed' ? ' bad' : '')} title={(p.content || '').slice(0, 90)}>
                     <span className="status-dot" style={{ background: platformDot(p.platform || 'x'), width: 5, height: 5, flex: 'none' }} />
                     <span className="cal-chip-t">{new Date(p.scheduled_for).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
-                  </button>
+                  </span>
                 ))}
                 {dayPosts.length > 3 && <span className="cal-more">+{dayPosts.length - 3}</span>}
               </div>
-            </div>
+            </button>
           )
         })}
       </div>
+      <AnimatePresence initial={false}>
+        {sel && (
+          <motion.div className="cal-day card" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}>
+            <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+              <span className="cal-day-title">{selDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</span>
+              <button className="x-close" onClick={() => setSel(null)}><LX size={16} /></button>
+            </div>
+            {selPosts.length === 0 && <div className="muted tiny" style={{ padding: '4px 0 6px' }}>Nothing scheduled. Pick a draft or ask the chat to write one.</div>}
+            {selPosts.map(p => {
+              const s = STATUS[p.status] || { c: '#9ca3af', label: p.status }
+              const done = p.status === 'posted'
+              return (
+                <div className="cal-day-row" key={p.id}>
+                  <div className="cal-day-time"><span className="status-dot" style={{ background: platformDot(p.platform || 'x') }} />{new Date(p.posted_at || p.scheduled_for).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</div>
+                  <div className="cal-day-body">
+                    <div className="cal-day-text">{p.content}</div>
+                    <div className="row" style={{ gap: 8, marginTop: 5 }}>
+                      <span className="cal-day-status" style={{ color: s.c }}>{s.label}</span>
+                      {!done && <button className="mini" onClick={() => onOpen(p)}><Pencil size={11} /> Edit</button>}
+                      {!done && onPostNow && <button className="mini" onClick={() => onPostNow(p.id)}>Post now</button>}
+                      {onDelete && <button className="mini danger" onClick={() => onDelete(p.id)}><Trash2 size={11} /></button>}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -972,7 +1014,7 @@ function AutoReply({ platforms, settings, replies, accounts, configured, onToggl
       {platforms.map(pl => {
         const s = byPlat[pl] || { platform: pl, enabled: false }
         const has = accounts.some(a => a.platform === pl)
-        const drafts = (replies || []).filter(r => r.platform === pl && r.status === 'draft')
+        const recent = (replies || []).filter(r => r.platform === pl && (r.status === 'posted' || r.reply_text)).slice(0, 6)
         return (
           <div className={'ar-block card' + (s.enabled ? ' on' : '')} key={pl}>
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
@@ -980,7 +1022,7 @@ function AutoReply({ platforms, settings, replies, accounts, configured, onToggl
                 <span className="status-dot" style={{ background: platformDot(pl), marginTop: 5 }} />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 13.5 }}>{label[pl]}</div>
-                  <div className="muted tiny">{has ? 'Replies held for your approval' : 'No account connected'}</div>
+                  <div className="muted tiny">{!has ? 'No account connected' : s.enabled ? 'Posts a reply automatically the moment someone comments' : 'Auto-reply to comments in your voice'}</div>
                 </div>
               </div>
               <Toggle on={!!s.enabled} onChange={v => onToggle(pl, { enabled: v })} />
@@ -990,16 +1032,14 @@ function AutoReply({ platforms, settings, replies, accounts, configured, onToggl
                 <div className="row" style={{ justifyContent: 'space-between', gap: 8 }}>
                   {s.running
                     ? <span className="live-status on" style={{ margin: 0 }}><Loader2 size={11} className="spin" /> {str(s.status_detail) || 'Checking comments…'}</span>
-                    : <span className="muted tiny">{drafts.length ? `${drafts.length} repl${drafts.length === 1 ? 'y' : 'ies'} waiting for you` : 'No replies waiting'}</span>}
+                    : <span className="muted tiny">{recent.length ? `${recent.length} recent repl${recent.length === 1 ? 'y' : 'ies'}` : 'Watching for new comments…'}</span>}
                   <button className="mini" disabled={!has} onClick={() => onRun(pl)}><RefreshCw size={11} /> Check now</button>
                 </div>
-                {drafts.slice(0, 6).map(d => (
+                {recent.map(d => (
                   <div className="ar-draft" key={d.id}>
                     <div className="ar-comment"><span className="ar-author">@{authorHandle(d.comment_author)}</span>{str(d.comment_text) ? ' · ' + str(d.comment_text).slice(0, 130) : ''}</div>
                     <div className="ar-reply">{str(d.reply_text)}</div>
-                    <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
-                      <button className="btn-primary btn-sm" onClick={() => onPostDraft(d.id)}>Reply</button>
-                    </div>
+                    {d.status !== 'posted' && <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}><button className="btn-primary btn-sm" onClick={() => onPostDraft(d.id)}>Reply now</button></div>}
                   </div>
                 ))}
               </div>
@@ -1090,28 +1130,104 @@ function StatTiles({ tiles, vertical }) {
   )
 }
 
-// ── Autopilot — the brain posts in your voice on a cadence, no campaign needed.
-function AutopilotCard({ row, busy, onToggle, onRun }) {
+// Brand voice/identity options (researched for personal-brand positioning).
+const TONE_OPTS = ['authoritative', 'witty', 'contrarian', 'warm', 'vulnerable', 'analytical', 'bold', 'helpful', 'irreverent', 'inspirational', 'no-nonsense', 'story-driven']
+const GOAL_OPTS = ['Grow my audience', 'Build authority', 'Generate leads', 'Drive signups', 'Build community']
+
+// ── Brand onboarding — before the brain speaks for you autonomously, it learns
+// who you are and how you want to be portrayed: positioning, audience, content
+// pillars, personality, goal, cadence, and boundaries. Researched from brand-
+// voice + content-strategy best practice. Shown at signup; required before
+// Autopilot. ─────────────────────────────────────────────────────────────────
+function BrandOnboarding({ initial, busy, onSave, onClose }) {
+  const [step, setStep] = useState(0)
+  const [f, setF] = useState({
+    positioning: initial?.positioning || '', audience: initial?.audience || '',
+    pillars: (initial?.pillars || []).join('\n'), tone: initial?.tone || [],
+    goal: initial?.goal || '', avoid: initial?.avoid || '',
+    per_run: initial?.per_run || 1, comments_per_day: initial?.comments_per_day ?? 4, interval_hours: initial?.interval_hours || 24,
+  })
+  const set = (k, v) => setF(s => ({ ...s, [k]: v }))
+  const toggleTone = t => set('tone', f.tone.includes(t) ? f.tone.filter(x => x !== t) : [...f.tone, t].slice(0, 4))
+  function submit() {
+    onSave({
+      brief: { positioning: f.positioning.trim(), audience: f.audience.trim(), pillars: f.pillars.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 5), tone: f.tone, goal: f.goal, avoid: f.avoid.trim() },
+      cadence: { per_run: Number(f.per_run), comments_per_day: Number(f.comments_per_day), interval_hours: Number(f.interval_hours) },
+    })
+  }
+  return (
+    <motion.div className="overlay" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.div className="card modal" style={{ width: 480 }} onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.97 }} transition={spring}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+          <span style={{ fontWeight: 700, fontSize: 15.5 }}>Set up Autopilot</span>
+          <button className="x-close" onClick={onClose}><LX size={18} /></button>
+        </div>
+        <div className="muted tiny" style={{ marginBottom: 14 }}>Before Cadence speaks for you, tell it who you are and how you want to come across.</div>
+        <div className="onb-dots" style={{ marginBottom: 16 }}>{[0, 1, 2].map(i => <span key={i} className={'ob-dot' + (i <= step ? ' on' : '')} />)}</div>
+        {step === 0 && (<>
+          <div className="onb-q">Who are you, and how do you want to be seen?</div>
+          <label className="onb-label">Your positioning</label>
+          <textarea className="field dp-grow" rows={2} autoFocus placeholder="e.g. the founder who shows the unglamorous reality of building an AI startup" value={f.positioning} onChange={e => set('positioning', e.target.value)} />
+          <label className="onb-label">Who you're talking to</label>
+          <input className="field" placeholder="e.g. early-stage founders & operators" value={f.audience} onChange={e => set('audience', e.target.value)} />
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 14 }}><button className="btn-primary btn-sm" disabled={!f.positioning.trim()} onClick={() => setStep(1)}>Next →</button></div>
+        </>)}
+        {step === 1 && (<>
+          <div className="onb-q">What do you talk about, and how?</div>
+          <label className="onb-label">Content pillars <span className="muted tiny" style={{ fontWeight: 400 }}>· one per line, 3–5</span></label>
+          <textarea className="field dp-grow" rows={4} placeholder={'lessons from building\ncontrarian takes on startup advice\nbehind-the-scenes wins and failures'} value={f.pillars} onChange={e => set('pillars', e.target.value)} />
+          <label className="onb-label">Personality <span className="muted tiny" style={{ fontWeight: 400 }}>· pick up to 4</span></label>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>{TONE_OPTS.map(t => <button key={t} type="button" className={'chip' + (f.tone.includes(t) ? ' on' : '')} onClick={() => toggleTone(t)}>{t}</button>)}</div>
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}><button className="mini" onClick={() => setStep(0)}>← Back</button><button className="btn-primary btn-sm" onClick={() => setStep(2)}>Next →</button></div>
+        </>)}
+        {step === 2 && (<>
+          <div className="onb-q">Your goal and cadence</div>
+          <label className="onb-label">What's the goal?</label>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>{GOAL_OPTS.map(g => <button key={g} type="button" className={'chip' + (f.goal === g ? ' on' : '')} onClick={() => set('goal', g)}>{g}</button>)}</div>
+          <label className="onb-label">How often</label>
+          <div className="ap-grid">
+            <label className="camp-num"><input type="number" min={1} max={3} className="field" value={f.per_run} onChange={e => set('per_run', e.target.value)} /> posts /</label>
+            <label className="camp-num"><input type="number" min={0} max={20} className="field" value={f.comments_per_day} onChange={e => set('comments_per_day', e.target.value)} /> comments</label>
+            <label className="camp-num">every <input type="number" min={1} className="field" value={f.interval_hours} onChange={e => set('interval_hours', e.target.value)} /> h</label>
+          </div>
+          <label className="onb-label">Anything to avoid <span className="muted tiny" style={{ fontWeight: 400 }}>· optional</span></label>
+          <input className="field" placeholder="e.g. politics, dunking on competitors" value={f.avoid} onChange={e => set('avoid', e.target.value)} />
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}><button className="mini" onClick={() => setStep(1)}>← Back</button><button className="btn-primary btn-sm" disabled={busy} onClick={submit}>{busy ? <Loader2 size={13} className="spin" /> : 'Turn on Autopilot'}</button></div>
+        </>)}
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// ── Autopilot — the brain runs your account in your voice on a cadence: posts
+// AND niche comments, no campaign needed. Gated behind brand onboarding so it
+// knows who you are and how you want to be portrayed before it speaks for you.
+function AutopilotCard({ row, onboarded, onToggle, onRequireOnboarding }) {
   const on = !!row?.enabled
+  function setEnabled(v) {
+    if (v && !onboarded) { onRequireOnboarding(); return } // finish brand setup first
+    onToggle({ enabled: v })
+  }
   return (
     <div className={'card autopilot' + (on ? ' on' : '')}>
       <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
         <div className="ap-icon"><Sparkles size={16} /></div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="row" style={{ gap: 8 }}><span className="ap-title">Autopilot</span>{on && row?.status_detail && <span className="muted tiny">· {row.status_detail}</span>}</div>
-          <div className="muted tiny" style={{ marginTop: 2 }}>Cadence writes posts in your voice on a schedule — no campaign needed.</div>
+          <div className="muted tiny" style={{ marginTop: 2 }}>Cadence runs your account in your voice — writes posts and joins conversations on a schedule. No campaign needed.</div>
         </div>
-        <Toggle on={on} onChange={v => onToggle({ enabled: v })} />
+        <Toggle on={on} onChange={setEnabled} />
       </div>
       <AnimatePresence initial={false}>
         {on && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-            <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-              <label className="camp-num"><input type="number" min={1} max={3} className="field" value={row.per_run} onChange={e => onToggle({ per_run: e.target.value })} /> posts</label>
+            <div className="ap-grid">
+              <label className="camp-num"><input type="number" min={1} max={3} className="field" value={row.per_run} onChange={e => onToggle({ per_run: e.target.value })} /> posts /</label>
+              <label className="camp-num"><input type="number" min={0} max={20} className="field" value={row.comments_per_day ?? 0} onChange={e => onToggle({ comments_per_day: e.target.value })} /> comments</label>
               <label className="camp-num">every <input type="number" min={1} className="field" value={row.interval_hours} onChange={e => onToggle({ interval_hours: e.target.value })} /> h</label>
-              <label className="row" style={{ gap: 7, fontSize: 12.5 }} title={row.auto_post ? 'Schedules into your smart slots automatically' : 'Leaves drafts for you to approve'}><Toggle on={!!row.auto_post} onChange={v => onToggle({ auto_post: v })} /> {row.auto_post ? 'Auto-post' : 'Draft for review'}</label>
-              <button className="mini" style={{ marginLeft: 'auto' }} disabled={busy} onClick={onRun}>{busy ? <Loader2 size={12} className="spin" /> : <Play size={12} />} Run now</button>
             </div>
+            <label className="row" style={{ gap: 7, fontSize: 12.5, marginTop: 10 }} title={row.auto_post ? 'Schedules into your smart slots automatically' : 'Leaves drafts for you to approve'}><Toggle on={!!row.auto_post} onChange={v => onToggle({ auto_post: v })} /> {row.auto_post ? 'Posts automatically' : 'Holds drafts for review'}</label>
+            <button className="ap-edit" onClick={onRequireOnboarding}>Edit your brand brief →</button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1471,6 +1587,56 @@ function Suggestions({ platform, drafts, busy, canPost, onGenerate, onPostNow, o
 // for what's working. Read-only: nothing to connect or authorize.
 // ── Niche engagement — YOUR account comments on relevant posts in your niche.
 // Slim front-end over the engagement_rules engine (keywords + watched accounts
+// ── Engage in your niche — a single toggle: keywords + accounts to always
+// reply to. No campaigns. Replies post immediately to ride the algorithmic
+// wave. Backed by one engagement_rule (auto). ────────────────────────────────
+function EngageToggle({ rule, primaryConn, xReadEnabled, posts, onSave, onPatch }) {
+  const on = !!rule?.active
+  const [kw, setKw] = useState('')
+  const [handles, setHandles] = useState('')
+  useEffect(() => {
+    setKw((rule?.target_keywords || []).join(', '))
+    setHandles((rule?.target_handles || []).map(h => '@' + String(h).replace(/^@/, '')).join('\n'))
+  }, [rule?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const lines = s => s.split('\n').map(x => x.trim().replace(/^@/, '')).filter(Boolean)
+  const targets = () => ({ target_keywords: kw.split(',').map(s => s.trim()).filter(Boolean), target_handles: lines(handles).slice(0, 5) })
+  function saveTargets() {
+    if (!rule?.id) return
+    onPatch(rule.id, { ...targets(), auto_post: true })
+  }
+  function toggle(v) {
+    if (v) {
+      if (rule?.id) onPatch(rule.id, { active: true, auto_post: true, ...targets() })
+      else onSave({ name: 'Niche engagement', comment_styles: ['add_value'], connection_ids: primaryConn ? [primaryConn.id] : [], interval_hours: 24, replies_per_run: 4, auto_post: true, active: true, ...targets() })
+    } else if (rule?.id) onPatch(rule.id, { active: false })
+  }
+  return (
+    <div className={'ar-block card' + (on ? ' on' : '')}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+        <div className="row" style={{ gap: 10, minWidth: 0 }}>
+          <span className="status-dot" style={{ background: platformDot('x'), marginTop: 5 }} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 13.5 }}>Engage in your niche</div>
+            <div className="muted tiny">{on ? 'Replies the moment a matching post goes up' : 'Always reply to the keywords & accounts you pick'}</div>
+          </div>
+        </div>
+        <Toggle on={on} onChange={toggle} />
+      </div>
+      {on && (
+        <div style={{ marginTop: 10 }}>
+          <label className="ob-label" style={{ marginTop: 0 }}>Keywords</label>
+          <input className="field" placeholder="AI agents, indie hacking" value={kw} onChange={e => setKw(e.target.value)} onBlur={saveTargets} />
+          <label className="ob-label">Accounts to always reply to <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 5</span></label>
+          <textarea className="field" rows={2} placeholder={'@naval\n@sama'} value={handles} onChange={e => setHandles(e.target.value)} onBlur={saveTargets} />
+          {!xReadEnabled && <div className="notice" style={{ marginTop: 8 }}>Needs X read access to find posts.</div>}
+          {rule?.running && <div className="live-status on" style={{ marginTop: 8 }}><Loader2 size={11} className="spin" /> {str(rule.status_detail) || 'Finding posts…'}</div>}
+          <RepliesFeed posts={posts} platform="x" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // discovery, replies in voice, approve-first by default).
 function EngageManager({ rules, primaryConn, xReadEnabled, posts, onSave, onPatch, onDelete, onRun }) {
   const [open, setOpen] = useState(false)
@@ -2380,6 +2546,7 @@ function App({ session }) {
   const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
   const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
   const [autopilot, setAutopilot] = useState([]); const [apRunning, setApRunning] = useState('')
+  const [brandOnb, setBrandOnb] = useState(false); const [brandSaving, setBrandSaving] = useState(false)
   const chatIdRef = useRef(null) // current saved-chat id; null until first save
   const inputRef = useRef(null); const bottomRef = useRef(null)
   const [leftPct, setLeftPct] = useState(47); const colsRef = useRef(null); const [dragging, setDragging] = useState(false)
@@ -2598,14 +2765,16 @@ function App({ session }) {
     setAutopilot(list => { const ex = list.find(a => a.platform === platform); const merged = { ...apFor(platform), ...patch }; return ex ? list.map(a => a.platform === platform ? merged : a) : [...list, merged] })
     try { await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, ...patch }) }); loadAutopilot() } catch { loadAutopilot() }
   }
-  async function runAutopilotNow(platform) {
-    setApRunning(platform)
+  const brandOnboarded = !!me?.profile?.brand_brief?.positioning
+  async function saveBrandBrief({ brief, cadence }) {
+    setBrandSaving(true)
     try {
-      const r = await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, action: 'run' }) }); const d = await r.json()
-      const res = d.result || {}
-      setBanner(res.error ? `Autopilot: ${res.error}` : res.queued ? `Autopilot queued ${res.queued} post${res.queued === 1 ? '' : 's'}` : `Autopilot drafted ${res.generated || 0} for review`)
-      loadAutopilot(); loadQueue()
-    } catch { setBanner('Autopilot run failed') } finally { setApRunning('') }
+      await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ brand_brief: brief }) })
+      await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform: 'x', enabled: true, ...cadence }) })
+      await loadMe(session); loadAutopilot()
+      setBanner('Autopilot on — Cadence is running your X in your voice')
+      setBrandOnb(false)
+    } catch { setBanner('Could not save — try again.') } finally { setBrandSaving(false) }
   }
   async function draftAgentCamp(body) {
     try {
@@ -2634,9 +2803,9 @@ function App({ session }) {
     await authed('/api/social', { method: 'DELETE', body: JSON.stringify({ id }) })
     setBanner('Account disconnected'); loadSocial()
   }
-  // The single auto-reply toggle promises approve-first, so enabling it also
-  // clears any legacy auto_post=true left by the old two-toggle UI.
-  async function toggleReplies(platform, patch) { await authed('/api/social-engagement', { method: 'PATCH', body: JSON.stringify({ platform, ...patch, ...(patch.enabled !== undefined ? { auto_post: false } : {}) }) }); loadSocialEng() }
+  // Auto-reply ON = replies go out automatically the moment a comment lands
+  // (immediacy = reach, per the user). Enabling forces auto_post=true.
+  async function toggleReplies(platform, patch) { await authed('/api/social-engagement', { method: 'PATCH', body: JSON.stringify({ platform, ...patch, ...(patch.enabled ? { auto_post: true } : {}) }) }); loadSocialEng() }
   async function runReplies(platform) {
     setBanner(`Checking ${platform} comments…`)
     const r = await authed('/api/social-engagement', { method: 'POST', body: JSON.stringify({ action: 'run', platform }) }); const d = await r.json()
@@ -2885,7 +3054,7 @@ function App({ session }) {
                     </div>
                   </div>
                   {qView === 'calendar'
-                    ? <QueueCalendar posts={[...shown, ...posted.filter(matchP)]} onOpen={openSchedule} />
+                    ? <QueueCalendar posts={[...shown, ...posted.filter(matchP)]} onOpen={openSchedule} onPostNow={postNow} onDelete={delPost} />
                     : (<>
                   {replies.length > 0 && (
                     <div className="row" style={{ gap: 6, justifyContent: 'flex-end', fontSize: 11.5, color: 'var(--muted)', cursor: 'pointer', margin: '0 2px 8px' }}>
@@ -2947,20 +3116,14 @@ function App({ session }) {
                 <PlatformCampaign campaigns={campsFor(['x'])} targets={xCampTargets} allowImage canCreate={connected} connectHint="Connect your X account first." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
                 <CrossCampHint plats={['x']} />
 
-                {/* Autopilot — no campaign needed */}
+                {/* Autopilot — no campaign needed; gated behind brand onboarding */}
                 <div style={{ marginTop: 14 }}>
-                  <AutopilotCard row={apFor('x')} busy={apRunning === 'x'} onToggle={patch => patchAutopilot('x', patch)} onRun={() => runAutopilotNow('x')} />
+                  <AutopilotCard row={apFor('x')} onboarded={brandOnboarded} onToggle={patch => patchAutopilot('x', patch)} onRequireOnboarding={() => setBrandOnb(true)} />
                 </div>
 
-                <div style={{ marginTop: 14 }}>
-                  <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'x')?.enabled} />}>
-                    <AutoReply platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
-                    <RepliesFeed posts={posts} platform="x" />
-                  </Section>
-                  <Section title="Engage in your niche" hint="comments on relevant posts as you" badge={<OnBadge on={engRules.some(r => r.active)} />}>
-                    <EngageManager rules={engRules} primaryConn={primaryX} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
-                  </Section>
-                </div>
+                <div className="psec-head" style={{ marginTop: 18 }}>Engagement <span className="muted tiny" style={{ fontWeight: 400 }}>· join conversations automatically, in your voice</span></div>
+                <AutoReply platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                <EngageToggle rule={engRules.find(r => r.active) || engRules[0]} primaryConn={primaryX} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} />
 
                 <div style={{ marginTop: 14 }}>
                   <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
@@ -3214,6 +3377,11 @@ function App({ session }) {
           <button className="chat-reopen" onClick={() => toggleChat(true)} title="Open Cadence chat"><Sparkles size={15} /> Chat</button>
         )}
       </div>
+
+      {/* brand onboarding — required before Autopilot speaks for you */}
+      <AnimatePresence>
+        {brandOnb && <BrandOnboarding initial={{ ...(me?.profile?.brand_brief || {}), ...apFor('x') }} busy={brandSaving} onSave={saveBrandBrief} onClose={() => setBrandOnb(false)} />}
+      </AnimatePresence>
 
       {/* agent profile modal — opened from the fleet or a campaign roster */}
       <AnimatePresence>
@@ -3803,12 +3971,33 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .cal-chip.bad { background: var(--bad-soft); }
 .cal-chip-t { font-size: 10px; font-weight: 600; color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cal-more { font-size: 9.5px; color: var(--faint); font-weight: 600; padding-left: 4px; }
-/* X tab: brain (left) + stats stacked (right) */
-.phead { display: flex; gap: 12px; align-items: stretch; margin-bottom: 14px; }
+/* X tab: brain (left) + stats stacked (right), both ending at the same line */
+.phead { display: flex; gap: 12px; height: 190px; margin-bottom: 14px; }
 .phead-brain { flex: 1.7; min-width: 0; border-radius: 14px; overflow: hidden; }
-.phead .stat-tiles.vertical { flex: 1; min-width: 130px; }
+.phead-brain .brain-stage { height: 100% !important; margin-bottom: 0 !important; border-radius: 14px; }
+.phead .stat-tiles.vertical { flex: 1; min-width: 130px; height: 100%; }
 .stat-tiles.vertical { display: flex; flex-direction: column; gap: 8px; margin: 0; }
 .stat-tiles.vertical .stat-tile { flex: 1; display: flex; flex-direction: column; justify-content: center; text-align: left; padding: 10px 14px; }
+/* autopilot 3-up cadence grid + edit-brief link */
+.ap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.ap-grid .camp-num { font-size: 12px; }
+.ap-grid .camp-num .field { width: 52px; }
+.ap-edit { margin-top: 12px; background: none; border: none; padding: 0; color: var(--accent-text); font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.ap-edit:hover { color: var(--accent-deep); }
+/* calendar: clickable cells + day detail panel */
+.cal-cell { font-family: inherit; text-align: left; cursor: default; }
+.cal-cell.has { cursor: pointer; }
+.cal-cell.has:hover { border-color: var(--line-hover); }
+.cal-cell.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cal-chip { cursor: inherit; }
+.cal-day { margin-top: 12px; padding: 14px 16px; }
+.cal-day-title { font-family: var(--serif); font-size: 15.5px; font-weight: 600; }
+.cal-day-row { display: flex; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+.cal-day-row:first-of-type { border-top: none; }
+.cal-day-time { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; flex: none; min-width: 78px; padding-top: 1px; }
+.cal-day-body { min-width: 0; flex: 1; }
+.cal-day-text { font-size: 13px; color: var(--body); line-height: 1.45; }
+.cal-day-status { font-size: 11px; font-weight: 600; text-transform: capitalize; }
 .psec-head { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); margin: 0 2px 10px; }
 .psec-head .live-pill { text-transform: none; letter-spacing: 0; }
 /* autopilot */

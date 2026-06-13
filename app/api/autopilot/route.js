@@ -23,6 +23,7 @@ export async function POST(req) {
   if (b.enabled !== undefined) { patch.enabled = !!b.enabled; if (b.enabled) patch.next_run_at = new Date().toISOString() }
   if (b.auto_post !== undefined) patch.auto_post = !!b.auto_post
   if (b.per_run !== undefined) patch.per_run = Math.min(Math.max(Number(b.per_run) || 1, 1), 3)
+  if (b.comments_per_day !== undefined) patch.comments_per_day = Math.min(Math.max(Number(b.comments_per_day) || 0, 0), 20)
   if (b.interval_hours !== undefined) patch.interval_hours = Math.min(Math.max(Number(b.interval_hours) || 24, 1), 168)
 
   const { data, error } = await admin.from('autopilot').upsert(patch, { onConflict: 'user_id,platform' }).select().single()
