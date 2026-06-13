@@ -1512,23 +1512,37 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, con
   const [topic, setTopic] = useState('')
   const [hours, setHours] = useState(24)
   const [picked, setPicked] = useState([]); const [busy, setBusy] = useState(false)
+  // Content the campaign pushes (IG/TikTok): carousels, clips, or both. Clips
+  // need source videos to cut from + an edit style.
+  const [types, setTypes] = useState(['carousel'])
+  const [clipSrc, setClipSrc] = useState(''); const [clipEdit, setClipEdit] = useState('captions')
   const single = targets.length === 1
-  function startNew() { setPicked(targets.map(t => t.id)); setOpen(true) }
+  const wantCarousel = !supportsCarousel || types.includes('carousel')
+  const wantClip = supportsCarousel && types.includes('clip')
+  const clipUrls = clipSrc.split('\n').map(s => s.trim()).filter(s => /^https?:\/\//.test(s))
+  function startNew() { setPicked(targets.map(t => t.id)); setTypes(['carousel']); setClipSrc(''); setClipEdit('captions'); setTopic(''); setOpen(true) }
+  function toggleType(k) { setTypes(ts => ts.includes(k) ? (ts.length > 1 ? ts.filter(x => x !== k) : ts) : [...ts, k]) }
   const chosen = single ? targets : targets.filter(t => picked.includes(t.id))
+  const needTopic = wantCarousel // clips caption themselves from the transcript
+  const valid = chosen.length && types.length && (!needTopic || topic.trim()) && (!wantClip || clipUrls.length)
   async function submit() {
-    if (!topic.trim() || !chosen.length) return
+    if (!valid) return
     setBusy(true)
-    const t = topic.trim()
+    const t = (topic.trim() || (wantClip ? 'Clip campaign' : ''))
     const payload = {
       name: t.length > 42 ? t.slice(0, 42).trimEnd() + '…' : t,
       topic: t,
       targets: chosen.map(t => ({ kind: t.kind, id: t.id, platform: t.platform })),
       interval_hours: Number(hours), include_image: false, active: true,
     }
-    if (supportsCarousel) { payload.carousel_style = 'bold'; payload.carousel_format = 'listicle' }
+    if (supportsCarousel) {
+      payload.content_types = types
+      payload.carousel_style = 'bold'; payload.carousel_format = 'listicle'
+      if (wantClip) { payload.clip_sources = clipUrls; payload.clip_edit = clipEdit }
+    }
     const ok = await onSave(payload)
     setBusy(false)
-    if (ok) { setOpen(false); setTopic(''); setPicked([]) }
+    if (ok) { setOpen(false); setTopic(''); setPicked([]); setClipSrc('') }
   }
   return (
     <>
@@ -1542,7 +1556,7 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, con
             <Toggle on={!!c.active} onChange={v => onPatch(c.id, { active: v })} />
           </div>
           <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-            <span className="muted tiny" style={{ marginRight: 'auto' }}>{cadenceLabel(c.interval_hours)}</span>
+            <span className="muted tiny" style={{ marginRight: 'auto' }}>{supportsCarousel && c.content_types?.length ? c.content_types.map(t => t === 'clip' ? 'clips' : 'carousels').join(' + ') + ' · ' : ''}{cadenceLabel(c.interval_hours)}</span>
             <button className="mini" onClick={() => onRun(c.id)} disabled={c.running}><Play size={11} /> Run now</button>
             <button className="mini danger" onClick={() => onDelete(c.id)}><Trash2 size={12} /></button>
           </div>
@@ -1550,19 +1564,37 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, con
       ))}
       {open ? (
         <div className="card camp-form">
-          <textarea className="field" rows={2} placeholder="What should it promote? (written in your voice)" value={topic} onChange={e => setTopic(e.target.value)} autoFocus />
+          {supportsCarousel && (<>
+            <label className="ob-label">Push out</label>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {[['carousel', 'Carousels', 'AI slides from your topic'], ['clip', 'Clips', 'short videos cut from your links']].map(([k, l, d]) => (
+                <button type="button" key={k} className={'chip' + (types.includes(k) ? ' on' : '')} title={d} onClick={() => toggleType(k)}>{types.includes(k) && <LCheck size={11} strokeWidth={3} />} {l}</button>
+              ))}
+            </div>
+          </>)}
+          {needTopic && <textarea className="field" style={{ marginTop: supportsCarousel ? 12 : 0 }} rows={2} placeholder={supportsCarousel ? 'What should the carousels be about? (your voice)' : 'What should it promote? (your voice)'} value={topic} onChange={e => setTopic(e.target.value)} autoFocus />}
+          {wantClip && (<>
+            <label className="ob-label">Clip from these videos <span className="muted tiny" style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· one link per line, it rotates through them</span></label>
+            <textarea className="field" rows={3} placeholder={'https://youtube.com/watch?v=…\nhttps://tiktok.com/@you/video/…'} value={clipSrc} onChange={e => setClipSrc(e.target.value)} />
+            <label className="ob-label">Edit style</label>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {EDIT_FORMAT_LIST.map(f => <button type="button" key={f.key} className={'chip' + (clipEdit === f.key ? ' on' : '')} title={f.desc} onClick={() => setClipEdit(f.key)}>{f.label}</button>)}
+            </div>
+          </>)}
           {!single && (<>
             <label className="ob-label">Post to</label>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
               {targets.map(t => <button type="button" key={t.id} className={'chip' + (picked.includes(t.id) ? ' on' : '')} onClick={() => setPicked(p => p.includes(t.id) ? p.filter(x => x !== t.id) : [...p, t.id])}><span className="status-dot" style={{ background: platformDot(t.platform) }} />{t.label}</button>)}
             </div>
           </>)}
-          <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
+          <label className="ob-label">How often</label>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
             {CADENCES.map(([h, l]) => <button type="button" key={h} className={'chip' + (Number(hours) === h ? ' on' : '')} onClick={() => setHours(h)}>{l}</button>)}
           </div>
-          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+          {wantClip && types.length > 1 && <div className="muted tiny" style={{ marginTop: 8 }}>Alternates each run — one carousel, then one clip, and so on.</div>}
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
             <button className="mini" onClick={() => setOpen(false)}>Cancel</button>
-            <button className="btn-primary btn-sm" disabled={busy || !topic.trim() || !chosen.length} onClick={submit}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start campaign'}</button>
+            <button className="btn-primary btn-sm" disabled={busy || !valid} onClick={submit}>{busy ? <span className="dots"><i/><i/><i/></span> : 'Start campaign'}</button>
           </div>
         </div>
       ) : (
@@ -3497,7 +3529,7 @@ function App({ session }) {
                     <Section title="Engage in your niche" hint="comments on relevant posts as you">
                       <EngageStub platform={platLabel} />
                     </Section>
-                    <Section title="Campaign" hint="auto-post carousels on a schedule" badge={<OnBadge on={campsTouching([plat]).some(c => c.active)} />}>
+                    <Section title="Campaign" hint="auto-post carousels & clips on a schedule" badge={<OnBadge on={campsTouching([plat]).some(c => c.active)} />}>
                       <PlatformCampaign campaigns={campsFor([plat])} targets={platCampTargets} supportsCarousel canCreate={platCampTargets.length > 0} connectHint={`Connect ${platLabel} first (accounts, bottom-right).`} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
                       <CrossCampHint plats={[plat]} />
                     </Section>
