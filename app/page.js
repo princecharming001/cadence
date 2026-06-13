@@ -1153,6 +1153,7 @@ const CLIP_FORMAT_LIST = [
 // through the chosen set. Copy on the cards is AI-written from the transcript.
 const EDIT_FORMAT_LIST = [
   { key: 'captions', label: 'Captions', desc: 'word-by-word bold captions, yellow highlight' },
+  { key: 'cold_open', label: 'Cold open', desc: 'bold full-screen hook card, then cuts to your clip' },
   { key: 'sludge', label: 'Sludge split', desc: 'your clip on top, gameplay underneath' },
   { key: 'tweet', label: 'Tweet quote', desc: 'a real viral-tweet screenshot pinned over the clip' },
   { key: 'thread', label: 'Thread', desc: 'a 2-3 tweet mini-thread that advances with the clip' },

@@ -7,6 +7,7 @@ import { voiceBlock, enforceLen, LINKEDIN_RUBRIC } from '@/lib/prompts'
 import { generateSlideshow } from '@/lib/slideshow'
 import { createPost, zernioEnabled } from '@/lib/zernio'
 import { runSocialEngagement, SOCIAL_ENGAGEMENT_PLATFORMS } from '@/lib/social-engagement'
+import { analyzeViralVideo, analyzeViralText, trendingBlock } from '@/lib/trends'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -218,6 +219,18 @@ const tools = [
     name: 'run_agent',
     description: 'Run a feeder agent\'s think-post cycle right now. Output lands as drafts (or queued when the agent is autonomous).',
     input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'learn_trend',
+    description: "Learn a viral FORMAT from a link or pasted post so Cadence can reuse it. For a video link (a TikTok/Reel/YouTube short), it reverse-engineers the HOOK and editing format (which render style reproduces it). For X/LinkedIn text (a link or pasted post), it extracts the reusable hook pattern, which then feeds the user's own post generation. Use when the user says 'study this', 'learn from this reel', 'what makes this viral', or pastes a post/video they admire.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Link to the viral video or post.' },
+        text: { type: 'string', description: 'Or paste the post text directly (for X/LinkedIn).' },
+        platform: { type: 'string', enum: ['x', 'linkedin', 'instagram', 'tiktok'], description: 'Platform of the example (inferred from a URL if omitted).' },
+      },
+    },
   },
   {
     name: 'create_promo_campaign',
@@ -464,6 +477,18 @@ async function executeTool(name, input, userId) {
       return await runFeederAgentById(input.id, userId)
     }
 
+    case 'learn_trend': {
+      try {
+        if (input.url && /^https?:\/\//.test(String(input.url)) && /(tiktok|instagram|youtube|youtu\.be|\.mp4)/i.test(String(input.url))) {
+          const f = await analyzeViralVideo(String(input.url), { userId, platform: input.platform })
+          return { learned: { name: f.name, hook: f.summary, render_style: f.render_style, recipe: (f.pattern || '').slice(0, 400) }, note: 'Saved to your formats. Use this render style on a clip to reproduce it.' }
+        }
+        const f = await analyzeViralText({ text: input.text, url: input.url, platform: input.platform || 'x' }, { userId })
+        if (f?.error) return { error: f.error }
+        return { learned: { name: f.name, pattern: f.pattern, example: f.hook_text }, note: "Saved — this hook pattern now feeds your post suggestions on that platform." }
+      } catch (e) { return { error: String(e.message || 'Could not learn from that.').slice(0, 180) } }
+    }
+
     case 'create_promo_campaign': {
       const topic = String(input.topic || '').slice(0, 300).trim()
       const platforms = (Array.isArray(input.platforms) ? input.platforms : []).filter(p => ['x', 'linkedin', 'instagram', 'tiktok'].includes(p))
@@ -577,6 +602,7 @@ Cross-platform powers (use the tools, don't just explain — the ENTIRE product 
 - list_agents / set_agent / run_agent: see and manage the user's feeder agents (autonomous personas on their other accounts) — activate, pause, make autonomous, assign to campaigns, run a cycle now.
 - create_feeder_campaign: launch a promotion mission the agents weave into their own posting ("launch a feeder campaign promoting X").
 - create_promo_campaign: a recurring promo on the user's OWN accounts (their voice, their primary accounts, on a cadence).
+- learn_trend: study a viral reel/post (link or pasted text) — reverse-engineers its hook/editing format; text hook patterns then feed the user's own drafts.
 After any action, confirm what happened in one or two sentences. Never invent results — only report what tools returned.
 
 ${CHAT_STYLE}
@@ -604,9 +630,14 @@ More rules:
 - Relative times like "tomorrow at noon" resolve against the current LA time given below. Show times in Pacific (PT).
 - Be concise. If a tool errors, say plainly what went wrong.`
 
+    // Live trending hook patterns for the focused TEXT platforms feed the
+    // drafts (video formats apply at clip-render time, not here).
+    const trendPlats = (scope || ['x', 'linkedin']).filter(p => p === 'x' || p === 'linkedin')
+    const trendBlocks = (await Promise.all(trendPlats.map(p => trendingBlock(user.id, p).catch(() => '')))).filter(Boolean).join('')
+
     const dynamicSystem = `Current date and time (America/Los_Angeles): ${now}
 ${accountsLine}
-${scopeBlock}${liVoiceBlock}${feedbackBlock(fb)}`
+${scopeBlock}${liVoiceBlock}${trendBlocks}${feedbackBlock(fb)}`
 
     let convo = safeMessages
     let reply = ''
