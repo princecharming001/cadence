@@ -1199,47 +1199,29 @@ function BrandOnboarding({ initial, busy, onSave, onClose }) {
   )
 }
 
-// ── Autopilot — the brain runs your account in your voice on a cadence: posts
-// AND niche comments, no campaign needed. Gated behind brand onboarding so it
-// knows who you are and how you want to be portrayed before it speaks for you.
-function AutopilotCard({ row, onboarded, onToggle, onRequireOnboarding }) {
-  const on = !!row?.enabled
-  function setEnabled(v) {
-    if (v && !onboarded) { onRequireOnboarding(); return } // finish brand setup first
-    onToggle({ enabled: v })
-  }
+// ── Autopilot body — the cadence settings. The on/off toggle lives in the
+// section header (gated behind brand onboarding). Runs the account hands-free:
+// posts AND niche comments in the user's voice, no campaign needed.
+function AutopilotBody({ row, onToggle, onEditBrief }) {
   return (
-    <div className={'card autopilot' + (on ? ' on' : '')}>
-      <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
-        <div className="ap-icon"><Sparkles size={16} /></div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="row" style={{ gap: 8 }}><span className="ap-title">Autopilot</span>{on && row?.status_detail && <span className="muted tiny">· {row.status_detail}</span>}</div>
-          <div className="muted tiny" style={{ marginTop: 2 }}>Cadence runs your account in your voice — writes posts and joins conversations on a schedule. No campaign needed.</div>
-        </div>
-        <Toggle on={on} onChange={setEnabled} />
+    <>
+      <div className="muted tiny" style={{ marginBottom: 10 }}>Cadence runs your account in your voice — writes posts and joins conversations on a schedule.{row?.enabled && row?.status_detail ? ` · ${row.status_detail}` : ''}</div>
+      <div className="ap-grid">
+        <label className="camp-num"><input type="number" min={1} max={3} className="field" value={row.per_run} onChange={e => onToggle({ per_run: e.target.value })} /> posts /</label>
+        <label className="camp-num"><input type="number" min={0} max={20} className="field" value={row.comments_per_day ?? 0} onChange={e => onToggle({ comments_per_day: e.target.value })} /> comments</label>
+        <label className="camp-num">every <input type="number" min={1} className="field" value={row.interval_hours} onChange={e => onToggle({ interval_hours: e.target.value })} /> h</label>
       </div>
-      <AnimatePresence initial={false}>
-        {on && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-            <div className="ap-grid">
-              <label className="camp-num"><input type="number" min={1} max={3} className="field" value={row.per_run} onChange={e => onToggle({ per_run: e.target.value })} /> posts /</label>
-              <label className="camp-num"><input type="number" min={0} max={20} className="field" value={row.comments_per_day ?? 0} onChange={e => onToggle({ comments_per_day: e.target.value })} /> comments</label>
-              <label className="camp-num">every <input type="number" min={1} className="field" value={row.interval_hours} onChange={e => onToggle({ interval_hours: e.target.value })} /> h</label>
-            </div>
-            <label className="row" style={{ gap: 7, fontSize: 12.5, marginTop: 10 }} title={row.auto_post ? 'Schedules into your smart slots automatically' : 'Leaves drafts for you to approve'}><Toggle on={!!row.auto_post} onChange={v => onToggle({ auto_post: v })} /> {row.auto_post ? 'Posts automatically' : 'Holds drafts for review'}</label>
-            <button className="ap-edit" onClick={onRequireOnboarding}>Edit your brand brief →</button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+      <label className="row" style={{ gap: 7, fontSize: 12.5, marginTop: 10 }} title={row.auto_post ? 'Schedules into your smart slots automatically' : 'Leaves drafts for you to approve'}><Toggle on={!!row.auto_post} onChange={v => onToggle({ auto_post: v })} /> {row.auto_post ? 'Posts automatically' : 'Holds drafts for review'}</label>
+      <button className="ap-edit" onClick={onEditBrief}>Edit your brand brief →</button>
+    </>
   )
 }
 
 // Recent comments/replies feed — what the engagement engine is replying to.
-function RepliesFeed({ posts, platform = 'x' }) {
-  const replies = posts.filter(p => p.reply_to_tweet_id && (p.platform || 'x') === platform)
+function RepliesFeed({ posts, platform = 'x', source }) {
+  const replies = posts.filter(p => p.reply_to_tweet_id && (p.platform || 'x') === platform && (!source || p.source === source))
     .sort((a, b) => new Date(b.created_at || b.scheduled_for) - new Date(a.created_at || a.scheduled_for)).slice(0, 6)
-  if (!replies.length) return <div className="muted tiny" style={{ marginTop: 8 }}>No replies yet — flip on auto-reply or niche engagement and they'll show up here.</div>
+  if (!replies.length) return <div className="muted tiny" style={{ marginTop: 8 }}>No replies yet — they'll show up here as they go out.</div>
   return (
     <div className="reply-feed">
       <div className="reply-feed-h">Recent replies</div>
@@ -1338,18 +1320,19 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, con
 
 // Collapsible section — the backbone of the simplified tabs. Each tab keeps one
 // primary area open; everything else folds away until needed.
-function Section({ title, hint, badge, defaultOpen = false, children }) {
+function Section({ title, hint, badge, toggle, defaultOpen = false, children }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div className="sec card" style={{ padding: 0, marginBottom: 10, overflow: 'hidden' }}>
-      <button className="sec-head" onClick={() => setOpen(o => !o)}>
+      <div className="sec-head" role="button" tabIndex={0} onClick={() => setOpen(o => !o)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}>
         <span className="sec-title">{title}</span>
         {hint && <span className="muted tiny" style={{ fontWeight: 400 }}>{hint}</span>}
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
           {badge}
+          {toggle && <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex' }}><Toggle on={toggle.on} onChange={toggle.onChange} /></span>}
           <ChevronDown size={15} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .18s' }} />
         </span>
-      </button>
+      </div>
       <AnimatePresence initial={false}>
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}>
@@ -1613,51 +1596,30 @@ function TagInput({ value, onChange, placeholder, max = 8, prefix = '' }) {
   )
 }
 
-// ── Engage in your niche — a single toggle: keywords + accounts to always
-// reply to. No campaigns. Replies post immediately to ride the algorithmic
-// wave. Backed by one engagement_rule (auto). ────────────────────────────────
-function EngageToggle({ rule, primaryConn, xReadEnabled, posts, onSave, onPatch }) {
-  const on = !!rule?.active
+// ── Engage in your niche — body for the collapsible section. Keywords +
+// accounts to always reply to (as chips). The on/off toggle lives in the
+// section header. Replies post immediately to ride the wave. ─────────────────
+function EngageBody({ rule, xReadEnabled, posts, onPatch }) {
   const [kw, setKw] = useState([])
   const [handles, setHandles] = useState([])
   useEffect(() => {
     setKw(rule?.target_keywords || [])
     setHandles((rule?.target_handles || []).map(h => String(h).replace(/^@/, '')))
   }, [rule?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-  const targets = (k = kw, h = handles) => ({ target_keywords: k, target_handles: h.slice(0, 5) })
-  function saveTargets(k = kw, h = handles) { if (rule?.id) onPatch(rule.id, { ...targets(k, h), auto_post: true }) }
-  function setKwSaved(v) { setKw(v); saveTargets(v, handles) }
-  function setHandlesSaved(v) { setHandles(v); saveTargets(kw, v) }
-  function toggle(v) {
-    if (v) {
-      if (rule?.id) onPatch(rule.id, { active: true, auto_post: true, ...targets() })
-      else onSave({ name: 'Niche engagement', comment_styles: ['add_value'], connection_ids: primaryConn ? [primaryConn.id] : [], interval_hours: 24, replies_per_run: 4, auto_post: true, active: true, ...targets() })
-    } else if (rule?.id) onPatch(rule.id, { active: false })
-  }
+  function save(k, h) { if (rule?.id) onPatch(rule.id, { target_keywords: k, target_handles: h.slice(0, 5), auto_post: true }) }
+  function setKwSaved(v) { setKw(v); save(v, handles) }
+  function setHandlesSaved(v) { setHandles(v); save(kw, v) }
   return (
-    <div className={'ar-block card' + (on ? ' on' : '')}>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-        <div className="row" style={{ gap: 10, minWidth: 0 }}>
-          <span className="status-dot" style={{ background: platformDot('x'), marginTop: 5 }} />
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 600, fontSize: 13.5 }}>Engage in your niche</div>
-            <div className="muted tiny">{on ? 'Replies the moment a matching post goes up' : 'Always reply to the keywords & accounts you pick'}</div>
-          </div>
-        </div>
-        <Toggle on={on} onChange={toggle} />
-      </div>
-      {on && (
-        <div style={{ marginTop: 10 }}>
-          <label className="ob-label" style={{ marginTop: 0 }}>Keywords <span className="muted tiny" style={{ fontWeight: 400 }}>· enter to add</span></label>
-          <TagInput value={kw} onChange={setKwSaved} placeholder="AI agents, indie hacking…" max={8} />
-          <label className="ob-label">Accounts to always reply to <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 5</span></label>
-          <TagInput value={handles} onChange={setHandlesSaved} placeholder="@handle…" max={5} prefix="@" />
-          {!xReadEnabled && <div className="notice" style={{ marginTop: 8 }}>Needs X read access to find posts.</div>}
-          {rule?.running && <div className="live-status on" style={{ marginTop: 8 }}><Loader2 size={11} className="spin" /> {str(rule.status_detail) || 'Finding posts…'}</div>}
-          <RepliesFeed posts={posts} platform="x" />
-        </div>
-      )}
-    </div>
+    <>
+      {!rule?.id && <div className="muted tiny" style={{ marginBottom: 8 }}>Turn it on, then add what to watch.</div>}
+      <label className="ob-label" style={{ marginTop: 0 }}>Keywords <span className="muted tiny" style={{ fontWeight: 400 }}>· enter to add</span></label>
+      <TagInput value={kw} onChange={setKwSaved} placeholder="AI agents, indie hacking…" max={8} />
+      <label className="ob-label">Accounts to always reply to <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 5</span></label>
+      <TagInput value={handles} onChange={setHandlesSaved} placeholder="@handle…" max={5} prefix="@" />
+      {!xReadEnabled && <div className="notice" style={{ marginTop: 8 }}>Needs X read access to find posts.</div>}
+      {rule?.running && <div className="live-status on" style={{ marginTop: 8 }}><Loader2 size={11} className="spin" /> {str(rule.status_detail) || 'Finding posts…'}</div>}
+      <RepliesFeed posts={posts} platform="x" source="engagement" />
+    </>
   )
 }
 
@@ -3135,24 +3097,47 @@ function App({ session }) {
                 </>)}
                 {xConns.some(c => c.needs_reconnect) && <div className="notice" style={{ color: '#8A6200', margin: '4px 0 10px' }}>An X account needs reconnecting — open accounts (bottom-right).</div>}
 
-                {/* Campaigns — the main feature, surfaced (not buried in a dropdown) */}
-                <div className="psec-head row" style={{ gap: 8 }}>Campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· promote on a schedule, in your voice</span>{campsTouching(['x']).some(c => c.active) && <span className="live-pill on" style={{ marginLeft: 'auto' }}><span className="pulse" />{campsTouching(['x']).filter(c => c.active).length} live</span>}</div>
-                <PlatformCampaign campaigns={campsFor(['x'])} targets={xCampTargets} allowImage canCreate={connected} connectHint="Connect your X account first." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
-                <CrossCampHint plats={['x']} />
+                {(() => {
+                  const ap = apFor('x')
+                  const arOn = !!engSettings.find(s => s.platform === 'x')?.enabled
+                  const engRule = engRules.find(r => r.active) || engRules[0]
+                  const liveCamps = campsTouching(['x']).filter(c => c.active).length
+                  function engToggle(v) {
+                    if (v) { engRule?.id ? patchEngagement(engRule.id, { active: true, auto_post: true }) : saveEngagement({ comment_styles: ['add_value'], connection_ids: primaryX ? [primaryX.id] : [], interval_hours: 24, replies_per_run: 4, auto_post: true, active: true }) }
+                    else if (engRule?.id) patchEngagement(engRule.id, { active: false })
+                  }
+                  return (<>
+                    {/* Campaigns — the headline feature, open by default */}
+                    <Section title="Campaigns" hint="promote on a schedule, in your voice" defaultOpen badge={liveCamps ? <span className="live-pill on"><span className="pulse" />{liveCamps} live</span> : null}>
+                      <PlatformCampaign campaigns={campsFor(['x'])} targets={xCampTargets} allowImage canCreate={connected} connectHint="Connect your X account first." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
+                      <CrossCampHint plats={['x']} />
+                    </Section>
 
-                {/* Autopilot — no campaign needed; gated behind brand onboarding */}
-                <div style={{ marginTop: 14 }}>
-                  <AutopilotCard row={apFor('x')} onboarded={brandOnboarded} onToggle={patch => patchAutopilot('x', patch)} onRequireOnboarding={() => setBrandOnb(true)} />
-                </div>
+                    {/* Autopilot — hands-free; toggle gated behind brand onboarding */}
+                    <Section title="Autopilot" hint="run your account hands-free" badge={ap.enabled && ap.status_detail ? <span className="muted tiny">{ap.status_detail}</span> : null}
+                      toggle={{ on: ap.enabled, onChange: v => { if (v && !brandOnboarded) setBrandOnb(true); else patchAutopilot('x', { enabled: v }) } }}>
+                      <AutopilotBody row={ap} onToggle={patch => patchAutopilot('x', patch)} onEditBrief={() => setBrandOnb(true)} />
+                    </Section>
 
-                <div className="psec-head" style={{ marginTop: 18 }}>Engagement <span className="muted tiny" style={{ fontWeight: 400 }}>· join conversations automatically, in your voice</span></div>
-                <AutoReply platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
-                <EngageToggle rule={engRules.find(r => r.active) || engRules[0]} primaryConn={primaryX} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} />
+                    {/* Auto-reply — replies to comments on your posts (after a human pause) */}
+                    <Section title="Auto-reply" hint="reply to comments on your posts" toggle={{ on: arOn, onChange: v => toggleReplies('x', { enabled: v }) }}>
+                      <div className="muted tiny" style={{ marginBottom: 6 }}>{arOn ? 'Replies automatically — after a natural 30–90s pause so it never reads as a bot.' : 'Off — turn on to reply to comments in your voice.'}</div>
+                      <div className="row" style={{ justifyContent: 'flex-end' }}><button className="mini" disabled={!connected} onClick={() => runReplies('x')}><RefreshCw size={11} /> Check now</button></div>
+                      <RepliesFeed posts={posts} platform="x" source="reply" />
+                    </Section>
 
-                <div style={{ marginTop: 14 }}>
-                  <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
-                    onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
-                </div>
+                    {/* Engage in your niche — keywords + accounts to always reply to */}
+                    <Section title="Engage in your niche" hint="reply to keywords & accounts" toggle={{ on: !!engRule?.active, onChange: engToggle }}>
+                      <EngageBody rule={engRule} xReadEnabled={!!me?.xReadEnabled} posts={posts} onPatch={patchEngagement} />
+                    </Section>
+
+                    {/* Ready to post */}
+                    <Section title="Ready to post" hint="drafts waiting for you" defaultOpen={xDrafts.length > 0} badge={xDrafts.length ? <span className="camp-state on">{xDrafts.length}</span> : null}>
+                      <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
+                        onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
+                    </Section>
+                  </>)
+                })()}
               </>)}
 
               {/* Instagram / TikTok — one tab per platform: its brain, REAL
@@ -4036,13 +4021,12 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .reply-feed-ctx { display: block; font-size: 11px; color: var(--muted); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .reply-feed-ctx:hover { color: var(--accent-text); }
 .reply-feed-text { font-size: 12.5px; color: var(--body); line-height: 1.4; margin-top: 1px; }
-/* tag input — chips you add (handles, keywords) */
-.taginput { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--raise); border: 1px solid var(--line2); border-radius: 9px; padding: 7px 8px; min-height: 42px; transition: border-color .15s, box-shadow .15s; }
-.taginput:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
-.tag { display: inline-flex; align-items: center; gap: 4px; background: var(--surface); border: 1px solid var(--line2); border-radius: 999px; padding: 3px 5px 3px 11px; font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; }
-.tag button { background: none; border: none; cursor: pointer; color: var(--faint); display: inline-flex; padding: 1px; border-radius: 50%; }
-.tag button:hover { color: var(--bad); background: var(--bad-soft); }
-.tag-input { flex: 1; min-width: 90px; border: none; background: none; outline: none; font-family: inherit; font-size: 13.5px; color: var(--ink); padding: 2px 4px; }
+/* tag input — chips you add (handles, keywords), no surrounding box */
+.taginput { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 2px 0; }
+.tag { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 999px; padding: 4px 6px 4px 11px; font-size: 12.5px; font-weight: 600; color: var(--accent-text); white-space: nowrap; }
+.tag button { background: none; border: none; cursor: pointer; color: var(--accent-text); opacity: .55; display: inline-flex; padding: 1px; border-radius: 50%; }
+.tag button:hover { opacity: 1; }
+.tag-input { flex: 1; min-width: 110px; border: none; background: none; outline: none; font-family: inherit; font-size: 13.5px; color: var(--ink); padding: 4px 2px; }
 .tag-input::placeholder { color: var(--faint); }
 /* chat reopen button (when collapsed) */
 .chat-reopen { position: absolute; right: 18px; bottom: 18px; z-index: 20; display: inline-flex; align-items: center; gap: 7px; padding: 10px 16px; border-radius: 999px; border: 1px solid var(--line2); background: var(--ink); color: #FAF9F7; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 10px 30px -10px rgba(35,32,24,0.5); transition: transform .12s; }

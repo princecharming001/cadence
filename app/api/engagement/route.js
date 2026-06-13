@@ -74,10 +74,9 @@ export async function POST(req) {
   const user = await getUser(req)
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
   const patch = clean(body)
-  if (!patch.name) return Response.json({ error: 'Give the rule a name.' }, { status: 400 })
-  if (!arr(patch.target_keywords).length && !arr(patch.target_handles).length) {
-    return Response.json({ error: 'Add at least one target: accounts to watch or keywords.' }, { status: 400 })
-  }
+  if (!patch.name) patch.name = 'Niche engagement'
+  // Targets can be added after enabling (toggle-first UX) — an empty rule just
+  // finds nothing until keywords/accounts are set.
   const next_run_at = patch.active ? new Date().toISOString() : null
   const { data, error } = await admin.from('engagement_rules')
     .insert({ ...patch, user_id: user.id, next_run_at }).select().single()
