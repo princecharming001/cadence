@@ -1324,8 +1324,10 @@ function TrendFormats({ platform, formats, busy, canScan, onScan, onDelete }) {
             </div>
             <button className="hist-del" title="Forget this format" onClick={() => onDelete(f.id)}><Trash2 size={12} /></button>
           </div>
-          {f.pattern && <div className="trend-pattern">{f.pattern.slice(0, 220)}</div>}
+          {f.payoff && <div className="trend-payoff"><span>Payoff</span> {f.payoff}</div>}
+          {f.pattern && <div className="trend-pattern">{f.pattern.slice(0, 360)}</div>}
           <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            {f.archetype && <span className="trend-badge arch">{f.archetype}</span>}
             {f.render_style && RENDER_LABEL[f.render_style] && <span className="trend-badge render"><Wand2 size={10} /> {RENDER_LABEL[f.render_style]}</span>}
             {f.kind === 'ad' && <span className="trend-badge ad">Ad format</span>}
             {f.metrics?.views ? <span className="trend-badge">{fmtNum(f.metrics.views)} views</span> : null}
@@ -2316,6 +2318,7 @@ function App({ session }) {
   }, [authed])
   const loadAgents = useCallback(async () => { const r = await authed('/api/feeder-agents'); const d = await r.json(); setFeederAgents(d.agents || []) }, [authed])
   const loadAgentCamps = useCallback(async () => { const r = await authed('/api/agent-campaigns'); const d = await r.json(); setAgentCampaigns(d.campaigns || []) }, [authed])
+  const loadTrends = useCallback(async () => { try { const r = await authed('/api/trends'); const d = await r.json(); setTrends(d.formats || []) } catch {} }, [authed])
 
   useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps(); loadTrends() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps, loadTrends])
 
@@ -2469,9 +2472,6 @@ function App({ session }) {
     if (d.error) { setBanner(d.error); return false }
     setBanner('Campaign created — deploy agents to it'); loadAgentCamps(); return true
   }
-  const loadTrends = useCallback(async () => {
-    try { const r = await authed('/api/trends'); const d = await r.json(); setTrends(d.formats || []) } catch {}
-  }, [authed])
   async function scanTrends(platform) {
     setScanning(platform)
     try {
@@ -3628,6 +3628,9 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .trend-card { padding: 12px 14px; margin-bottom: 8px; }
 .trend-name { font-weight: 700; font-size: 13.5px; }
 .trend-pattern { font-size: 12px; color: var(--body); background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 8px; line-height: 1.5; white-space: pre-wrap; }
+.trend-payoff { font-size: 12px; color: var(--body); margin-top: 8px; line-height: 1.5; }
+.trend-payoff span { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--ok); background: var(--ok-soft); border: 1px solid var(--ok-line); padding: 1px 6px; border-radius: 5px; margin-right: 6px; }
+.trend-badge.arch { background: var(--plum-soft); border-color: var(--plum-line); color: var(--plum); text-transform: capitalize; }
 .trend-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--bg2); border: 1px solid var(--line2); color: var(--muted); }
 .trend-badge.render { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
 .trend-badge.ad { background: var(--gold-soft); border-color: var(--gold-line); color: var(--gold); }
