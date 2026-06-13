@@ -847,12 +847,13 @@ function QueueCalendar({ posts, onOpen, onPostNow, onDelete }) {
                 <div className="cal-day-row" key={p.id}>
                   <div className="cal-day-time"><span className="status-dot" style={{ background: platformDot(p.platform || 'x') }} />{new Date(p.posted_at || p.scheduled_for).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</div>
                   <div className="cal-day-body">
-                    <div className="cal-day-text">{p.content}</div>
+                    <div className="cal-day-text">{p.content}{p._ss && <span className="camp-state" style={{ marginLeft: 7 }}>carousel</span>}</div>
                     <div className="row" style={{ gap: 8, marginTop: 5 }}>
                       <span className="cal-day-status" style={{ color: s.c }}>{s.label}</span>
-                      {!done && <button className="mini" onClick={() => onOpen(p)}><Pencil size={11} /> Edit</button>}
-                      {!done && onPostNow && <button className="mini" onClick={() => onPostNow(p.id)}>Post now</button>}
-                      {onDelete && <button className="mini danger" onClick={() => onDelete(p.id)}><Trash2 size={11} /></button>}
+                      {/* Carousels are managed from the Slideshows tab (already handed to Zernio) — read-only here. */}
+                      {!p._ss && !done && <button className="mini" onClick={() => onOpen(p)}><Pencil size={11} /> Edit</button>}
+                      {!p._ss && !done && onPostNow && <button className="mini" onClick={() => onPostNow(p.id)}>Post now</button>}
+                      {!p._ss && onDelete && <button className="mini danger" onClick={() => onDelete(p.id)}><Trash2 size={11} /></button>}
                     </div>
                   </div>
                 </div>
@@ -3281,7 +3282,21 @@ function App({ session }) {
               {tab === 'queue' && (() => {
                 const matchP = it => qPlatform === 'all' || (it.platform || 'x') === qPlatform
                 const fQueue = queue.filter(matchP)
-                const schedShows = slideshows.filter(s => ['scheduled', 'posted'].includes(s.status) && (qPlatform === 'all' || qPlatform === 'instagram' || qPlatform === 'tiktok'))
+                // Scheduled/posted carousels live in the slideshows table (Zernio
+                // publishes them on its own clock) — surface them in the queue +
+                // calendar. Their platform comes from the accounts they target.
+                const acctPlat = id => socialAccounts.find(a => a.id === id)?.platform
+                const ssPlatforms = s => [...new Set((s.account_ids || []).map(acctPlat).filter(Boolean))]
+                const schedShows = slideshows
+                  .filter(s => ['scheduled', 'posted'].includes(s.status))
+                  .map(s => ({ ...s, _platforms: ssPlatforms(s) }))
+                  .filter(s => qPlatform === 'all' || s._platforms.includes(qPlatform))
+                const ssAsPosts = schedShows.map(s => ({
+                  id: 'ss-' + s.id, _ss: true, status: s.status,
+                  // Always carry a real date so the calendar chip never renders epoch.
+                  scheduled_for: s.scheduled_for || s.created_at, posted_at: s.status === 'posted' ? (s.scheduled_for || s.created_at) : null,
+                  platform: s._platforms[0] || 'instagram', content: s.title || s.topic, image_urls: s.image_urls,
+                }))
                 const chips = [['all', 'All'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']]
                 const replies = fQueue.filter(p => p.reply_to_tweet_id)
                 const shown = showReplies ? fQueue : fQueue.filter(p => !p.reply_to_tweet_id)
@@ -3300,7 +3315,7 @@ function App({ session }) {
                     </div>
                   </div>
                   {qView === 'calendar'
-                    ? <QueueCalendar posts={[...shown, ...posted.filter(matchP)]} onOpen={openSchedule} onPostNow={postNow} onDelete={delPost} />
+                    ? <QueueCalendar posts={[...shown, ...posted.filter(matchP), ...ssAsPosts]} onOpen={openSchedule} onPostNow={postNow} onDelete={delPost} />
                     : (<>
                   {replies.length > 0 && (
                     <div className="row" style={{ gap: 6, justifyContent: 'flex-end', fontSize: 11.5, color: 'var(--muted)', cursor: 'pointer', margin: '0 2px 8px' }}>
@@ -3327,8 +3342,8 @@ function App({ session }) {
                       <div className="row" style={{ gap: 10 }}>
                         {s.image_urls?.[0] && <img src={s.image_urls[0]} className="ss-thumb" alt="" />}
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className="conn-title row" style={{ gap: 7 }}>{s.topic}<span className="camp-state on">{s.status}</span></div>
-                          <div className="muted tiny">{s.image_urls?.length || 0}-slide carousel · {s.style}{s.scheduled_for ? ` · ${fmt(s.scheduled_for)}` : ''}</div>
+                          <div className="conn-title row" style={{ gap: 7 }}>{s.title || s.topic}<span className="camp-state on">{s.status}</span></div>
+                          <div className="muted tiny">{s.image_urls?.length || 0}-slide carousel{s._platforms?.length ? ' · ' + s._platforms.join(', ') : ''} · {s.style}{s.scheduled_for ? ` · ${fmt(s.scheduled_for)}` : ''}</div>
                         </div>
                       </div>
                     </div>
@@ -3625,7 +3640,7 @@ function App({ session }) {
                     <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
                       <div className={'bubble ' + m.role}>{m.content}</div>
                       {props.map((p, j) => (p.slideshow || p.video)
-                        ? <MediaProposal key={j} proposal={p} index={j} total={props.length} authed={authed} socialAccounts={socialAccounts} onResolved={loadQueue} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} />
+                        ? <MediaProposal key={j} proposal={p} index={j} total={props.length} authed={authed} socialAccounts={socialAccounts} onResolved={() => { loadQueue(); loadSlideshows() }} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} />
                         : <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={loadQueue} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
                       )}
                     </div>
