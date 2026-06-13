@@ -552,6 +552,103 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
   )
 }
 
+// ── Media proposal (carousel / clip) — inline preview in chat, mirrors
+//    DraftProposal's approve/resolve flow but publishes via /api/slideshow or
+//    /api/clips. Lets the user edit the caption, pick which connected accounts
+//    to post to, then schedule / post now / save as a draft / discard. ─────────
+function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOutcome, defaultHour, index = 0, total = 1 }) {
+  const isVideo = !!proposal.video
+  const deck = proposal.slideshow || {}
+  const vid = proposal.video || {}
+  const slides = Array.isArray(deck.image_urls) ? deck.image_urls : []
+  // Carousel posts to IG / TikTok / LinkedIn; clips to IG Reels / TikTok.
+  const okPlatforms = isVideo ? ['instagram', 'tiktok'] : ['instagram', 'tiktok', 'linkedin']
+  const accts = socialAccounts.filter(a => okPlatforms.includes(a.platform))
+  const [caption, setCaption] = useState((isVideo ? vid.caption : deck.caption) || '')
+  const [picked, setPicked] = useState(() => new Set(accts.length === 1 ? [accts[0].id] : []))
+  const [when, setWhen] = useState(defaultWhen(defaultHour))
+  const whenTouched = useRef(false)
+  const [smartSlot, setSmartSlot] = useState(false)
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
+  const [done, setDone] = useState(proposal.resolved || null)
+  const [doneLabel, setDoneLabel] = useState(proposal.resolved_label || '')
+  const countdown = useCountdown(when)
+  function finish(result, label) { setDone(result); setDoneLabel(label); onOutcome && onOutcome(result, label) }
+  function toggleAcct(id) { setPicked(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n }) }
+
+  useEffect(() => {
+    let on = true
+    authed(`/api/schedule?platform=${accts[0]?.platform || 'instagram'}`).then(r => r.json()).then(d => {
+      if (on && d.when && !whenTouched.current) {
+        const t = new Date(d.when); const z = n => String(n).padStart(2, '0')
+        setWhen(`${t.getFullYear()}-${z(t.getMonth() + 1)}-${z(t.getDate())}T${z(t.getHours())}:${z(t.getMinutes())}`)
+        setSmartSlot(true)
+      }
+    }).catch(() => {})
+    return () => { on = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function publish(mode) { // 'now' | 'schedule' | 'draft'
+    setErr(''); setBusy(true)
+    const ids = [...picked]
+    if (mode !== 'draft' && !ids.length) { setBusy(false); setErr('Pick at least one account to post to.'); return }
+    let r, d
+    if (isVideo) {
+      r = await authed('/api/clips', { method: 'POST', body: JSON.stringify({ action: 'post', job_id: vid.job_id, clip_index: vid.clip_index, account_ids: ids, caption, scheduled_for: mode === 'schedule' ? new Date(when).toISOString() : undefined }) })
+      d = await r.json()
+      if (!r.ok || d.error) { setBusy(false); setErr(d.error || 'Could not post the clip.'); return }
+    } else {
+      const body = { topic: deck.topic, format: deck.format, style: deck.style, slides: deck.slides, caption, image_urls: slides }
+      if (mode !== 'draft') { body.action = 'schedule'; body.account_ids = ids; if (mode === 'schedule') body.scheduled_for = new Date(when).toISOString() }
+      r = await authed('/api/slideshow', { method: 'POST', body: JSON.stringify(body) })
+      d = await r.json()
+      if (!r.ok || d.error) { setBusy(false); setErr(d.error || 'Could not save the carousel.'); return }
+    }
+    setBusy(false)
+    const names = accts.filter(a => picked.has(a.id)).map(a => '@' + a.username).join(', ')
+    const label = mode === 'draft' ? 'Saved to Slideshows'
+      : mode === 'schedule' ? `Scheduled · ${fmt(new Date(when).toISOString())}`
+      : `Posted to ${names}`
+    finish(mode === 'draft' ? 'saved' : mode === 'schedule' ? 'scheduled' : 'posted', label)
+    onResolved && onResolved()
+  }
+  if (done) return <div className={'dp-done ' + (done === 'posted' ? 'posted' : done === 'discarded' ? 'discarded' : 'scheduled')}>{doneLabel || done}</div>
+  return (
+    <motion.div className="card dp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
+      <div className="dp-head">
+        <span>{isVideo ? 'Clip preview' : `Carousel${total > 1 ? ` ${index + 1} of ${total}` : ''} · ${slides.length} slides`}</span>
+        {!isVideo && deck.style && <span className="muted tiny">{deck.format} · {deck.style}</span>}
+      </div>
+      {isVideo
+        ? <video className="mp-video" src={vid.url} controls playsInline preload="metadata" poster={vid.thumb || undefined} />
+        : <div className="ss-preview" style={{ marginBottom: 8 }}>{slides.map((u, k) => <img key={k} src={u} className="ss-slide" alt={`slide ${k + 1}`} />)}</div>}
+      <textarea className="field dp-text" rows={3} placeholder="Caption…" value={caption} onChange={e => setCaption(e.target.value)} />
+      {accts.length > 0 ? (
+        <div className="mp-accts">
+          {accts.map(a => (
+            <button key={a.id} type="button" className={'mp-chip' + (picked.has(a.id) ? ' on' : '')} onClick={() => toggleAcct(a.id)}>
+              <span className="status-dot" style={{ background: platformDot(a.platform) }} />@{a.username}
+            </button>
+          ))}
+        </div>
+      ) : <div className="muted tiny" style={{ marginTop: 8 }}>Connect {isVideo ? 'Instagram or TikTok' : 'Instagram, TikTok, or LinkedIn'} to post — saving as a draft for now.</div>}
+      <div className="row" style={{ justifyContent: 'space-between', marginTop: 10, gap: 8 }}>
+        <div className="row" style={{ gap: 8, minWidth: 0 }}>
+          <input type="datetime-local" className="field dt" value={when} onChange={e => { whenTouched.current = true; setSmartSlot(false); setWhen(e.target.value) }} />
+          <span className="cd-pill"><Clock size={11} /> {countdown}{smartSlot ? ' · smart' : ''}</span>
+        </div>
+      </div>
+      {err && <div className="notice" style={{ color: '#B3372F', marginTop: 8 }}>{err}</div>}
+      <div className="dp-actions">
+        <button className="icon-btn x" title="Discard" onClick={() => finish('discarded', 'Discarded')}><Ex /></button>
+        {!isVideo && <button className="btn-ghost btn-sm" disabled={busy} onClick={() => publish('draft')}>Save draft</button>}
+        <button className="icon-btn check" title="Schedule" disabled={busy || !picked.size} onClick={() => publish('schedule')}><Check /> <span>Schedule</span></button>
+        <motion.button className="btn-primary btn-sm" whileTap={{ scale: 0.96 }} disabled={busy || !picked.size} onClick={() => publish('now')}>Post now</motion.button>
+      </div>
+    </motion.div>
+  )
+}
+
 // ── Queue card (collapsible + inline edit) ──────────────────────────────────────
 function QueueCard({ p, i, connected, socialPlatforms, defaultCollapsed, onSaveEdit, onPostNow, onDelete, onSchedule }) {
   const s = STATUS[p.status] || { c: '#9ca3af', label: p.status }
@@ -2557,7 +2654,7 @@ function App({ session }) {
   const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
   const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
   const [autopilot, setAutopilot] = useState([]); const [apRunning, setApRunning] = useState('')
-  const [brandOnb, setBrandOnb] = useState(false); const [brandSaving, setBrandSaving] = useState(false)
+  const [brandOnb, setBrandOnb] = useState(null); const [brandSaving, setBrandSaving] = useState(false) // platform string while open
   const chatIdRef = useRef(null) // current saved-chat id; null until first save
   const inputRef = useRef(null); const bottomRef = useRef(null)
   const [leftPct, setLeftPct] = useState(47); const colsRef = useRef(null); const [dragging, setDragging] = useState(false)
@@ -2779,12 +2876,13 @@ function App({ session }) {
   const brandOnboarded = !!me?.profile?.brand_brief?.positioning
   async function saveBrandBrief({ brief, cadence }) {
     setBrandSaving(true)
+    const platform = brandOnb || 'x'
     try {
       await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ brand_brief: brief }) })
-      await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform: 'x', enabled: true, ...cadence }) })
+      await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, enabled: true, ...cadence }) })
       await loadMe(session); loadAutopilot()
-      setBanner('Autopilot on — Cadence is running your X in your voice')
-      setBrandOnb(false)
+      setBanner(`Autopilot on — Cadence is running your ${platform === 'linkedin' ? 'LinkedIn' : 'X'} in your voice`)
+      setBrandOnb(null)
     } catch { setBanner('Could not save — try again.') } finally { setBrandSaving(false) }
   }
   async function draftAgentCamp(body) {
@@ -3140,8 +3238,8 @@ function App({ session }) {
 
                     {/* Autopilot — hands-free; toggle gated behind brand onboarding */}
                     <Section title="Autopilot" hint="run your account hands-free" badge={ap.enabled && ap.status_detail ? <span className="muted tiny">{ap.status_detail}</span> : null}
-                      toggle={{ on: ap.enabled, onChange: v => { if (v && !brandOnboarded) setBrandOnb(true); else patchAutopilot('x', { enabled: v }) } }}>
-                      <AutopilotBody row={ap} onToggle={patch => patchAutopilot('x', patch)} onEditBrief={() => setBrandOnb(true)} />
+                      toggle={{ on: ap.enabled, onChange: v => { if (v && !brandOnboarded) setBrandOnb('x'); else patchAutopilot('x', { enabled: v }) } }}>
+                      <AutopilotBody row={ap} onToggle={patch => patchAutopilot('x', patch)} onEditBrief={() => setBrandOnb('x')} />
                     </Section>
 
                     {/* Auto-reply — replies to comments on your posts (after a human pause) */}
@@ -3224,37 +3322,54 @@ function App({ session }) {
               {/* LinkedIn — same shape as X: stats, ready-to-post, replies, and a
                   campaign for your personal account. Connect + voice-source +
                   inspiration live in the floating accounts dot, bottom-right. */}
-              {tab === 'linkedin' && (<>
-                <BrainBanner theme="linkedin" />
-                {liAccount ? (
-                  <StatTiles tiles={[
-                    { value: '—', label: 'New followers · soon' },
-                    { value: '—', label: 'Impressions · soon' },
-                    { value: fmtNum(queue.filter(p => p.platform === 'linkedin').length), label: 'Queued' },
-                  ]} />
-                ) : (
-                  <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', margin: '8px 0 14px' }} disabled={!socialConfigured} onClick={() => connectSocial('linkedin')}><LIcon size={15} /> Connect LinkedIn</button>
-                )}
+              {/* LinkedIn — mirrors the X tab: brain + stats header, then
+                  collapsible Campaigns / Autopilot / Auto-reply / Ready-to-post.
+                  No niche-engage (LinkedIn's API can't reply on others' posts). */}
+              {tab === 'linkedin' && (() => {
+                const ap = apFor('linkedin')
+                const arOn = !!engSettings.find(s => s.platform === 'linkedin')?.enabled
+                const liLive = campsTouching(['linkedin']).filter(c => c.active).length
+                return (<>
+                  {liAccount ? (
+                    <div className="phead">
+                      <div className="phead-brain"><BrainBanner theme="linkedin" /></div>
+                      <StatTiles vertical tiles={[
+                        { value: liAccount.followers != null ? fmtNum(liAccount.followers) : '—', label: 'Followers' },
+                        { value: fmtNum(posts.filter(p => p.platform === 'linkedin' && p.status === 'posted').length), label: 'Posted' },
+                        { value: fmtNum(queue.filter(p => p.platform === 'linkedin').length), label: 'Queued' },
+                      ]} />
+                    </div>
+                  ) : (<>
+                    <BrainBanner theme="linkedin" />
+                    <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', margin: '8px 0 14px' }} disabled={!socialConfigured} onClick={() => connectSocial('linkedin')}><LIcon size={15} /> Connect LinkedIn</button>
+                  </>)}
 
-                <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'linkedin')?.enabled} />}>
-                  <AutoReply platforms={['linkedin']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
-                </Section>
-                <Section title="Engage in your niche" hint="comments on relevant posts as you">
-                  <EngageStub platform="LinkedIn" />
-                </Section>
-                <Section title="Campaign" hint="promote a topic on a schedule" badge={<OnBadge on={campsTouching(['linkedin']).some(c => c.active)} />}>
-                  <PlatformCampaign campaigns={campsFor(['linkedin'])} targets={liCampTargets} canCreate={!!liAccount} connectHint="Connect LinkedIn first (accounts, bottom-right)." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
-                  <CrossCampHint plats={['linkedin']} />
-                </Section>
-                <Section title="What's working now" hint="viral hook patterns feed your drafts" badge={trends.filter(f => f.platform === 'linkedin').length ? <span className="camp-state on">{trends.filter(f => f.platform === 'linkedin').length}</span> : null}>
-                  <TrendFormats platform="linkedin" formats={trends} canScan={false} onDelete={deleteTrend} />
-                </Section>
+                  <Section title="Campaigns" defaultOpen badge={liLive ? <span className="live-pill on"><span className="pulse" />{liLive} live</span> : null}>
+                    <PlatformCampaign campaigns={campsFor(['linkedin'])} targets={liCampTargets} canCreate={!!liAccount} connectHint="Connect LinkedIn first (accounts, bottom-right)." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
+                    <CrossCampHint plats={['linkedin']} />
+                  </Section>
 
-                <div style={{ marginTop: 14 }}>
-                  <Suggestions platform="linkedin" drafts={liDrafts} busy={suggesting === 'linkedin'} canPost={!!liAccount}
-                    onGenerate={() => suggestPosts('linkedin')} onPostNow={postNow} onSchedule={scheduleLinkedInDraft} onDiscard={delPost} />
-                </div>
-              </>)}
+                  <Section title="Autopilot" hint="run your account hands-free" badge={ap.enabled && ap.status_detail ? <span className="muted tiny">{ap.status_detail}</span> : null}
+                    toggle={{ on: ap.enabled, onChange: v => { if (v && !brandOnboarded) setBrandOnb('linkedin'); else patchAutopilot('linkedin', { enabled: v }) } }}>
+                    <AutopilotBody row={ap} onToggle={patch => patchAutopilot('linkedin', patch)} onEditBrief={() => setBrandOnb('linkedin')} />
+                  </Section>
+
+                  <Section title="Auto-reply" hint="reply to comments on your posts" toggle={{ on: arOn, onChange: v => toggleReplies('linkedin', { enabled: v }) }}>
+                    <div className="muted tiny">{!liAccount ? 'Connect LinkedIn to enable replies.' : arOn ? 'Cadence checks for new comments on a schedule and replies in your voice.' : 'Off — turn on to reply to comments in your voice.'}</div>
+                    {(socialReplies || []).filter(r => r.platform === 'linkedin' && r.reply_text).slice(0, 4).map(d => (
+                      <div className="ar-draft" key={d.id} style={{ marginTop: 8 }}>
+                        <div className="ar-comment"><span className="ar-author">@{authorHandle(d.comment_author)}</span>{str(d.comment_text) ? ' · ' + str(d.comment_text).slice(0, 120) : ''}</div>
+                        <div className="ar-reply">{str(d.reply_text)}</div>
+                      </div>
+                    ))}
+                  </Section>
+
+                  <Section title="Ready to post" defaultOpen={liDrafts.length > 0} badge={liDrafts.length ? <span className="camp-state on">{liDrafts.length}</span> : null}>
+                    <Suggestions platform="linkedin" drafts={liDrafts} busy={suggesting === 'linkedin'} canPost={!!liAccount}
+                      onGenerate={() => suggestPosts('linkedin')} onPostNow={postNow} onSchedule={scheduleLinkedInDraft} onDiscard={delPost} />
+                  </Section>
+                </>)
+              })()}
 
               {/* Campaigns — purely cross-platform. One topic, every account,
                   the right format per platform, in one voice. */}
@@ -3372,9 +3487,10 @@ function App({ session }) {
                   <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
                     <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
                       <div className={'bubble ' + m.role}>{m.content}</div>
-                      {props.map((p, j) => (
-                        <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={loadQueue} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
-                      ))}
+                      {props.map((p, j) => (p.slideshow || p.video)
+                        ? <MediaProposal key={j} proposal={p} index={j} total={props.length} authed={authed} socialAccounts={socialAccounts} onResolved={loadQueue} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} />
+                        : <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={loadQueue} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
+                      )}
                     </div>
                   </motion.div>
                 )
@@ -3413,7 +3529,7 @@ function App({ session }) {
 
       {/* brand onboarding — required before Autopilot speaks for you */}
       <AnimatePresence>
-        {brandOnb && <BrandOnboarding initial={{ ...(me?.profile?.brand_brief || {}), ...apFor('x') }} busy={brandSaving} onSave={saveBrandBrief} onClose={() => setBrandOnb(false)} />}
+        {brandOnb && <BrandOnboarding initial={{ ...(me?.profile?.brand_brief || {}), ...apFor(brandOnb) }} busy={brandSaving} onSave={saveBrandBrief} onClose={() => setBrandOnb(null)} />}
       </AnimatePresence>
 
       {/* agent profile modal — opened from the fleet or a campaign roster */}
@@ -3859,6 +3975,12 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .sw-chip .sw { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; font-size: 13px; font-weight: 800; border: 1px solid rgba(0,0,0,.08); }
 .ss-preview { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
 .ss-slide { width: 152px; height: 190px; flex: none; border-radius: 8px; object-fit: cover; border: 1px solid var(--line); scroll-snap-align: start; }
+.mp-video { width: 100%; max-height: 340px; border-radius: 10px; background: #000; border: 1px solid var(--line); margin-bottom: 8px; }
+.mp-accts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.mp-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; color: var(--ink); cursor: pointer; transition: all .15s; }
+.mp-chip:hover { border-color: var(--accent); }
+.mp-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.mp-chip.on .status-dot { box-shadow: 0 0 0 2px rgba(255,255,255,.6); }
 .ss-thumb { width: 46px; height: 58px; border-radius: 6px; object-fit: cover; flex: none; border: 1px solid var(--line); }
 /* collapsible sections + clip studio */
 .sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }

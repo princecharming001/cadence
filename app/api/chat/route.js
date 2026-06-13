@@ -160,7 +160,7 @@ const tools = [
   },
   {
     name: 'generate_slideshow',
-    description: 'Generate an AI Instagram/TikTok carousel ("slideshow") on a topic and save it as a draft. Returns the rendered slide image URLs + caption. Use this whenever the user wants a carousel, slideshow, IG post, or TikTok photo post. IMPORTANT: only set post_to (publish/schedule) when the user EXPLICITLY said to publish it in this conversation — otherwise omit post_to so it saves as a draft they approve first.',
+    description: 'Generate an AI Instagram/TikTok/LinkedIn carousel ("slideshow") on a topic. The rendered slides + caption are shown INLINE in the chat for the user to preview, pick accounts, and schedule / post / save — you never publish it yourself. Use this whenever the user wants a carousel, slideshow, IG post, or TikTok photo post. Call it ONCE per request.',
     input_schema: {
       type: 'object',
       properties: {
@@ -168,23 +168,77 @@ const tools = [
         format: { type: 'string', enum: ['listicle', 'howto', 'story', 'myths', 'framework', 'quotes'] },
         style: { type: 'string', enum: ['bold', 'minimal', 'editorial', 'gradient', 'mint', 'photo'] },
         slides: { type: 'integer', description: '3-10' },
-        post_to: { type: 'array', items: { type: 'string' }, description: 'Account usernames or platform names to publish to. Omit to just save a draft.' },
-        when: { type: 'string', description: 'ISO datetime to schedule; "now" or omit to post immediately (only when post_to is set).' },
       },
       required: ['topic'],
     },
   },
   {
-    name: 'set_replies',
-    description: 'Turn auto-replies (comment engagement in the user\'s voice) on or off for Instagram, TikTok, or LinkedIn. auto_post:true posts replies automatically; false drafts them for review.',
+    name: 'make_clip',
+    description: 'Turn a long video (a YouTube / TikTok / Instagram / .mp4 link) into short vertical clips with captions for Reels / TikTok. Rendering is asynchronous (a few minutes) — the finished clips land in the Clips tab to preview and post. Use when the user wants to clip a video, make Reels from a podcast/long-form, etc. Tell them it is rendering; do not claim it is ready.',
     input_schema: {
       type: 'object',
       properties: {
-        platform: { type: 'string', enum: SOCIAL_ENGAGEMENT_PLATFORMS },
+        source_url: { type: 'string', description: 'Direct link to the source video.' },
+        source_name: { type: 'string' },
+        edit_formats: { type: 'array', items: { type: 'string' }, description: 'Edit styles to render (e.g. captions, sludge, talking_head). Omit for captions.' },
+        max_clips: { type: 'integer', description: '1-5 (default 3).' },
+        target_len: { type: 'string', enum: ['short', 'medium'] },
+      },
+      required: ['source_url'],
+    },
+  },
+  {
+    name: 'set_replies',
+    description: "Turn auto-replies (replying to comments on the user's OWN posts, in their voice) on or off for X, Instagram, TikTok, or LinkedIn. This is the 'Auto-reply' toggle on each platform tab. auto_post:true posts replies automatically; false drafts them for review.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        platform: { type: 'string', enum: ['x', 'instagram', 'tiktok', 'linkedin'] },
         enabled: { type: 'boolean' },
         auto_post: { type: 'boolean' },
       },
       required: ['platform', 'enabled'],
+    },
+  },
+  {
+    name: 'set_autopilot',
+    description: "Control Autopilot for X or LinkedIn — Cadence posting in the user's voice hands-free. This is the 'Autopilot' toggle on the X/LinkedIn tabs. Set enabled on/off, and optionally posts_per_day (1-3) and how often it runs.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        platform: { type: 'string', enum: ['x', 'linkedin'] },
+        enabled: { type: 'boolean' },
+        posts_per_day: { type: 'integer', description: '1-3 posts each run-day.' },
+        interval_hours: { type: 'number', description: 'Hours between autopilot runs (default 24).' },
+      },
+      required: ['platform'],
+    },
+  },
+  {
+    name: 'set_niche_engagement',
+    description: "Control 'Engage in your niche' on X — Cadence finds fresh posts matching keywords / from watched accounts and replies in the user's voice to get them in front of new audiences. This is X-only. Set enabled on/off and optionally the keywords, accounts to watch, replies_per_run, and auto_post (post vs draft).",
+    input_schema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean' },
+        keywords: { type: 'array', items: { type: 'string' }, description: 'Topics/terms to find posts about.' },
+        accounts: { type: 'array', items: { type: 'string' }, description: 'X handles to watch (up to 3).' },
+        replies_per_run: { type: 'integer', description: '1-5 replies per run.' },
+        auto_post: { type: 'boolean', description: 'true = post replies; false = draft for review.' },
+      },
+      required: ['enabled'],
+    },
+  },
+  {
+    name: 'manage_campaign',
+    description: "List or manage the user's own promo campaigns (recurring posts on their own X/LinkedIn/IG/TikTok — created by create_promo_campaign). action:'list' shows them; 'pause'/'resume'/'delete' need a campaign id. Use before pausing/resuming/deleting so you have the right id.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'pause', 'resume', 'delete'] },
+        id: { type: 'string', description: 'Campaign id (required for pause/resume/delete).' },
+      },
+      required: ['action'],
     },
   },
   {
@@ -421,11 +475,60 @@ async function executeTool(name, input, userId) {
     }
 
     case 'set_replies': {
-      if (!SOCIAL_ENGAGEMENT_PLATFORMS.includes(input.platform)) return { error: 'platform must be instagram, tiktok, or linkedin' }
+      if (!['x', ...SOCIAL_ENGAGEMENT_PLATFORMS].includes(input.platform)) return { error: 'platform must be x, instagram, tiktok, or linkedin' }
       const patch = { enabled: !!input.enabled }
-      if ('auto_post' in input) patch.auto_post = !!input.auto_post
+      // Enabling defaults to auto-post (matches the tab toggle), unless told otherwise.
+      patch.auto_post = 'auto_post' in input ? !!input.auto_post : !!input.enabled
       await admin.from('social_engagement').upsert({ user_id: userId, platform: input.platform, ...patch }, { onConflict: 'user_id,platform' })
       return { platform: input.platform, ...patch }
+    }
+
+    case 'set_autopilot': {
+      if (!['x', 'linkedin'].includes(input.platform)) return { error: 'Autopilot is X or LinkedIn only.' }
+      const patch = { user_id: userId, platform: input.platform }
+      if (input.enabled !== undefined) { patch.enabled = !!input.enabled; if (input.enabled) patch.next_run_at = new Date().toISOString() }
+      if (input.posts_per_day !== undefined) patch.per_run = Math.min(Math.max(Number(input.posts_per_day) || 1, 1), 3)
+      if (input.interval_hours !== undefined) patch.interval_hours = Math.min(Math.max(Number(input.interval_hours) || 24, 1), 168)
+      const { data, error } = await admin.from('autopilot').upsert(patch, { onConflict: 'user_id,platform' }).select().single()
+      if (error) return { error: error.message }
+      return { autopilot: { platform: data.platform, enabled: data.enabled, posts_per_day: data.per_run, every_hours: data.interval_hours }, note: data.enabled ? `Autopilot is on for ${input.platform} — first post is on its way into the queue.` : `Autopilot is off for ${input.platform}.` }
+    }
+
+    case 'set_niche_engagement': {
+      // X "engage in your niche" lives in engagement_rules. Reuse the user's
+      // existing rule (one per user in the UI) or create one.
+      const { data: existing } = await admin.from('engagement_rules').select('*').eq('user_id', userId).order('created_at', { ascending: true }).limit(1).maybeSingle()
+      const patch = {}
+      if (input.enabled !== undefined) { patch.active = !!input.enabled; if (input.enabled) patch.next_run_at = new Date().toISOString() }
+      if (Array.isArray(input.keywords)) patch.target_keywords = input.keywords.map(s => String(s).trim()).filter(Boolean).slice(0, 12)
+      if (Array.isArray(input.accounts)) patch.target_handles = input.accounts.map(s => String(s).replace(/^@/, '').trim()).filter(Boolean).slice(0, 3)
+      if (input.replies_per_run !== undefined) patch.replies_per_run = Math.min(Math.max(Number(input.replies_per_run) || 1, 1), 5)
+      if (input.auto_post !== undefined) patch.auto_post = !!input.auto_post
+      let row
+      if (existing) {
+        const { data, error } = await admin.from('engagement_rules').update(patch).eq('id', existing.id).eq('user_id', userId).select().single()
+        if (error) return { error: error.message }; row = data
+      } else {
+        const { data, error } = await admin.from('engagement_rules').insert({ user_id: userId, name: 'Niche engagement', auto_post: true, ...patch }).select().single()
+        if (error) return { error: error.message }; row = data
+      }
+      return { engagement: { enabled: row.active, keywords: row.target_keywords || [], accounts: row.target_handles || [], replies_per_run: row.replies_per_run, auto_post: row.auto_post }, note: row.active && !(row.target_keywords?.length || row.target_handles?.length) ? 'On, but add keywords or accounts to watch or it finds nothing.' : undefined }
+    }
+
+    case 'manage_campaign': {
+      if (input.action === 'list') {
+        const { data } = await admin.from('brand_campaigns').select('id, name, topic, active, interval_hours, targets').eq('user_id', userId).order('created_at', { ascending: false })
+        return { campaigns: (data || []).map(c => ({ id: c.id, name: c.name, active: c.active, every_hours: c.interval_hours, platforms: (c.targets || []).map(t => t.platform) })) }
+      }
+      if (!input.id) return { error: 'Need the campaign id — call manage_campaign with action:"list" first.' }
+      if (input.action === 'delete') {
+        const { error } = await admin.from('brand_campaigns').delete().eq('id', input.id).eq('user_id', userId)
+        return error ? { error: error.message } : { deleted: true }
+      }
+      const active = input.action === 'resume'
+      const { data, error } = await admin.from('brand_campaigns').update({ active, ...(active ? { next_run_at: new Date().toISOString() } : {}) }).eq('id', input.id).eq('user_id', userId).select('id, name, active').single()
+      if (error || !data) return { error: error?.message || 'Campaign not found.' }
+      return { campaign: { id: data.id, name: data.name, active: data.active } }
     }
 
     case 'run_replies': {
@@ -633,14 +736,18 @@ PLATFORM FOCUS — the user is currently working on ${scopeNames}. Focus is a DE
 
 ${voiceBlock(personaRow)}
 
-Cross-platform powers (use the tools, don't just explain — the ENTIRE product is drivable from this chat):
+Cross-platform powers — you can do ANYTHING the user can do on the tabs themselves; the ENTIRE product is drivable from this chat. Whenever the user asks for something a tab does, just DO it with the tool instead of telling them where to click:
 - get_overview: report connected accounts, queue, campaigns, and auto-reply status across all platforms.
-- generate_slideshow: make an Instagram/TikTok carousel on a topic; optionally schedule/post it (post_to + when). Use for any "carousel/slideshow/IG/TikTok post" request.
-- set_replies / run_replies: turn on or off (and run) auto-replies to comments in the user's voice for instagram, tiktok, or linkedin.
+- generate_slideshow: make an Instagram/TikTok/LinkedIn carousel on a topic. The slides render INLINE in the chat for the user to preview, pick accounts, and schedule/post/save — you never publish it. Use for any "carousel/slideshow/IG/TikTok post" request.
+- make_clip: turn a long video link into short captioned vertical clips (Reels/TikTok). Renders asynchronously — tell the user it's processing and will appear in the Clips tab; don't claim it's ready.
+- set_autopilot: turn Autopilot on/off for X or LinkedIn and set posts/day — Cadence posting in their voice hands-free (same as the tab's Autopilot toggle).
+- set_replies / run_replies: turn on/off (and run now) auto-replies to comments on the user's OWN posts, in their voice — works for x, instagram, tiktok, linkedin.
+- set_niche_engagement: turn on/off X "engage in your niche" and set the keywords / watched accounts / replies-per-run — Cadence replies to fresh in-niche posts to reach new audiences (X only).
 - list_agents / set_agent / run_agent: see and manage the user's feeder agents (autonomous personas on their other accounts) — activate, pause, make autonomous, assign to campaigns, run a cycle now.
 - create_feeder_campaign: launch a promotion mission the agents weave into their own posting ("launch a feeder campaign promoting X").
-- create_promo_campaign: a recurring promo on the user's OWN accounts (their voice, their primary accounts, on a cadence).
+- create_promo_campaign / manage_campaign: create a recurring promo on the user's OWN accounts (their voice, on a cadence), and list/pause/resume/delete those campaigns.
 - find_trends: scan the niche for what's going viral now (IG/TikTok + ad formats) and bank the top formats. learn_trend: study one viral reel/post the user pastes — reverse-engineers its hook/editing format; text hook patterns then feed the user's own drafts.
+The ONE thing you can't do is connect or disconnect a social account (that needs the user to log in through the platform) — for that, point them to the account buttons at the bottom-right. Everything else, do it yourself.
 After any action, confirm what happened in one or two sentences. Never invent results — only report what tools returned.
 
 ${CHAT_STYLE}
@@ -653,7 +760,7 @@ ${X_RUBRIC}
 For LinkedIn posts:
 ${LINKEDIN_RUBRIC}
 
-CRITICAL RULE — you never queue or publish a NEW post yourself. To create ANY new post, you call propose_post, which shows the user an editable draft card (text editor + time picker + live countdown + 👍/👎 + Post-now/Schedule/Discard). The user — not you — decides whether it gets scheduled or posted. This applies even when the user says "post this now" or "schedule it": still call propose_post (you can mention you've set it up to post now / for a time, and they just confirm on the card). The same consent rule covers EVERY platform: nothing goes live on X, LinkedIn, Instagram, or TikTok unless the user explicitly approved that exact content — never pass post_to to generate_slideshow unless the user clearly told you to publish it.
+CRITICAL RULE — you never queue or publish a NEW post yourself. To create ANY new post, you call propose_post, which shows the user an editable draft card (text editor + time picker + live countdown + 👍/👎 + Post-now/Schedule/Discard). The user — not you — decides whether it gets scheduled or posted. This applies even when the user says "post this now" or "schedule it": still call propose_post (you can mention you've set it up to post now / for a time, and they just confirm on the card). The same consent rule covers EVERY platform and content type: nothing goes live on X, LinkedIn, Instagram, or TikTok unless the user explicitly approved that exact content. generate_slideshow likewise only RENDERS the carousel into an inline preview card — the user picks the accounts and hits post/schedule themselves; you never publish it.
 
 CRITICAL RULE — when asked to write, DRAFT IMMEDIATELY. Never reply with a clarifying question like "what should it be about?" or "what's the topic?". If the user doesn't give a topic, pick the strongest one yourself from their voice profile, niche, recent posts, or LinkedIn content (call list_linkedin_posts or get_overview if you need material) and call propose_post in your FIRST response. They'll edit the draft or tell you to change direction — a concrete draft is always more useful than a question. Ask a question only when the request is literally impossible to act on.
 
@@ -735,6 +842,41 @@ ${scopeBlock}${liVoiceBlock}${trendBlocks}${feedbackBlock(fb)}`
             }
             proposals.push(prop)
             result = { ok: true, note: 'Draft proposed to the user for inline review — the user will edit/schedule/post or discard it.' }
+          } else if (block.name === 'generate_slideshow') {
+            // Render the deck and show it INLINE in the chat (slides + caption)
+            // for the user to pick accounts and schedule/post — never auto-post.
+            if (!block.input.topic) { result = { error: 'topic required' } }
+            else {
+              try {
+                const { data: persona } = await admin.from('personas').select('*').eq('user_id', user.id).single()
+                const deck = await generateSlideshow({ topic: block.input.topic, format: block.input.format || 'listicle', style: block.input.style || 'bold', slides: block.input.slides || 6, persona, userId: user.id })
+                proposals.push({ slideshow: { topic: block.input.topic, format: deck.format, style: deck.style, slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls } })
+                result = { ok: true, slides: deck.imageUrls.length, note: 'Carousel rendered and shown inline for the user to review — they pick accounts and schedule/post/save. Do NOT also call generate_slideshow again.' }
+              } catch (e) { result = { error: String(e.message || 'Could not build the carousel.').slice(0, 180) } }
+            }
+          } else if (block.name === 'make_clip') {
+            // Clips render asynchronously (download + transcribe + ffmpeg take
+            // minutes), so we kick a job and tell the user where it lands.
+            const src = String(block.input.source_url || '').trim()
+            if (!/^https?:\/\//.test(src)) { result = { error: 'Need a direct video URL (YouTube, TikTok, IG, or an .mp4 link).' } }
+            else {
+              const row = {
+                user_id: user.id, source_url: src, source_name: block.input.source_name || null,
+                format: ['vertical', 'square', 'wide'].includes(block.input.format) ? block.input.format : 'vertical',
+                captions: block.input.captions !== false,
+                target_len: ['short', 'medium'].includes(block.input.target_len) ? block.input.target_len : 'short',
+                max_clips: Math.min(Math.max(Number(block.input.max_clips) || 3, 1), 5),
+                edit_formats: (Array.isArray(block.input.edit_formats) ? block.input.edit_formats : []).slice(0, 4),
+              }
+              if (!row.edit_formats.length) row.edit_formats = ['captions']
+              const { data: job, error } = await admin.from('clip_jobs').insert(row).select('id').single()
+              if (error) { result = { error: error.message } }
+              else {
+                const base = process.env.NEXT_PUBLIC_APP_URL || ''
+                if (base) fetch(`${base}/api/clips/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
+                result = { ok: true, job_id: job.id, note: 'Clip render started (takes a few minutes). The finished clips appear in the Clips tab where they can be previewed and posted. Tell the user it is rendering — do not claim it is ready yet.' }
+              }
+            }
           } else {
             result = await executeTool(block.name, block.input, user.id)
           }
