@@ -2964,7 +2964,23 @@ function App({ session }) {
     await authed('/api/engagement', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) })
     if (note) setBanner(note); loadEngagement(); loadQueue(); if (patch.active) setTimeout(loadQueue, 2500)
   }
-  async function deleteEngagement(id) { if (!confirm('Delete this engagement rule?')) return; await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); loadQueue() }
+  // In-app confirm dialog — promise-based, replaces native window.confirm so
+  // every prompt is on-brand. askConfirm({...}) resolves true/false on the tap.
+  const [confirmReq, setConfirmReq] = useState(null)
+  const confirmResolve = useRef(null)
+  const [ssEdit, setSsEdit] = useState(null) // { id, when } — rescheduling a queued carousel
+  function askConfirm(opts) {
+    return new Promise(resolve => { confirmResolve.current = resolve; setConfirmReq(typeof opts === 'string' ? { body: opts } : opts) })
+  }
+  function resolveConfirm(v) { setConfirmReq(null); const r = confirmResolve.current; confirmResolve.current = null; r && r(v) }
+  useEffect(() => {
+    if (!confirmReq) return
+    const onKey = e => { if (e.key === 'Escape') resolveConfirm(false); else if (e.key === 'Enter') resolveConfirm(true) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirmReq]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function deleteEngagement(id) { if (!await askConfirm({ title: 'Delete engagement rule?', body: 'It stops finding and replying to niche posts.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); loadQueue() }
 
   // Feeder agents — payload is either a feeder connection id (X tab shorthand)
   // or a full body ({ social_account_id | x_connection_id, interests, campaign_id }).
@@ -2976,7 +2992,7 @@ function App({ session }) {
     setBanner(`“${d.agent?.name || 'Agent'}” is ready — flip it on when you are`); loadAgents(); loadAgentCamps(); return true
   }
   async function patchAgent(id, patch, note) { await authed('/api/feeder-agents', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); if (note) setBanner(note); loadAgents(); loadQueue() }
-  async function deleteAgent(id) { if (!confirm('Delete this agent and its unpublished posts?')) return; await authed('/api/feeder-agents', { method: 'DELETE', body: JSON.stringify({ id }) }); loadAgents(); loadQueue() }
+  async function deleteAgent(id) { if (!await askConfirm({ title: 'Delete agent?', body: 'Its unpublished posts are removed too.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/feeder-agents', { method: 'DELETE', body: JSON.stringify({ id }) }); loadAgents(); loadQueue() }
   async function runAgent(id) {
     setBanner('Agent thinking…'); loadAgents()
     const poll = setInterval(loadAgents, 1500)
@@ -3033,7 +3049,7 @@ function App({ session }) {
   }
   async function patchAgentCamp(id, patch, note) { await authed('/api/agent-campaigns', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); if (note) setBanner(note); loadAgentCamps() }
   async function deleteAgentCamp(id) {
-    if (!confirm('Delete this campaign? Its agents stay — they just stop promoting it.')) return
+    if (!await askConfirm({ title: 'Delete campaign?', body: 'Its agents stay — they just stop promoting it.', confirmLabel: 'Delete', danger: true })) return
     await authed('/api/agent-campaigns', { method: 'DELETE', body: JSON.stringify({ id }) }); loadAgentCamps(); loadAgents()
   }
 
@@ -3046,7 +3062,7 @@ function App({ session }) {
   }
   async function syncSocial() { setBanner('Refreshing connected accounts…'); await loadSocial(true) }
   async function disconnectSocial(id) {
-    if (!confirm('Disconnect this account? Its scheduled posts will stop publishing.')) return
+    if (!await askConfirm({ title: 'Disconnect account?', body: 'Its scheduled posts will stop publishing.', confirmLabel: 'Disconnect', danger: true })) return
     await authed('/api/social', { method: 'DELETE', body: JSON.stringify({ id }) })
     setBanner('Account disconnected'); loadSocial()
   }
@@ -3104,13 +3120,18 @@ function App({ session }) {
     if (d.error) { setBanner(d.error); return null }
     setBanner('Uploaded — ready to clip'); return d.url
   }
-  async function deleteClipJob(id) { if (!confirm('Delete this clip job and its clips?')) return; await authed('/api/clips', { method: 'DELETE', body: JSON.stringify({ id }) }); loadClips() }
+  async function deleteClipJob(id) { if (!await askConfirm({ title: 'Delete clip job?', body: 'This removes the job and its rendered clips.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/clips', { method: 'DELETE', body: JSON.stringify({ id }) }); loadClips() }
   async function postClip(job_id, clip_index, account_ids) {
     setBanner('Posting clip…')
     const r = await authed('/api/clips', { method: 'POST', body: JSON.stringify({ action: 'post', job_id, clip_index, account_ids }) }); const d = await r.json()
     setBanner(d.error || 'Clip posted')
   }
-  async function deleteSlideshow(id) { if (!confirm('Delete this slideshow?')) return; await authed('/api/slideshow', { method: 'DELETE', body: JSON.stringify({ id }) }); loadSlideshows() }
+  async function deleteSlideshow(id) { if (!await askConfirm({ title: 'Delete slideshow?', confirmLabel: 'Delete', danger: true })) return; await authed('/api/slideshow', { method: 'DELETE', body: JSON.stringify({ id }) }); loadSlideshows() }
+  async function rescheduleSlideshow(id, whenIso) {
+    const r = await authed('/api/slideshow', { method: 'PATCH', body: JSON.stringify({ id, scheduled_for: whenIso }) })
+    const d = await r.json()
+    if (d.error) setBanner(d.error); else { setBanner('Carousel rescheduled'); setSsEdit(null); loadSlideshows() }
+  }
   async function generateSlideshow(payload) {
     const r = await authed('/api/slideshow/generate', { method: 'POST', body: JSON.stringify(payload) })
     const d = await r.json()
@@ -3174,7 +3195,7 @@ function App({ session }) {
       setCompose(null); loadQueue()
     } finally { setComposeBusy(false) }
   }
-  async function delPost(id) { if (!confirm('Delete this post?')) return; await authed('/api/posts', { method: 'DELETE', body: JSON.stringify({ id }) }); loadQueue() }
+  async function delPost(id) { if (!await askConfirm({ title: 'Delete post?', confirmLabel: 'Delete', danger: true })) return; await authed('/api/posts', { method: 'DELETE', body: JSON.stringify({ id }) }); loadQueue() }
   async function postNow(id) {
     setBanner('Posting…')
     const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id, action: 'post_now' }) }); const d = await r.json()
@@ -3288,7 +3309,7 @@ function App({ session }) {
                 const acctPlat = id => socialAccounts.find(a => a.id === id)?.platform
                 const ssPlatforms = s => [...new Set((s.account_ids || []).map(acctPlat).filter(Boolean))]
                 const schedShows = slideshows
-                  .filter(s => ['scheduled', 'posted'].includes(s.status))
+                  .filter(s => ['scheduled', 'posting', 'posted', 'failed'].includes(s.status))
                   .map(s => ({ ...s, _platforms: ssPlatforms(s) }))
                   .filter(s => qPlatform === 'all' || s._platforms.includes(qPlatform))
                 const ssAsPosts = schedShows.map(s => ({
@@ -3337,17 +3358,33 @@ function App({ session }) {
                       </div>
                     )
                   })}</div>
-                  {schedShows.map(s => (
+                  {schedShows.map(s => {
+                    const canEdit = s.status === 'scheduled' && !s.zernio_post_id // local (cron-dispatched) → re-timeable
+                    const editing = ssEdit?.id === s.id
+                    return (
                     <div className="card camp-card" key={s.id}>
                       <div className="row" style={{ gap: 10 }}>
+                        <span className="status-dot" style={{ background: platformDot(s._platforms?.[0] || 'instagram'), flex: 'none' }} />
                         {s.image_urls?.[0] && <img src={s.image_urls[0]} className="ss-thumb" alt="" />}
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className="conn-title row" style={{ gap: 7 }}>{s.title || s.topic}<span className="camp-state on">{s.status}</span></div>
-                          <div className="muted tiny">{s.image_urls?.length || 0}-slide carousel{s._platforms?.length ? ' · ' + s._platforms.join(', ') : ''} · {s.style}{s.scheduled_for ? ` · ${fmt(s.scheduled_for)}` : ''}</div>
+                          <div className="conn-title row" style={{ gap: 7 }}>{s.title || s.topic}<span className={'camp-state' + (s.status === 'failed' ? '' : ' on')}>{s.status}</span></div>
+                          <div className="muted tiny">{s.image_urls?.length || 0}-slide carousel{s._platforms?.length ? ' · ' + s._platforms.join(', ') : ''} · {s.style}{s.scheduled_for ? ` · ${fmt(s.scheduled_for)}` : ''}{s.error ? ` · ${s.error}` : ''}</div>
                         </div>
+                        {canEdit && <button className="mini" onClick={() => editing ? setSsEdit(null) : setSsEdit({ id: s.id, when: toLocalInput(new Date(s.scheduled_for)) })}><Clock size={12} /> {editing ? 'Close' : 'Reschedule'}</button>}
+                        {s.status !== 'posted' && <button className="mini danger" onClick={() => deleteSlideshow(s.id)}><Trash2 size={12} /></button>}
                       </div>
+                      <AnimatePresence initial={false}>
+                        {editing && (
+                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.18 }} style={{ overflow: 'hidden' }}>
+                            <div className="row" style={{ gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
+                              <input type="datetime-local" className="field dt" value={ssEdit.when} onChange={e => setSsEdit(p => ({ ...p, when: e.target.value }))} />
+                              <button className="btn-primary btn-sm" disabled={!ssEdit.when} onClick={() => rescheduleSlideshow(s.id, new Date(ssEdit.when).toISOString())}>Save time</button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
-                  ))}
+                  )})}
                   {posted.filter(matchP).length > 0 && qPlatform !== 'instagram' && qPlatform !== 'tiktok' && <PostedSection posted={posted.filter(matchP)} />}
                     </>)}
                 </>)
@@ -3695,6 +3732,22 @@ function App({ session }) {
         })()}
       </AnimatePresence>
 
+      {/* in-app confirm dialog (replaces native window.confirm) */}
+      <AnimatePresence>
+        {confirmReq && (
+          <motion.div className="overlay" style={{ zIndex: 90 }} onClick={() => resolveConfirm(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <motion.div className="card modal confirm-modal" onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 12, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.96 }} transition={spring}>
+              <div className="confirm-title">{confirmReq.title || 'Are you sure?'}</div>
+              {confirmReq.body && <div className="confirm-body">{confirmReq.body}</div>}
+              <div className="confirm-actions">
+                <button className="btn-ghost btn-sm" onClick={() => resolveConfirm(false)}>Cancel</button>
+                <button className={'btn-sm ' + (confirmReq.danger ? 'btn-danger' : 'btn-primary')} autoFocus onClick={() => resolveConfirm(true)}>{confirmReq.confirmLabel || 'Confirm'}</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* compose modal */}
       <AnimatePresence>
         {compose && (
@@ -4003,6 +4056,12 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .dots { display: inline-flex; gap: 4px; align-items: center; } .dots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; animation: blink 1s infinite; } .dots i:nth-child(2) { animation-delay: .2s; } .dots i:nth-child(3) { animation-delay: .4s; }
 @keyframes blink { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
 .overlay { position: fixed; inset: 0; z-index: 70; background: rgba(30,27,20,0.30); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.confirm-modal { max-width: 360px; width: 100%; padding: 22px; }
+.confirm-title { font-weight: 700; font-size: 16px; color: var(--ink); }
+.confirm-body { font-size: 13.5px; color: var(--muted); line-height: 1.5; margin-top: 7px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.btn-danger { background: #C0392B; color: #fff; border: none; border-radius: 9px; padding: 8px 16px; font-weight: 600; cursor: pointer; transition: background .15s; }
+.btn-danger:hover { background: #A93226; }
 .modal { width: 480px; max-width: 100%; border-radius: 12px; padding: 22px; background: var(--surface); max-height: 88vh; overflow-y: auto; box-shadow: 0 30px 70px -28px rgba(35,32,24,0.45); }
 .x-close { background: none; border: none; cursor: pointer; color: var(--faint); padding: 4px; display: flex; border-radius: 7px; } .x-close:hover { color: var(--ink); background: var(--bg2); }
 .set-section { padding: 14px 0; border-top: 1px solid var(--line); } .set-section:first-of-type { border-top: none; padding-top: 0; }

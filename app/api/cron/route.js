@@ -20,6 +20,7 @@ import { runDueSocialEngagement } from '@/lib/social-engagement'
 import { runDueFeederAgents } from '@/lib/feeder-agents'
 import { harvestDueTrends } from '@/lib/trends-harvest'
 import { runDueAutopilot } from '@/lib/autopilot'
+import { runDueSlideshows } from '@/lib/slideshow-dispatch'
 import { releaseStaleClaims, sweepInterruptedPosts } from '@/lib/engine'
 import { isCron } from '@/lib/supabase'
 
@@ -78,6 +79,7 @@ export async function GET(req) {
   const social = await safe(runDueSocialEngagement)
   const agents = await safe(runDueFeederAgents)
   const autopilot = await safe(runDueAutopilot)
+  const carousels = await safe(runDueSlideshows)
 
   // 4 + 5. After the response: clip sweep kick + metrics loop + housekeeping.
   const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
@@ -92,6 +94,6 @@ export async function GET(req) {
 
   return Response.json({
     posted: results.filter(r => r.status === 'posted').length,
-    results, brand, engagement, social, agents, autopilot,
+    results, brand, engagement, social, agents, autopilot, carousels,
   })
 }

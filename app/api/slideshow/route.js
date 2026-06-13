@@ -18,8 +18,9 @@ export async function POST(req) {
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
 
-  // Schedule/post an EXISTING saved draft by id (from the Slideshows list) —
-  // dispatch it to Zernio and flip its status in place, no duplicate row.
+  // Schedule/post an EXISTING saved draft by id (from the Slideshows list).
+  // Future-dated → store as a LOCAL 'scheduled' deck (our cron dispatches it at
+  // the due time, so the time stays editable). Post-now → dispatch immediately.
   if (b.action === 'schedule' && b.id) {
     const { data: deck } = await admin.from('slideshows').select('*').eq('id', b.id).eq('user_id', user.id).single()
     if (!deck) return Response.json({ error: 'Slideshow not found.' }, { status: 404 })
@@ -32,11 +33,19 @@ export async function POST(req) {
       .in('platform', ['instagram', 'tiktok', 'linkedin', 'facebook'])
     if (!accts?.length) return Response.json({ error: 'Those accounts are not connected.' }, { status: 400 })
     const scheduledFor = b.scheduled_for || null
+    const future = scheduledFor && new Date(scheduledFor).getTime() > Date.now() + 30000
+    if (future) {
+      const { data, error } = await admin.from('slideshows')
+        .update({ status: 'scheduled', account_ids: accountIds, scheduled_for: scheduledFor, error: null })
+        .eq('id', b.id).eq('user_id', user.id).select().single()
+      if (error) return Response.json({ error: error.message }, { status: 500 })
+      return Response.json({ slideshow: data })
+    }
     try {
       const title = deck.slides?.[0]?.heading || deck.title || deck.topic
-      const r = await createPost({ userId: user.id, accounts: accts, content: deck.caption || '', mediaUrls: deck.image_urls, scheduledFor: scheduledFor || undefined, title })
+      const r = await createPost({ userId: user.id, accounts: accts, content: deck.caption || '', mediaUrls: deck.image_urls, title })
       const { data, error } = await admin.from('slideshows')
-        .update({ status: scheduledFor ? 'scheduled' : 'posted', zernio_post_id: r.id, account_ids: accountIds, scheduled_for: scheduledFor, error: null })
+        .update({ status: 'posted', zernio_post_id: r.id, account_ids: accountIds, scheduled_for: null, error: null })
         .eq('id', b.id).eq('user_id', user.id).select().single()
       if (error) return Response.json({ error: error.message }, { status: 500 })
       return Response.json({ slideshow: data })
@@ -67,20 +76,22 @@ export async function POST(req) {
     const { data: accts } = await admin.from('social_accounts').select('*').eq('user_id', user.id).in('id', row.account_ids)
       .in('platform', ['instagram', 'tiktok', 'linkedin', 'facebook']) // carousel-capable only
     if (!accts?.length) return Response.json({ error: 'Those accounts are not connected.' }, { status: 400 })
-    try {
-      // The cover slide's hook is the natural short title (used for TikTok's
-      // 90-char slideshow title and LinkedIn's document title).
-      const title = row.slides?.[0]?.heading || row.topic
-      const r = await createPost({
-        userId: user.id, accounts: accts, content: row.caption || '',
-        mediaUrls: row.image_urls, scheduledFor: row.scheduled_for || undefined, title,
-      })
-      row.status = row.scheduled_for ? 'scheduled' : 'posted'
-      row.zernio_post_id = r.id
-    } catch (e) {
-      row.status = 'failed'; row.error = e.message
-      const { data } = await admin.from('slideshows').insert(row).select().single()
-      return Response.json({ error: e.message, slideshow: data }, { status: 500 })
+    const future = row.scheduled_for && new Date(row.scheduled_for).getTime() > Date.now() + 30000
+    if (future) {
+      // Local schedule — cron dispatches at the due time; time stays editable.
+      row.status = 'scheduled'
+    } else {
+      try {
+        // The cover slide's hook is the natural short title (used for TikTok's
+        // 90-char slideshow title and LinkedIn's document title).
+        const title = row.slides?.[0]?.heading || row.topic
+        const r = await createPost({ userId: user.id, accounts: accts, content: row.caption || '', mediaUrls: row.image_urls, title })
+        row.status = 'posted'; row.zernio_post_id = r.id; row.scheduled_for = null
+      } catch (e) {
+        row.status = 'failed'; row.error = e.message
+        const { data } = await admin.from('slideshows').insert(row).select().single()
+        return Response.json({ error: e.message, slideshow: data }, { status: 500 })
+      }
     }
   }
 
@@ -89,19 +100,28 @@ export async function POST(req) {
   return Response.json({ slideshow: data })
 }
 
-// PATCH /api/slideshow { id, slides?, image_urls?, caption? } → edit a saved
-// draft's text/images. Only drafts are editable: scheduled/posted decks have
-// already been dispatched to Zernio, so changing them here would be a lie.
+// PATCH /api/slideshow { id, title?, slides?, image_urls?, caption?, scheduled_for? }
+//   - title: renameable at any status (just a label).
+//   - slides/image_urls/caption: content edits, drafts only.
+//   - scheduled_for: reschedule a LOCALLY scheduled deck (cron-dispatched, no
+//     zernio_post_id yet) — that's what makes the time editable like an X post.
 export async function PATCH(req) {
   const user = await getUser(req)
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   if (!b.id) return Response.json({ error: 'id required' }, { status: 400 })
-  const { data: row } = await admin.from('slideshows').select('status').eq('id', b.id).eq('user_id', user.id).single()
+  const { data: row } = await admin.from('slideshows').select('status, zernio_post_id').eq('id', b.id).eq('user_id', user.id).single()
   if (!row) return Response.json({ error: 'Not found' }, { status: 404 })
   const patch = {}
   // Title is just a memorable label — renameable at any status.
   if (typeof b.title === 'string') patch.title = b.title.trim().slice(0, 120) || null
+  // Reschedule: only a still-local scheduled deck (cron hasn't fired it, Zernio
+  // doesn't have it yet) can move. Already-dispatched decks can't be re-timed.
+  if (typeof b.scheduled_for === 'string' && b.scheduled_for) {
+    if (row.status !== 'scheduled' || row.zernio_post_id) return Response.json({ error: 'Only a not-yet-published scheduled carousel can be rescheduled.' }, { status: 400 })
+    if (new Date(b.scheduled_for).getTime() <= Date.now()) return Response.json({ error: 'Pick a time in the future.' }, { status: 400 })
+    patch.scheduled_for = b.scheduled_for
+  }
   // Content edits only make sense before the deck has gone out.
   const wantsContent = Array.isArray(b.slides) || Array.isArray(b.image_urls) || typeof b.caption === 'string'
   if (wantsContent) {
