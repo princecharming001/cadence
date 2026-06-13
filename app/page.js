@@ -1587,23 +1587,47 @@ function Suggestions({ platform, drafts, busy, canPost, onGenerate, onPostNow, o
 // for what's working. Read-only: nothing to connect or authorize.
 // ── Niche engagement — YOUR account comments on relevant posts in your niche.
 // Slim front-end over the engagement_rules engine (keywords + watched accounts
+// ── Tag input — type + Enter/comma to add a removable chip (handles, keywords).
+function TagInput({ value, onChange, placeholder, max = 8, prefix = '' }) {
+  const [draft, setDraft] = useState('')
+  function add(raw) {
+    const parts = String(raw).split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean)
+    if (!parts.length) { setDraft(''); return }
+    const next = [...value]
+    for (const p of parts) if (next.length < max && !next.some(x => x.toLowerCase() === p.toLowerCase())) next.push(p)
+    onChange(next); setDraft('')
+  }
+  function onKey(e) {
+    if ((e.key === 'Enter' || e.key === ',') && draft.trim()) { e.preventDefault(); add(draft) }
+    else if (e.key === 'Backspace' && !draft && value.length) onChange(value.slice(0, -1))
+  }
+  return (
+    <div className="taginput">
+      {value.map((v, i) => (
+        <span className="tag" key={i}>{prefix}{v}<button type="button" onClick={() => onChange(value.filter((_, j) => j !== i))} aria-label="Remove"><LX size={11} /></button></span>
+      ))}
+      {value.length < max && (
+        <input className="tag-input" value={draft} placeholder={value.length ? '' : placeholder} onChange={e => setDraft(e.target.value)} onKeyDown={onKey} onBlur={() => draft.trim() && add(draft)} />
+      )}
+    </div>
+  )
+}
+
 // ── Engage in your niche — a single toggle: keywords + accounts to always
 // reply to. No campaigns. Replies post immediately to ride the algorithmic
 // wave. Backed by one engagement_rule (auto). ────────────────────────────────
 function EngageToggle({ rule, primaryConn, xReadEnabled, posts, onSave, onPatch }) {
   const on = !!rule?.active
-  const [kw, setKw] = useState('')
-  const [handles, setHandles] = useState('')
+  const [kw, setKw] = useState([])
+  const [handles, setHandles] = useState([])
   useEffect(() => {
-    setKw((rule?.target_keywords || []).join(', '))
-    setHandles((rule?.target_handles || []).map(h => '@' + String(h).replace(/^@/, '')).join('\n'))
+    setKw(rule?.target_keywords || [])
+    setHandles((rule?.target_handles || []).map(h => String(h).replace(/^@/, '')))
   }, [rule?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-  const lines = s => s.split('\n').map(x => x.trim().replace(/^@/, '')).filter(Boolean)
-  const targets = () => ({ target_keywords: kw.split(',').map(s => s.trim()).filter(Boolean), target_handles: lines(handles).slice(0, 5) })
-  function saveTargets() {
-    if (!rule?.id) return
-    onPatch(rule.id, { ...targets(), auto_post: true })
-  }
+  const targets = (k = kw, h = handles) => ({ target_keywords: k, target_handles: h.slice(0, 5) })
+  function saveTargets(k = kw, h = handles) { if (rule?.id) onPatch(rule.id, { ...targets(k, h), auto_post: true }) }
+  function setKwSaved(v) { setKw(v); saveTargets(v, handles) }
+  function setHandlesSaved(v) { setHandles(v); saveTargets(kw, v) }
   function toggle(v) {
     if (v) {
       if (rule?.id) onPatch(rule.id, { active: true, auto_post: true, ...targets() })
@@ -1624,10 +1648,10 @@ function EngageToggle({ rule, primaryConn, xReadEnabled, posts, onSave, onPatch 
       </div>
       {on && (
         <div style={{ marginTop: 10 }}>
-          <label className="ob-label" style={{ marginTop: 0 }}>Keywords</label>
-          <input className="field" placeholder="AI agents, indie hacking" value={kw} onChange={e => setKw(e.target.value)} onBlur={saveTargets} />
+          <label className="ob-label" style={{ marginTop: 0 }}>Keywords <span className="muted tiny" style={{ fontWeight: 400 }}>· enter to add</span></label>
+          <TagInput value={kw} onChange={setKwSaved} placeholder="AI agents, indie hacking…" max={8} />
           <label className="ob-label">Accounts to always reply to <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 5</span></label>
-          <textarea className="field" rows={2} placeholder={'@naval\n@sama'} value={handles} onChange={e => setHandles(e.target.value)} onBlur={saveTargets} />
+          <TagInput value={handles} onChange={setHandlesSaved} placeholder="@handle…" max={5} prefix="@" />
           {!xReadEnabled && <div className="notice" style={{ marginTop: 8 }}>Needs X read access to find posts.</div>}
           {rule?.running && <div className="live-status on" style={{ marginTop: 8 }}><Loader2 size={11} className="spin" /> {str(rule.status_detail) || 'Finding posts…'}</div>}
           <RepliesFeed posts={posts} platform="x" />
@@ -4012,6 +4036,14 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .reply-feed-ctx { display: block; font-size: 11px; color: var(--muted); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .reply-feed-ctx:hover { color: var(--accent-text); }
 .reply-feed-text { font-size: 12.5px; color: var(--body); line-height: 1.4; margin-top: 1px; }
+/* tag input — chips you add (handles, keywords) */
+.taginput { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--raise); border: 1px solid var(--line2); border-radius: 9px; padding: 7px 8px; min-height: 42px; transition: border-color .15s, box-shadow .15s; }
+.taginput:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
+.tag { display: inline-flex; align-items: center; gap: 4px; background: var(--surface); border: 1px solid var(--line2); border-radius: 999px; padding: 3px 5px 3px 11px; font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+.tag button { background: none; border: none; cursor: pointer; color: var(--faint); display: inline-flex; padding: 1px; border-radius: 50%; }
+.tag button:hover { color: var(--bad); background: var(--bad-soft); }
+.tag-input { flex: 1; min-width: 90px; border: none; background: none; outline: none; font-family: inherit; font-size: 13.5px; color: var(--ink); padding: 2px 4px; }
+.tag-input::placeholder { color: var(--faint); }
 /* chat reopen button (when collapsed) */
 .chat-reopen { position: absolute; right: 18px; bottom: 18px; z-index: 20; display: inline-flex; align-items: center; gap: 7px; padding: 10px 16px; border-radius: 999px; border: 1px solid var(--line2); background: var(--ink); color: #FAF9F7; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 10px 30px -10px rgba(35,32,24,0.5); transition: transform .12s; }
 .chat-reopen:hover { transform: translateY(-1px); }
