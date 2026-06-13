@@ -19,6 +19,7 @@ import { runDueBrandCampaigns } from '@/lib/brand-campaigns'
 import { runDueSocialEngagement } from '@/lib/social-engagement'
 import { runDueFeederAgents } from '@/lib/feeder-agents'
 import { harvestDueTrends } from '@/lib/trends-harvest'
+import { runDueAutopilot } from '@/lib/autopilot'
 import { releaseStaleClaims, sweepInterruptedPosts } from '@/lib/engine'
 import { isCron } from '@/lib/supabase'
 
@@ -76,6 +77,7 @@ export async function GET(req) {
   const engagement = await safe(runDueEngagement)
   const social = await safe(runDueSocialEngagement)
   const agents = await safe(runDueFeederAgents)
+  const autopilot = await safe(runDueAutopilot)
 
   // 4 + 5. After the response: clip sweep kick + metrics loop + housekeeping.
   const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
@@ -90,6 +92,6 @@ export async function GET(req) {
 
   return Response.json({
     posted: results.filter(r => r.status === 'posted').length,
-    results, brand, engagement, social, agents,
+    results, brand, engagement, social, agents, autopilot,
   })
 }

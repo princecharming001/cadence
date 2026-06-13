@@ -1077,15 +1077,69 @@ function FloatingAccounts({ glyph, count, label, children }) {
 
 // Compact stat tiles (e.g. followers / following / posts).
 const fmtNum = n => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n)
-function StatTiles({ tiles }) {
+function StatTiles({ tiles, vertical }) {
   return (
-    <div className="stat-tiles">
+    <div className={'stat-tiles' + (vertical ? ' vertical' : '')}>
       {tiles.map((t, i) => (
         <div className="stat-tile" key={i}>
           <div className="stat-num">{t.value}</div>
           <div className="stat-lbl">{t.label}</div>
         </div>
       ))}
+    </div>
+  )
+}
+
+// ── Autopilot — the brain posts in your voice on a cadence, no campaign needed.
+function AutopilotCard({ row, busy, onToggle, onRun }) {
+  const on = !!row?.enabled
+  return (
+    <div className={'card autopilot' + (on ? ' on' : '')}>
+      <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
+        <div className="ap-icon"><Sparkles size={16} /></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="row" style={{ gap: 8 }}><span className="ap-title">Autopilot</span>{on && row?.status_detail && <span className="muted tiny">· {row.status_detail}</span>}</div>
+          <div className="muted tiny" style={{ marginTop: 2 }}>Cadence writes posts in your voice on a schedule — no campaign needed.</div>
+        </div>
+        <Toggle on={on} onChange={v => onToggle({ enabled: v })} />
+      </div>
+      <AnimatePresence initial={false}>
+        {on && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
+            <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <label className="camp-num"><input type="number" min={1} max={3} className="field" value={row.per_run} onChange={e => onToggle({ per_run: e.target.value })} /> posts</label>
+              <label className="camp-num">every <input type="number" min={1} className="field" value={row.interval_hours} onChange={e => onToggle({ interval_hours: e.target.value })} /> h</label>
+              <label className="row" style={{ gap: 7, fontSize: 12.5 }} title={row.auto_post ? 'Schedules into your smart slots automatically' : 'Leaves drafts for you to approve'}><Toggle on={!!row.auto_post} onChange={v => onToggle({ auto_post: v })} /> {row.auto_post ? 'Auto-post' : 'Draft for review'}</label>
+              <button className="mini" style={{ marginLeft: 'auto' }} disabled={busy} onClick={onRun}>{busy ? <Loader2 size={12} className="spin" /> : <Play size={12} />} Run now</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// Recent comments/replies feed — what the engagement engine is replying to.
+function RepliesFeed({ posts, platform = 'x' }) {
+  const replies = posts.filter(p => p.reply_to_tweet_id && (p.platform || 'x') === platform)
+    .sort((a, b) => new Date(b.created_at || b.scheduled_for) - new Date(a.created_at || a.scheduled_for)).slice(0, 6)
+  if (!replies.length) return <div className="muted tiny" style={{ marginTop: 8 }}>No replies yet — flip on auto-reply or niche engagement and they'll show up here.</div>
+  return (
+    <div className="reply-feed">
+      <div className="reply-feed-h">Recent replies</div>
+      {replies.map(p => {
+        const s = STATUS[p.status] || { c: '#9ca3af', label: p.status }
+        return (
+          <div className="reply-feed-row" key={p.id}>
+            <span className="status-dot" style={{ background: s.c, marginTop: 5, flex: 'none' }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              {p.target_tweet_text && <a className="reply-feed-ctx" href={p.target_tweet_url || '#'} target="_blank" rel="noreferrer">↳ {p.target_tweet_text.slice(0, 70)}</a>}
+              <div className="reply-feed-text">{p.content}</div>
+            </div>
+            <span className="muted tiny" style={{ flex: 'none' }}>{s.label}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -2325,9 +2379,13 @@ function App({ session }) {
   const [chatList, setChatList] = useState([]); const [historyOpen, setHistoryOpen] = useState(false)
   const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
   const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
+  const [autopilot, setAutopilot] = useState([]); const [apRunning, setApRunning] = useState('')
   const chatIdRef = useRef(null) // current saved-chat id; null until first save
   const inputRef = useRef(null); const bottomRef = useRef(null)
   const [leftPct, setLeftPct] = useState(47); const colsRef = useRef(null); const [dragging, setDragging] = useState(false)
+  const [chatOpen, setChatOpen] = useState(true)
+  useEffect(() => { const v = localStorage.getItem('cadence_chat_open'); if (v === '0') setChatOpen(false) }, [])
+  function toggleChat(open) { setChatOpen(open); localStorage.setItem('cadence_chat_open', open ? '1' : '0') }
   useEffect(() => { const v = Number(localStorage.getItem('cadence_split')); if (v >= 28 && v <= 72) setLeftPct(v) }, [])
   const startDrag = useCallback((e) => {
     e.preventDefault(); setDragging(true)
@@ -2370,8 +2428,9 @@ function App({ session }) {
   const loadAgents = useCallback(async () => { const r = await authed('/api/feeder-agents'); const d = await r.json(); setFeederAgents(d.agents || []) }, [authed])
   const loadAgentCamps = useCallback(async () => { const r = await authed('/api/agent-campaigns'); const d = await r.json(); setAgentCampaigns(d.campaigns || []) }, [authed])
   const loadTrends = useCallback(async () => { try { const r = await authed('/api/trends'); const d = await r.json(); setTrends(d.formats || []) } catch {} }, [authed])
+  const loadAutopilot = useCallback(async () => { try { const r = await authed('/api/autopilot'); const d = await r.json(); setAutopilot(d.autopilot || []) } catch {} }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps(); loadTrends() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps, loadTrends])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps(); loadTrends(); loadAutopilot() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps, loadTrends, loadAutopilot])
 
   // Capture the browser timezone once, so smart scheduling thinks in THEIR time.
   useEffect(() => {
@@ -2533,6 +2592,21 @@ function App({ session }) {
     } catch { setBanner('Scan failed — try again.') } finally { setScanning('') }
   }
   async function deleteTrend(id) { await authed('/api/trends', { method: 'DELETE', body: JSON.stringify({ id }) }); loadTrends() }
+  const apFor = p => autopilot.find(a => a.platform === p) || { platform: p, enabled: false, auto_post: false, per_run: 1, interval_hours: 24 }
+  async function patchAutopilot(platform, patch) {
+    // optimistic so toggles/inputs feel instant
+    setAutopilot(list => { const ex = list.find(a => a.platform === platform); const merged = { ...apFor(platform), ...patch }; return ex ? list.map(a => a.platform === platform ? merged : a) : [...list, merged] })
+    try { await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, ...patch }) }); loadAutopilot() } catch { loadAutopilot() }
+  }
+  async function runAutopilotNow(platform) {
+    setApRunning(platform)
+    try {
+      const r = await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, action: 'run' }) }); const d = await r.json()
+      const res = d.result || {}
+      setBanner(res.error ? `Autopilot: ${res.error}` : res.queued ? `Autopilot queued ${res.queued} post${res.queued === 1 ? '' : 's'}` : `Autopilot drafted ${res.generated || 0} for review`)
+      loadAutopilot(); loadQueue()
+    } catch { setBanner('Autopilot run failed') } finally { setApRunning('') }
+  }
   async function draftAgentCamp(body) {
     try {
       const r = await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify({ action: 'draft', ...body }) })
@@ -2772,7 +2846,7 @@ function App({ session }) {
 
       <AnimatePresence>{banner && <motion.div className="banner" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={spring}>{banner}</motion.div>}</AnimatePresence>
 
-      <div className="cols" ref={colsRef} style={{ '--left-pct': leftPct + '%' }}>
+      <div className="cols" ref={colsRef} style={{ '--left-pct': (chatOpen ? leftPct : 100) + '%' }}>
         <section className={'pane left' + (['x', 'linkedin', 'instagram', 'tiktok'].includes(tab) ? ` plat-${tab}` : '')}>
           <div className="left-head">
             <div className="seg">
@@ -2849,37 +2923,45 @@ function App({ session }) {
                 </>)
               })()}
 
-              {/* X — your personal account. Metrics, then collapsed automation
-                  dropdowns, then what's ready to post. Accounts in the dot. */}
+              {/* X — brain + stats up top, campaigns (the main feature) surfaced,
+                  autopilot, then auto-reply + niche engagement with a live reply
+                  feed, then what's ready to post. Accounts in the dot. */}
               {tab === 'x' && (<>
-                <BrainBanner theme="x" />
                 {connected ? (
-                  <StatTiles tiles={[
-                    { value: xStats?.newFollowers30d == null ? '—' : (xStats.newFollowers30d > 0 ? '+' : '') + fmtNum(xStats.newFollowers30d), label: 'New followers' },
-                    { value: fmtNum(xStats?.impressions30d), label: 'Impressions · 30d' },
-                    { value: fmtNum(queue.filter(p => (p.platform || 'x') === 'x').length), label: 'Queued' },
-                  ]} />
-                ) : (
+                  <div className="phead">
+                    <div className="phead-brain"><BrainBanner theme="x" /></div>
+                    <StatTiles vertical tiles={[
+                      { value: xStats?.newFollowers30d == null ? '—' : (xStats.newFollowers30d > 0 ? '+' : '') + fmtNum(xStats.newFollowers30d), label: 'New followers' },
+                      { value: fmtNum(xStats?.impressions30d), label: 'Impressions · 30d' },
+                      { value: fmtNum(queue.filter(p => (p.platform || 'x') === 'x').length), label: 'Queued' },
+                    ]} />
+                  </div>
+                ) : (<>
+                  <BrainBanner theme="x" />
                   <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', margin: '8px 0 14px' }} onClick={connectX}><XGlyph /> Connect your X account</button>
-                )}
+                </>)}
                 {xConns.some(c => c.needs_reconnect) && <div className="notice" style={{ color: '#8A6200', margin: '4px 0 10px' }}>An X account needs reconnecting — open accounts (bottom-right).</div>}
 
-                <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'x')?.enabled} />}>
-                  <AutoReply platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
-                </Section>
-                <Section title="Engage in your niche" hint="comments on relevant posts as you" badge={<OnBadge on={engRules.some(r => r.active)} />}>
-                  <EngageManager rules={engRules} primaryConn={primaryX} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
-                </Section>
-                <Section title="Campaign" hint="promote a topic on a schedule" badge={<OnBadge on={campsTouching(['x']).some(c => c.active)} />}>
-                  <PlatformCampaign campaigns={campsFor(['x'])} targets={xCampTargets} allowImage canCreate={connected} connectHint="Connect your X account first." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
-                  <CrossCampHint plats={['x']} />
-                </Section>
-                <Section title="Feeder agents" hint="autonomous personas on your other accounts" badge={<OnBadge on={feederAgents.some(a => a.active)} />}>
-                  <FeederAgents agents={feederAgents} xConns={xConns} posts={posts} campaigns={agentCampaigns} onSpawn={spawnAgent} onPatch={patchAgent} onDelete={deleteAgent} onRun={runAgent} onReroll={rerollAgent} />
-                </Section>
-                <Section title="What's working now" hint="viral hook patterns feed your drafts" badge={trends.filter(f => f.platform === 'x').length ? <span className="camp-state on">{trends.filter(f => f.platform === 'x').length}</span> : null}>
-                  <TrendFormats platform="x" formats={trends} canScan={false} onDelete={deleteTrend} />
-                </Section>
+                {/* Campaigns — the main feature, surfaced (not buried in a dropdown) */}
+                <div className="psec-head row" style={{ gap: 8 }}>Campaigns <span className="muted tiny" style={{ fontWeight: 400 }}>· promote on a schedule, in your voice</span>{campsTouching(['x']).some(c => c.active) && <span className="live-pill on" style={{ marginLeft: 'auto' }}><span className="pulse" />{campsTouching(['x']).filter(c => c.active).length} live</span>}</div>
+                <PlatformCampaign campaigns={campsFor(['x'])} targets={xCampTargets} allowImage canCreate={connected} connectHint="Connect your X account first." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
+                <CrossCampHint plats={['x']} />
+
+                {/* Autopilot — no campaign needed */}
+                <div style={{ marginTop: 14 }}>
+                  <AutopilotCard row={apFor('x')} busy={apRunning === 'x'} onToggle={patch => patchAutopilot('x', patch)} onRun={() => runAutopilotNow('x')} />
+                </div>
+
+                <div style={{ marginTop: 14 }}>
+                  <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={!!engSettings.find(s => s.platform === 'x')?.enabled} />}>
+                    <AutoReply platforms={['x']} settings={engSettings} replies={socialReplies} accounts={connected ? [{ platform: 'x' }] : []} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
+                    <RepliesFeed posts={posts} platform="x" />
+                  </Section>
+                  <Section title="Engage in your niche" hint="comments on relevant posts as you" badge={<OnBadge on={engRules.some(r => r.active)} />}>
+                    <EngageManager rules={engRules} primaryConn={primaryX} xReadEnabled={!!me?.xReadEnabled} posts={posts} onSave={saveEngagement} onPatch={patchEngagement} onDelete={deleteEngagement} onRun={runEngagementNow} />
+                  </Section>
+                </div>
+
                 <div style={{ marginTop: 14 }}>
                   <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
                     onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
@@ -3046,6 +3128,7 @@ function App({ session }) {
           )}
         </section>
 
+        {chatOpen && <>
         <div className={'split-handle' + (dragging ? ' active' : '')} onMouseDown={startDrag} onTouchStart={startDrag} title="Drag to resize" role="separator" aria-label="Resize panels"><span className="split-grip" /></div>
 
         {/* chat */}
@@ -3055,6 +3138,7 @@ function App({ session }) {
             <div className="row" style={{ gap: 6, position: 'relative' }}>
               <button className="mini" onClick={() => { if (!historyOpen) loadChats(); setHistoryOpen(o => !o) }} title="Previous chats"><LHistory size={12} /> History</button>
               <button className="mini" onClick={newChat} title="Start a new chat"><Plus size={12} /> New</button>
+              <button className="mini" onClick={() => toggleChat(false)} title="Collapse chat"><LX size={13} /></button>
               <AnimatePresence>
                 {historyOpen && (
                   <motion.div className="card chat-hist" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.15 }}>
@@ -3125,6 +3209,10 @@ function App({ session }) {
             </div>
           </div>
         </section>
+        </>}
+        {!chatOpen && (
+          <button className="chat-reopen" onClick={() => toggleChat(true)} title="Open Cadence chat"><Sparkles size={15} /> Chat</button>
+        )}
       </div>
 
       {/* agent profile modal — opened from the fleet or a campaign roster */}
@@ -3715,6 +3803,29 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .cal-chip.bad { background: var(--bad-soft); }
 .cal-chip-t { font-size: 10px; font-weight: 600; color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cal-more { font-size: 9.5px; color: var(--faint); font-weight: 600; padding-left: 4px; }
+/* X tab: brain (left) + stats stacked (right) */
+.phead { display: flex; gap: 12px; align-items: stretch; margin-bottom: 14px; }
+.phead-brain { flex: 1.7; min-width: 0; border-radius: 14px; overflow: hidden; }
+.phead .stat-tiles.vertical { flex: 1; min-width: 130px; }
+.stat-tiles.vertical { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.stat-tiles.vertical .stat-tile { flex: 1; display: flex; flex-direction: column; justify-content: center; text-align: left; padding: 10px 14px; }
+.psec-head { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--faint); margin: 0 2px 10px; }
+.psec-head .live-pill { text-transform: none; letter-spacing: 0; }
+/* autopilot */
+.autopilot { padding: 15px 16px; border-radius: 14px; }
+.autopilot.on { border-color: var(--accent-line); }
+.ap-icon { width: 34px; height: 34px; border-radius: 9px; background: var(--accent-soft); color: var(--accent-text); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ap-title { font-weight: 700; font-size: 14.5px; }
+/* recent replies feed */
+.reply-feed { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.reply-feed-h { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); margin-bottom: 6px; }
+.reply-feed-row { display: flex; gap: 8px; padding: 5px 0; align-items: flex-start; }
+.reply-feed-ctx { display: block; font-size: 11px; color: var(--muted); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reply-feed-ctx:hover { color: var(--accent-text); }
+.reply-feed-text { font-size: 12.5px; color: var(--body); line-height: 1.4; margin-top: 1px; }
+/* chat reopen button (when collapsed) */
+.chat-reopen { position: absolute; right: 18px; bottom: 18px; z-index: 20; display: inline-flex; align-items: center; gap: 7px; padding: 10px 16px; border-radius: 999px; border: 1px solid var(--line2); background: var(--ink); color: #FAF9F7; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 10px 30px -10px rgba(35,32,24,0.5); transition: transform .12s; }
+.chat-reopen:hover { transform: translateY(-1px); }
 .trend-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--bg2); border: 1px solid var(--line2); color: var(--muted); }
 .trend-badge.render { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
 .trend-badge.ad { background: var(--gold-soft); border-color: var(--gold-line); color: var(--gold); }
