@@ -3773,8 +3773,8 @@ function App({ session }) {
                     <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
                       <div className={'bubble ' + m.role}>{m.content}</div>
                       {props.map((p, j) => (p.slideshow || p.video)
-                        ? <MediaProposal key={j} proposal={p} index={j} total={props.length} authed={authed} socialAccounts={socialAccounts} onResolved={() => { loadQueue(); loadSlideshows() }} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} />
-                        : <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={loadQueue} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
+                        ? <MediaProposal key={j} proposal={p} index={j} total={props.length} authed={authed} socialAccounts={socialAccounts} onResolved={refreshLive} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} />
+                        : <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={refreshLive} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
                       )}
                     </div>
                   </motion.div>
