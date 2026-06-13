@@ -12,6 +12,15 @@ import { runTrendHarvest } from '@/lib/trends-harvest'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+// Chat bubbles render as plain text — strip markdown the model sometimes adds
+// (**bold**, ## headers, *-bullets) so it never shows as literal characters.
+const cleanReply = s => String(s || '')
+  .replace(/\*\*(.+?)\*\*/gs, '$1')
+  .replace(/__(.+?)__/gs, '$1')
+  .replace(/^#{1,6}\s+/gm, '')
+  .replace(/^[ \t]*[-*]\s+/gm, '· ')
+  .trim()
+
 export const runtime = 'nodejs'
 export const maxDuration = 120 // slideshow generation can render several slides
 
@@ -564,6 +573,19 @@ export async function POST(req) {
       .map(m => ({ role: m.role, content: m.content.slice(0, 8000) }))
     if (!safeMessages.length) return Response.json({ reply: 'Say something first.' }, { status: 400 })
 
+    const { reply, proposals } = await runChatTurn({ user, messages: safeMessages, scope })
+    return Response.json({ reply, proposals, proposal: proposals[0] || null })
+  } catch (err) {
+    console.error('[chat]', err)
+    return Response.json({ reply: 'Something went wrong on my end — try that again.' }, { status: 500 })
+  }
+}
+
+// The agent turn, extracted so it can be driven from tests and other server
+// code. `messages` is the already-validated user/assistant list; `scope` is the
+// platform focus (array) or null.
+export async function runChatTurn({ user, messages: safeMessages, scope }) {
+  try {
     const now = new Date().toLocaleString('en-US', {
       timeZone: 'America/Los_Angeles', dateStyle: 'full', timeStyle: 'short',
     })
@@ -727,11 +749,9 @@ ${scopeBlock}${liVoiceBlock}${trendBlocks}${feedbackBlock(fb)}`
       break
     }
     if (!reply) reply = 'I hit my action limit for one message — tell me to continue.'
-
-    // proposals = every draft card from this turn; proposal kept for compatibility.
-    return Response.json({ reply, proposals, proposal: proposals[0] || null })
+    return { reply: cleanReply(reply), proposals }
   } catch (err) {
     console.error('[chat]', err)
-    return Response.json({ reply: 'Something went wrong on my end — try that again.' }, { status: 500 })
+    return { reply: 'Something went wrong on my end — try that again.', proposals: [] }
   }
 }
