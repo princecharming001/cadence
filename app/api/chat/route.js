@@ -850,7 +850,7 @@ ${scopeBlock}${liVoiceBlock}${trendBlocks}${feedbackBlock(fb)}`
               try {
                 const { data: persona } = await admin.from('personas').select('*').eq('user_id', user.id).single()
                 const deck = await generateSlideshow({ topic: block.input.topic, format: block.input.format || 'listicle', style: block.input.style || 'bold', slides: block.input.slides || 6, persona, userId: user.id })
-                proposals.push({ slideshow: { topic: block.input.topic, format: deck.format, style: deck.style, slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls } })
+                proposals.push({ slideshow: { topic: block.input.topic, format: deck.format, style: deck.style, handle: deck.handle, slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls } })
                 result = { ok: true, slides: deck.imageUrls.length, note: 'Carousel rendered and shown inline for the user to review — they pick accounts and schedule/post/save. Do NOT also call generate_slideshow again.' }
               } catch (e) { result = { error: String(e.message || 'Could not build the carousel.').slice(0, 180) } }
             }

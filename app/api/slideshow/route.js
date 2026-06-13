@@ -24,6 +24,7 @@ export async function POST(req) {
     format: b.format || 'listicle', style: b.style || 'bold',
     slides: Array.isArray(b.slides) ? b.slides : [],
     caption: b.caption || null,
+    handle: b.handle || null, // who the carousel is for — lets edits re-render the handle chip
     image_urls: Array.isArray(b.image_urls) ? b.image_urls : [],
     account_ids: Array.isArray(b.account_ids) ? b.account_ids : [],
     status: 'draft',
@@ -55,6 +56,27 @@ export async function POST(req) {
   }
 
   const { data, error } = await admin.from('slideshows').insert(row).select().single()
+  if (error) return Response.json({ error: error.message }, { status: 500 })
+  return Response.json({ slideshow: data })
+}
+
+// PATCH /api/slideshow { id, slides?, image_urls?, caption? } → edit a saved
+// draft's text/images. Only drafts are editable: scheduled/posted decks have
+// already been dispatched to Zernio, so changing them here would be a lie.
+export async function PATCH(req) {
+  const user = await getUser(req)
+  if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
+  const b = await req.json().catch(() => ({}))
+  if (!b.id) return Response.json({ error: 'id required' }, { status: 400 })
+  const { data: row } = await admin.from('slideshows').select('status').eq('id', b.id).eq('user_id', user.id).single()
+  if (!row) return Response.json({ error: 'Not found' }, { status: 404 })
+  if (row.status !== 'draft') return Response.json({ error: 'Only draft slideshows can be edited — scheduled or posted decks are already out.' }, { status: 400 })
+  const patch = {}
+  if (Array.isArray(b.slides)) patch.slides = b.slides
+  if (Array.isArray(b.image_urls)) patch.image_urls = b.image_urls
+  if (typeof b.caption === 'string') patch.caption = b.caption
+  if (!Object.keys(patch).length) return Response.json({ error: 'Nothing to update' }, { status: 400 })
+  const { data, error } = await admin.from('slideshows').update(patch).eq('id', b.id).eq('user_id', user.id).select().single()
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json({ slideshow: data })
 }

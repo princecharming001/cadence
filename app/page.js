@@ -552,6 +552,70 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
   )
 }
 
+// ── Slide editor — edit the TEXT baked into a carousel's slides, not just the
+//    caption. The copy lives as structured data (kind/heading/body per slide);
+//    editing a field re-renders just that slide server-side (pure Satori, no
+//    LLM) and hot-swaps its image. Self-owned state; reports up via onChange. ──
+function SlideEditor({ slides: slides0, imageUrls: urls0, style, format, handle, authed, onChange }) {
+  const [slides, setSlides] = useState(slides0 || [])
+  const [urls, setUrls] = useState(urls0 || [])
+  const [open, setOpen] = useState(null) // index being edited
+  const [busy, setBusy] = useState({})   // {index: true} while re-rendering
+  const timers = useRef({})
+  const onChangeRef = useRef(onChange); onChangeRef.current = onChange
+  useEffect(() => { onChangeRef.current && onChangeRef.current(slides, urls) }, [slides, urls])
+  useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), [])
+
+  function renderSlide(i, nextSlides) {
+    clearTimeout(timers.current[i])
+    timers.current[i] = setTimeout(async () => {
+      setBusy(b => ({ ...b, [i]: true }))
+      try {
+        const r = await authed('/api/slideshow/render-slide', { method: 'POST', body: JSON.stringify({ style, format, handle, slides: nextSlides, indices: [i] }) })
+        const d = await r.json()
+        if (d.urls?.length) setUrls(prev => { const n = prev.slice(); for (const u of d.urls) n[u.index] = u.url; return n })
+      } catch { /* keep the old image on failure */ }
+      setBusy(b => ({ ...b, [i]: false }))
+    }, 650)
+  }
+  function edit(i, field, val) {
+    const next = slides.map((s, j) => j === i ? { ...s, [field]: val } : s)
+    setSlides(next); renderSlide(i, next)
+  }
+  const words = v => String(v || '').trim().split(/\s+/).filter(Boolean).length
+  const kindLabel = k => k === 'cover' ? 'Cover' : k === 'cta' ? 'Last slide (CTA)' : 'Slide'
+
+  return (
+    <div className="se-wrap">
+      <div className="ss-preview">
+        {urls.map((u, i) => (
+          <button type="button" key={i} className={'se-thumb' + (open === i ? ' on' : '')} onClick={() => setOpen(open === i ? null : i)} title="Edit this slide's text">
+            <img src={u} className="ss-slide" alt={`slide ${i + 1}`} />
+            {busy[i] && <span className="se-spin"><Loader2 size={16} className="spin" /></span>}
+            <span className="se-pencil"><Pencil size={11} /></span>
+          </button>
+        ))}
+      </div>
+      <AnimatePresence initial={false}>
+        {open != null && slides[open] && (
+          <motion.div key={open} className="se-edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.18 }}>
+            <div className="se-edit-head">
+              <span>{kindLabel(slides[open].kind)} {open + 1} of {slides.length}</span>
+              {busy[open] ? <span className="muted tiny"><Loader2 size={11} className="spin" /> rendering…</span> : <button className="se-x" onClick={() => setOpen(null)} title="Done"><Ex /></button>}
+            </div>
+            <label className="se-label">Heading</label>
+            <textarea className="field se-field" rows={2} value={slides[open].heading || ''} onChange={e => edit(open, 'heading', e.target.value)} placeholder="Headline for this slide" />
+            <div className={'se-count' + (words(slides[open].heading) > (slides[open].kind === 'cover' ? 8 : 12) ? ' over' : '')}>{words(slides[open].heading)} words{slides[open].kind === 'cover' ? ' · keep ≤8' : ''}</div>
+            <label className="se-label">Body <span className="muted tiny">(optional)</span></label>
+            <textarea className="field se-field" rows={3} value={slides[open].body || ''} onChange={e => edit(open, 'body', e.target.value)} placeholder="Supporting line — short; carousels get skimmed" />
+            <div className={'se-count' + (words(slides[open].body) > 20 ? ' over' : '')}>{words(slides[open].body)} words · keep ≤20</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 // ── Media proposal (carousel / clip) — inline preview in chat, mirrors
 //    DraftProposal's approve/resolve flow but publishes via /api/slideshow or
 //    /api/clips. Lets the user edit the caption, pick which connected accounts
@@ -560,7 +624,10 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
   const isVideo = !!proposal.video
   const deck = proposal.slideshow || {}
   const vid = proposal.video || {}
-  const slides = Array.isArray(deck.image_urls) ? deck.image_urls : []
+  // Live working copy: editing slide text re-renders images, so the structured
+  // slides AND their image URLs both change before we publish.
+  const [deckSlides, setDeckSlides] = useState(Array.isArray(deck.slides) ? deck.slides : [])
+  const [imgUrls, setImgUrls] = useState(Array.isArray(deck.image_urls) ? deck.image_urls : [])
   // Carousel posts to IG / TikTok / LinkedIn; clips to IG Reels / TikTok.
   const okPlatforms = isVideo ? ['instagram', 'tiktok'] : ['instagram', 'tiktok', 'linkedin']
   const accts = socialAccounts.filter(a => okPlatforms.includes(a.platform))
@@ -598,7 +665,7 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
       d = await r.json()
       if (!r.ok || d.error) { setBusy(false); setErr(d.error || 'Could not post the clip.'); return }
     } else {
-      const body = { topic: deck.topic, format: deck.format, style: deck.style, slides: deck.slides, caption, image_urls: slides }
+      const body = { topic: deck.topic, format: deck.format, style: deck.style, handle: deck.handle, slides: deckSlides, caption, image_urls: imgUrls }
       if (mode !== 'draft') { body.action = 'schedule'; body.account_ids = ids; if (mode === 'schedule') body.scheduled_for = new Date(when).toISOString() }
       r = await authed('/api/slideshow', { method: 'POST', body: JSON.stringify(body) })
       d = await r.json()
@@ -616,12 +683,13 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
   return (
     <motion.div className="card dp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
       <div className="dp-head">
-        <span>{isVideo ? 'Clip preview' : `Carousel${total > 1 ? ` ${index + 1} of ${total}` : ''} · ${slides.length} slides`}</span>
-        {!isVideo && deck.style && <span className="muted tiny">{deck.format} · {deck.style}</span>}
+        <span>{isVideo ? 'Clip preview' : `Carousel${total > 1 ? ` ${index + 1} of ${total}` : ''} · ${imgUrls.length} slides`}</span>
+        {!isVideo && deck.style && <span className="muted tiny">{deck.format} · {deck.style} · tap a slide to edit</span>}
       </div>
       {isVideo
         ? <video className="mp-video" src={vid.url} controls playsInline preload="metadata" poster={vid.thumb || undefined} />
-        : <div className="ss-preview" style={{ marginBottom: 8 }}>{slides.map((u, k) => <img key={k} src={u} className="ss-slide" alt={`slide ${k + 1}`} />)}</div>}
+        : <SlideEditor slides={deckSlides} imageUrls={imgUrls} style={deck.style} format={deck.format} handle={deck.handle} authed={authed}
+            onChange={(s, u) => { setDeckSlides(s); setImgUrls(u) }} />}
       <textarea className="field dp-text" rows={3} placeholder="Caption…" value={caption} onChange={e => setCaption(e.target.value)} />
       {accts.length > 0 ? (
         <div className="mp-accts">
@@ -936,12 +1004,14 @@ const PLATFORMS = [
 ]
 function platformDot(p) { return ({ x: '#15171A', instagram: '#E1306C', tiktok: '#00b8b0', linkedin: '#0A66C2', facebook: '#1877F2' }[p] || '#888') }
 
-function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, onGenerate, onSave, onDelete, hideAccounts, platformFocus }) {
+function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, onGenerate, onSave, onDelete, onRefresh, hideAccounts, platformFocus, authed }) {
   const [topic, setTopic] = useState('')
   const [format, setFormat] = useState('listicle'); const [style, setStyle] = useState('bold')
   const [count, setCount] = useState(6)
   const [busy, setBusy] = useState(false); const [deck, setDeck] = useState(null) // {slides,caption,image_urls,style,format}
   const [pickedAccts, setPickedAccts] = useState([]); const [when, setWhen] = useState('')
+  // Inline edit of a SAVED draft deck (status==='draft' only).
+  const [edit, setEdit] = useState(null) // { id, slides, image_urls, caption, busy }
 
   // Every platform that takes an image carousel — Instagram, TikTok, LinkedIn, Facebook.
   // On a platform tab, that platform's accounts are the default target and the
@@ -963,7 +1033,7 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
   async function schedule(post) {
     if (!deck) return
     const ok = await onSave({
-      action: 'schedule', topic: deck.topic, format: deck.format, style: deck.style,
+      action: 'schedule', topic: deck.topic, format: deck.format, style: deck.style, handle: deck.handle,
       slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls,
       account_ids: pickedAccts, scheduled_for: post && when ? new Date(when).toISOString() : null,
     })
@@ -971,8 +1041,15 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
   }
   async function saveDraft() {
     if (!deck) return
-    const ok = await onSave({ topic: deck.topic, format: deck.format, style: deck.style, slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls })
+    const ok = await onSave({ topic: deck.topic, format: deck.format, style: deck.style, handle: deck.handle, slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls })
     if (ok) setDeck(null)
+  }
+  async function saveEdit() {
+    if (!edit) return
+    setEdit(e => ({ ...e, busy: true }))
+    await authed('/api/slideshow', { method: 'PATCH', body: JSON.stringify({ id: edit.id, slides: edit.slides, image_urls: edit.image_urls, caption: edit.caption }) })
+    setEdit(null)
+    onRefresh && onRefresh()
   }
 
   return (
@@ -1024,9 +1101,8 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
       {/* Preview + schedule */}
       {deck && (
         <motion.div className="card camp-form" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-          <div className="ss-preview">
-            {deck.imageUrls.map((u, i) => <img key={i} src={u} alt={`slide ${i + 1}`} className="ss-slide" />)}
-          </div>
+          <SlideEditor slides={deck.slides} imageUrls={deck.imageUrls} style={deck.style} format={deck.format} handle={deck.handle} authed={authed}
+            onChange={(s, u) => setDeck(d => ({ ...d, slides: s, imageUrls: u }))} />
           <label className="ob-label" style={{ marginTop: 12 }}>Caption <span className="muted tiny" style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· edit before posting</span></label>
           <textarea className="field" rows={4} style={{ lineHeight: 1.5 }} value={deck.caption || ''} onChange={e => setDeck(d => ({ ...d, caption: e.target.value }))} />
           {igLike.length > 0 && <>
@@ -1056,7 +1132,9 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
       {/* Saved decks */}
       {slideshows.length > 0 && <>
         <div className="conn-sec">Your slideshows</div>
-        {slideshows.map(s => (
+        {slideshows.map(s => {
+          const editing = edit?.id === s.id
+          return (
           <div className="card camp-card" key={s.id}>
             <div className="row" style={{ gap: 10 }}>
               {s.image_urls?.[0] && <img src={s.image_urls[0]} className="ss-thumb" alt="" />}
@@ -1064,10 +1142,29 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
                 <div className="conn-title row" style={{ gap: 7 }}>{s.topic}<span className={'camp-state' + (s.status === 'posted' || s.status === 'scheduled' ? ' on' : '')}>{s.status}</span></div>
                 <div className="muted tiny" style={{ marginTop: 3 }}>{s.image_urls?.length || 0} slides · {s.style} · {s.format}{s.scheduled_for ? ` · ${fmt(s.scheduled_for)}` : ''}{s.error ? ` · ${s.error}` : ''}</div>
               </div>
+              {s.status === 'draft' && Array.isArray(s.slides) && s.slides.length > 0 && (
+                <button className="mini" onClick={() => editing ? setEdit(null) : setEdit({ id: s.id, slides: s.slides, image_urls: s.image_urls || [], caption: s.caption || '', busy: false })}><Pencil size={12} /> {editing ? 'Close' : 'Edit text'}</button>
+              )}
               <button className="mini danger" onClick={() => onDelete(s.id)}><Trash2 size={12} /></button>
             </div>
+            <AnimatePresence initial={false}>
+              {editing && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.18 }} style={{ overflow: 'hidden' }}>
+                  <div style={{ marginTop: 12 }}>
+                    <SlideEditor slides={edit.slides} imageUrls={edit.image_urls} style={s.style} format={s.format} handle={s.handle} authed={authed}
+                      onChange={(sl, u) => setEdit(e => ({ ...e, slides: sl, image_urls: u }))} />
+                    <label className="ob-label" style={{ marginTop: 12 }}>Caption</label>
+                    <textarea className="field" rows={3} style={{ lineHeight: 1.5 }} value={edit.caption} onChange={e => setEdit(p => ({ ...p, caption: e.target.value }))} />
+                    <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+                      <button className="mini" onClick={() => setEdit(null)}>Cancel</button>
+                      <button className="btn-primary btn-sm" disabled={edit.busy} onClick={saveEdit}>{edit.busy ? 'Saving…' : 'Save changes'}</button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        ))}
+        )})}
       </>}
     </>
   )
@@ -3293,8 +3390,8 @@ function App({ session }) {
                     ))}
                   </div>
                   {igMode === 'carousels' && (
-                    <SlideshowStudio hideAccounts platformFocus={plat} accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows}
-                      onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} />
+                    <SlideshowStudio hideAccounts platformFocus={plat} accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows} authed={authed}
+                      onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} onRefresh={loadSlideshows} />
                   )}
                   {igMode === 'clips' && (
                     <ClipStudio platformFocus={plat} jobs={clipJobs} accounts={socialAccounts} configured={socialConfigured}
@@ -3981,6 +4078,21 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .mp-chip:hover { border-color: var(--accent); }
 .mp-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .mp-chip.on .status-dot { box-shadow: 0 0 0 2px rgba(255,255,255,.6); }
+.se-wrap { margin-bottom: 8px; }
+.se-thumb { position: relative; flex: none; padding: 0; border: none; background: none; cursor: pointer; border-radius: 8px; scroll-snap-align: start; }
+.se-thumb .ss-slide { transition: outline .15s; }
+.se-thumb.on .ss-slide { outline: 2.5px solid var(--accent); outline-offset: 1px; }
+.se-pencil { position: absolute; top: 6px; right: 6px; display: flex; padding: 4px; border-radius: 6px; background: rgba(8,9,13,.55); color: #fff; opacity: 0; transition: opacity .15s; }
+.se-thumb:hover .se-pencil, .se-thumb.on .se-pencil { opacity: 1; }
+.se-spin { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.5); border-radius: 8px; color: var(--accent); }
+.se-edit { overflow: hidden; }
+.se-edit-head { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; font-weight: 600; color: var(--ink); margin: 10px 0 6px; }
+.se-label { display: block; font-size: 11px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .4px; margin: 8px 0 4px; }
+.se-field { width: 100%; line-height: 1.4; }
+.se-count { font-size: 10.5px; color: var(--faint); margin-top: 3px; }
+.se-count.over { color: #B3372F; }
+.se-x { display: flex; padding: 4px; border: none; background: none; color: var(--faint); cursor: pointer; border-radius: 6px; }
+.se-x:hover { background: var(--line); color: var(--ink); }
 .ss-thumb { width: 46px; height: 58px; border-radius: 6px; object-fit: cover; flex: none; border: 1px solid var(--line); }
 /* collapsible sections + clip studio */
 .sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }
