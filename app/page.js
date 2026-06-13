@@ -2048,7 +2048,10 @@ function AgentProfile({ agent, xConns, socialAccounts, campaigns = [], posts, on
   const st = agent.stats || {}
   const tile2 = agentTile2(st)
   const notes = (agent.memory || []).slice(-3).reverse()
-  const camp = campaigns.find(c => c.id === agent.campaign_id)
+  // Many-to-many: an agent can be on several campaigns.
+  const myCampIds = agent.campaign_ids || (agent.campaign_id ? [agent.campaign_id] : [])
+  const myCamps = campaigns.filter(c => myCampIds.includes(c.id))
+  const camp = myCamps[0]
   const isX = !!agent.x_connection_id
   return (
     <motion.div className="overlay" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -2058,7 +2061,7 @@ function AgentProfile({ agent, xConns, socialAccounts, campaigns = [], posts, on
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="row" style={{ gap: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 16.5 }}>{p.name || agent.name || 'Agent'}</span>
-              {camp && <span className="role-badge" title="On a campaign mission">{camp.name}</span>}
+              {myCamps.map(c => <span key={c.id} className="role-badge" title="On a campaign mission">{c.name}</span>)}
             </div>
             <div className="muted tiny" style={{ marginTop: 2 }}>@{handle || '—'} · {agent.platform || 'x'}{p.archetype ? ` · ${p.archetype}` : ''}</div>
           </div>
@@ -2200,7 +2203,7 @@ function FeederAgents({ agents, xConns, posts, campaigns = [], onSpawn, onPatch,
                 <AgentAvatar agent={a} size={42} />
                 <div style={{ minWidth: 0 }}>
                   <div className="conn-title row" style={{ gap: 7 }}>{p.name || a.name || 'Agent'}
-                    {a.campaign_id && <span className="role-badge" title="On a campaign mission">{campaigns.find(cp => cp.id === a.campaign_id)?.name || 'campaign'}</span>}
+                    {(a.campaign_ids || (a.campaign_id ? [a.campaign_id] : [])).slice(0, 2).map(cid => <span key={cid} className="role-badge" title="On a campaign mission">{campaigns.find(cp => cp.id === cid)?.name || 'campaign'}</span>)}
                   </div>
                   <div className="muted tiny" style={{ marginTop: 2 }}>@{c.username}{p.archetype ? ` · ${p.archetype}` : ''}</div>
                   {lastNote && <div className="agent-note">“{lastNote}”</div>}
@@ -2254,6 +2257,14 @@ const INTENSITY_DESC = {
   balanced: 'A steady drumbeat — woven into roughly half their posting.',
   loud: 'Front and center — most posts orbit the mission.',
 }
+const OBJECTIVE_OPTS = [
+  ['awareness', 'Awareness'], ['signups', 'Sign-ups'], ['installs', 'App installs'],
+  ['traffic', 'Traffic'], ['waitlist', 'Waitlist'], ['launch_buzz', 'Launch buzz'],
+]
+const LINK_STRAT_OPTS = [
+  ['never', 'Never link'], ['occasional', 'Occasional link'], ['cta_only', 'Link on CTAs'], ['every_promo', 'Link every promo'],
+]
+const CAMP_PLATFORMS = [['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']]
 
 // Compose the structured brief inputs into the single line missionBlock reads.
 function composeBriefClient({ pitch, audience, keyPoints, avoid }) {
@@ -2272,8 +2283,9 @@ function composeBriefClient({ pitch, audience, keyPoints, avoid }) {
 function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
   const [step, setStep] = useState(0)
   const [busy, setBusy] = useState(false); const [drafting, setDrafting] = useState(false)
-  const [f, setF] = useState({ product: '', link: '', pitch: '', audience: '', keyPoints: '', avoid: '', intensity: 'balanced' })
+  const [f, setF] = useState({ product: '', link: '', pitch: '', audience: '', keyPoints: '', avoid: '', cta: '', intensity: 'balanced', objective: 'awareness', linkStrategy: 'occasional', platforms: [] })
   const [override, setOverride] = useState(null) // manual edits to the composed brief
+  const togglePlat = k => setF(s => ({ ...s, platforms: s.platforms.includes(k) ? s.platforms.filter(x => x !== k) : [...s.platforms, k] }))
   const set = (k, v) => { setF(s => ({ ...s, [k]: v })); setOverride(null) }
   const canDraft = (f.product.trim() || f.link.trim()) && !drafting
   const brief = override ?? composeBriefClient(f)
@@ -2294,6 +2306,11 @@ function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
     const ok = await onCreate({
       product, name: product.length > 42 ? product.slice(0, 42).trimEnd() + '…' : product,
       link: f.link.trim() || null, brief, intensity: f.intensity, active: true,
+      objective: f.objective, platforms: f.platforms, link_strategy: f.linkStrategy,
+      pitch: f.pitch.trim() || null, audience: f.audience.trim() || null,
+      cta: f.cta.trim() || null,
+      key_points: f.keyPoints.split('\n').map(s => s.trim()).filter(Boolean),
+      dont_say: f.avoid.split('\n').map(s => s.trim()).filter(Boolean),
     })
     setBusy(false)
     if (ok) onCancel()
@@ -2307,6 +2324,10 @@ function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
         <div className="onb-q">What are the agents promoting?</div>
         <input className="field" autoFocus placeholder="e.g. Cluey — the AI study copilot for students" value={f.product} onChange={e => set('product', e.target.value)} />
         <input className="field" style={{ marginTop: 8 }} placeholder="Link (optional — paste it and I'll draft the brief)" value={f.link} onChange={e => set('link', e.target.value)} />
+        <label className="onb-label">Goal</label>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {OBJECTIVE_OPTS.map(([k, l]) => <button key={k} type="button" className={'chip' + (f.objective === k ? ' on' : '')} onClick={() => set('objective', k)}>{l}</button>)}
+        </div>
         <button className="onb-draft" disabled={!canDraft} onClick={autodraft}>
           {drafting ? <><Loader2 size={14} className="spin" /> Reading + drafting the brief…</> : <><Sparkles size={14} /> Draft the brief for me</>}
         </button>
@@ -2324,8 +2345,10 @@ function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
         <input className="field" placeholder="e.g. CS students cramming for finals" value={f.audience} onChange={e => set('audience', e.target.value)} />
         <label className="onb-label">What lands <span className="muted tiny" style={{ fontWeight: 400 }}>· one point per line</span></label>
         <textarea className="field dp-grow" rows={3} placeholder={'cuts study time in half\nactually explains, doesn\'t just answer\nfree to start'} value={f.keyPoints} onChange={e => set('keyPoints', e.target.value)} />
-        <label className="onb-label">Anything to avoid <span className="muted tiny" style={{ fontWeight: 400 }}>· optional</span></label>
-        <input className="field" placeholder="e.g. don't call it a 'cheating' tool" value={f.avoid} onChange={e => set('avoid', e.target.value)} />
+        <label className="onb-label">Never say <span className="muted tiny" style={{ fontWeight: 400 }}>· one per line, a hard rule</span></label>
+        <textarea className="field dp-grow" rows={2} placeholder={"don't call it a 'cheating' tool\nnever name a competitor"} value={f.avoid} onChange={e => set('avoid', e.target.value)} />
+        <label className="onb-label">Soft CTA <span className="muted tiny" style={{ fontWeight: 400 }}>· optional, used on link posts</span></label>
+        <input className="field" placeholder="e.g. try the free tier" value={f.cta} onChange={e => set('cta', e.target.value)} />
         <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
           <button className="mini" onClick={() => setStep(0)}>← Back</button>
           <button className="btn-primary btn-sm" onClick={() => setStep(2)}>Next →</button>
@@ -2342,7 +2365,15 @@ function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
             </button>
           ))}
         </div>
-        <label className="onb-label">Brief preview <span className="muted tiny" style={{ fontWeight: 400 }}>· this is what the agents read — edit freely</span></label>
+        <label className="onb-label">Platforms <span className="muted tiny" style={{ fontWeight: 400 }}>· which agents run it · none = any</span></label>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {CAMP_PLATFORMS.map(([k, l]) => <button key={k} type="button" className={'chip' + (f.platforms.includes(k) ? ' on' : '')} onClick={() => togglePlat(k)}><span className="status-dot" style={{ background: platformDot(k) }} />{l}</button>)}
+        </div>
+        <label className="onb-label">Link strategy</label>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {LINK_STRAT_OPTS.map(([k, l]) => <button key={k} type="button" className={'chip' + (f.linkStrategy === k ? ' on' : '')} onClick={() => set('linkStrategy', k)}>{l}</button>)}
+        </div>
+        <label className="onb-label">Brief preview <span className="muted tiny" style={{ fontWeight: 400 }}>· what the agents read — edit freely</span></label>
         <textarea className="field dp-grow" rows={3} value={brief} onChange={e => setOverride(e.target.value)} placeholder="Add a pitch or points in the previous step to see the brief." />
         <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
           <button className="mini" onClick={() => setStep(1)}>← Back</button>
@@ -2353,7 +2384,8 @@ function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
   )
 }
 
-function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent, onOpenAgent, onDraftCamp }) {
+function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent, onOpenAgent, onDraftCamp, onAssign, onUnassign }) {
+  const onCamp = (a, cid) => (a.campaign_ids || []).includes(cid) // many-to-many membership
   const [form, setForm] = useState(null)        // create-campaign draft
   const [busy, setBusy] = useState(false)
   const [manageFor, setManageFor] = useState(null) // campaign id with the crew panel open
@@ -2376,7 +2408,9 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
   // Accounts that could host a NEW agent.
   const freeX = xConns.filter(c => !c.is_primary && !agents.some(a => a.x_connection_id === c.id))
   const freeSocial = socialAccounts.filter(s => ['linkedin', 'instagram', 'tiktok'].includes(s.platform) && !agents.some(a => a.social_account_id === s.id))
-  const unassigned = agents.filter(a => !a.campaign_id)
+  // An agent is assignable to a campaign if it's not already on it (it can be on
+  // several). "Free" agents (on no campaign at all) are highlighted first.
+  const assignableTo = cid => agents.filter(a => !onCamp(a, cid))
 
   async function create() {
     setBusy(true)
@@ -2406,7 +2440,8 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
       )}
 
       {campaigns.map(c => {
-        const roster = agents.filter(a => a.campaign_id === c.id)
+        const roster = agents.filter(a => onCamp(a, c.id))
+        const m = c.metrics || {}
         const live = roster.reduce((n, a) => n + activityFor(posts, 'feeder_agent_id', a.id).live.length, 0)
         const pending = roster.reduce((n, a) => n + activityFor(posts, 'feeder_agent_id', a.id).pending.length, 0)
         return (
@@ -2439,7 +2474,9 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
                 {roster.slice(0, 6).map(a => <span key={a.id} title={a.persona?.name || a.name}><AgentAvatar agent={a} size={30} /></span>)}
                 <span className="facepile-add"><Plus size={13} /></span>
               </div>
-              <span className="camp2-stats"><b>{live}</b> posted · <b>{pending}</b> queued</span>
+              <span className="camp2-stats">{m.promo_posts != null
+                ? <><b>{fmtNum(m.promo_posts)}</b> promo · <b>{fmtNum(m.impressions || 0)}</b> impressions{m.clicks ? <> · <b>{fmtNum(m.clicks)}</b> clicks</> : ''}</>
+                : <><b>{live}</b> posted · <b>{pending}</b> queued</>}</span>
               <div className="row" style={{ gap: 4, marginLeft: 'auto' }}>
                 {INTENSITY_OPTS.map(([k, l, hint]) => (
                   <button key={k} className={'chip sm' + (c.intensity === k ? ' on' : '')} title={hint} onClick={() => onPatchCamp(c.id, { intensity: k })}>{l}</button>
@@ -2462,16 +2499,17 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
                             <span className="status-dot" style={{ background: platformDot(a.platform || 'x'), width: 6, height: 6 }} />
                             <span className="muted tiny" style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{handleOf(a) || '—'}{a.active ? '' : ' · off'}</span>
                           </div>
+                          {(a.campaign_ids || []).length > 1 && <span className="muted tiny" title="On other campaigns too">+{(a.campaign_ids || []).length - 1}</span>}
                           <RunNow running={a.running} onRun={() => onRunAgent(a.id)} />
-                          <button className="mini" title="Remove from campaign (agent keeps running)" onClick={() => onPatchAgent(a.id, { campaign_id: null })}><LX size={11} /></button>
+                          <button className="mini" title="Remove from this campaign (agent keeps running its others)" onClick={() => onUnassign(c.id, a.id)}><LX size={11} /></button>
                         </div>
                       )
                     })}
                     <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                      {unassigned.length > 0 && (
-                        <select className="field" style={{ width: 'auto', padding: '6px 10px', fontSize: 12.5 }} value="" onChange={e => e.target.value && onPatchAgent(e.target.value, { campaign_id: c.id }, 'Agent assigned to the mission')}>
-                          <option value="">Assign an agent…</option>
-                          {unassigned.map(a => <option key={a.id} value={a.id}>{(a.persona?.name || a.name)} · {a.platform || 'x'}</option>)}
+                      {assignableTo(c.id).length > 0 && (
+                        <select className="field" style={{ width: 'auto', padding: '6px 10px', fontSize: 12.5 }} value="" onChange={e => e.target.value && onAssign(c.id, [e.target.value])}>
+                          <option value="">Add an agent…</option>
+                          {assignableTo(c.id).map(a => <option key={a.id} value={a.id}>{(a.persona?.name || a.name)} · {a.platform || 'x'}{(a.campaign_ids || []).length ? ` (on ${(a.campaign_ids || []).length})` : ''}</option>)}
                         </select>
                       )}
                       {(freeX.length > 0 || freeSocial.length > 0) && (<>
@@ -2871,7 +2909,7 @@ function App({ session }) {
     catch {} finally { xStatsBusy.current = false }
   }, [authed])
   const loadAgents = useCallback(async () => { const r = await authed('/api/feeder-agents'); const d = await r.json(); setFeederAgents(d.agents || []) }, [authed])
-  const loadAgentCamps = useCallback(async () => { const r = await authed('/api/agent-campaigns'); const d = await r.json(); setAgentCampaigns(d.campaigns || []) }, [authed])
+  const loadAgentCamps = useCallback(async () => { const r = await authed('/api/agent-campaigns?metrics=1'); const d = await r.json(); setAgentCampaigns(d.campaigns || []) }, [authed])
   const loadTrends = useCallback(async () => { try { const r = await authed('/api/trends'); const d = await r.json(); setTrends(d.formats || []) } catch {} }, [authed])
   const loadAutopilot = useCallback(async () => { try { const r = await authed('/api/autopilot'); const d = await r.json(); setAutopilot(d.autopilot || []) } catch {} }, [authed])
 
@@ -3081,9 +3119,13 @@ function App({ session }) {
   }
   async function patchAgentCamp(id, patch, note) { await authed('/api/agent-campaigns', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); if (note) setBanner(note); loadAgentCamps() }
   async function deleteAgentCamp(id) {
-    if (!await askConfirm({ title: 'Delete campaign?', body: 'Its agents stay — they just stop promoting it.', confirmLabel: 'Delete', danger: true })) return
+    const n = feederAgents.filter(a => (a.campaign_ids || []).includes(id)).length
+    if (!await askConfirm({ title: 'End this campaign?', body: `${n ? `${n} agent${n === 1 ? '' : 's'} will be released from it. ` : ''}Its posts + performance history are kept.`, confirmLabel: 'End campaign', danger: true })) return
     await authed('/api/agent-campaigns', { method: 'DELETE', body: JSON.stringify({ id }) }); loadAgentCamps(); loadAgents()
   }
+  // Many-to-many assignment: an agent can be on several campaigns.
+  async function assignAgents(campaignId, agentIds) { await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify({ action: 'assign', campaign_id: campaignId, agent_ids: agentIds }) }); loadAgents(); loadAgentCamps() }
+  async function unassignAgent(campaignId, agentId) { await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify({ action: 'unassign', campaign_id: campaignId, agent_id: agentId }) }); loadAgents(); loadAgentCamps() }
 
   // Social (Instagram/TikTok/LinkedIn via Zernio)
   async function connectSocial(platform) {
@@ -3600,6 +3642,7 @@ function App({ session }) {
                 <div className="muted tiny" style={{ margin: '0 2px 12px' }}>Missions for your agents. Pick something to promote, deploy agents across platforms — each one works it into its own posting, in its own voice.</div>
                 <AgentCampaigns campaigns={agentCampaigns} agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts}
                   onSaveCamp={saveAgentCamp} onPatchCamp={patchAgentCamp} onDeleteCamp={deleteAgentCamp} onDraftCamp={draftAgentCamp}
+                  onAssign={assignAgents} onUnassign={unassignAgent}
                   onSpawn={spawnAgent} onPatchAgent={patchAgent} onRunAgent={runAgent} onOpenAgent={setAgentProfileId} />
               </>)}
 
