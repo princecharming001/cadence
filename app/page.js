@@ -3459,7 +3459,7 @@ function App({ session }) {
                       </AnimatePresence>
                     </div>
                   )})}
-                  {posted.filter(matchP).length > 0 && qPlatform !== 'instagram' && qPlatform !== 'tiktok' && <PostedSection posted={posted.filter(matchP)} />}
+                  {posted.filter(matchP).length > 0 && <PostedSection posted={posted.filter(matchP)} />}
                     </>)}
                 </>)
               })()}
