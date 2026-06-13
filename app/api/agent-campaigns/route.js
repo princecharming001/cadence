@@ -2,8 +2,10 @@
 // A campaign holds what to promote (product, link, brief, intensity); agents
 // carry it out in their own personas. CRUD only — agents run themselves.
 import { admin, getUser } from '@/lib/supabase'
+import { draftCampaignBrief } from '@/lib/campaign-brief'
 
 export const runtime = 'nodejs'
+export const maxDuration = 30 // the auto-draft fetches a URL + one LLM call
 
 const INTENSITIES = ['subtle', 'balanced', 'loud']
 
@@ -31,11 +33,18 @@ export async function GET(req) {
   return Response.json({ campaigns: (campaigns || []).map(c => ({ ...c, agent_ids: byCamp[c.id] || [] })) })
 }
 
-// POST { name, product, link?, brief?, intensity? } → create
+// POST { action:'draft', product?, link? } → AI-drafted brief (no DB write)
+// POST { name, product, link?, brief?, intensity? }   → create
 export async function POST(req) {
   const user = await getUser(req)
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
   const body = await req.json().catch(() => ({}))
+
+  if (body.action === 'draft') {
+    try { return Response.json({ draft: await draftCampaignBrief({ product: body.product, link: body.link }) }) }
+    catch (e) { return Response.json({ error: 'Could not draft that — fill it in manually.' }, { status: 200 }) }
+  }
+
   const patch = cleanCampaign(body)
   if (!patch.name || !patch.product) return Response.json({ error: 'Give the campaign a name and what to promote.' }, { status: 400 })
   const { data, error } = await admin.from('agent_campaigns')

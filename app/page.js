@@ -1659,8 +1659,111 @@ const INTENSITY_OPTS = [
   ['balanced', 'Balanced', 'about half'],
   ['loud', 'Loud', 'most posts'],
 ]
+const INTENSITY_DESC = {
+  subtle: 'A light touch — it comes up naturally about 1 in 4 posts.',
+  balanced: 'A steady drumbeat — woven into roughly half their posting.',
+  loud: 'Front and center — most posts orbit the mission.',
+}
 
-function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent, onOpenAgent }) {
+// Compose the structured brief inputs into the single line missionBlock reads.
+function composeBriefClient({ pitch, audience, keyPoints, avoid }) {
+  const pts = (keyPoints || '').split('\n').map(s => s.trim()).filter(Boolean)
+  const parts = []
+  if (pitch?.trim()) parts.push(pitch.trim())
+  if (audience?.trim()) parts.push(`Who it's for: ${audience.trim()}`)
+  if (pts.length) parts.push(`What lands: ${pts.join('; ')}`)
+  if (avoid?.trim()) parts.push(`Avoid: ${avoid.trim()}`)
+  return parts.join(' · ').slice(0, 600)
+}
+
+// ── Campaign onboarding — a clean 3-step brief so the agents promote with real
+// substance, not "idk the promo". Step 1: what + (optional) AI auto-draft from
+// the link. Step 2: the brief. Step 3: how hard to push + review. ─────────────
+function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
+  const [step, setStep] = useState(0)
+  const [busy, setBusy] = useState(false); const [drafting, setDrafting] = useState(false)
+  const [f, setF] = useState({ product: '', link: '', pitch: '', audience: '', keyPoints: '', avoid: '', intensity: 'balanced' })
+  const [override, setOverride] = useState(null) // manual edits to the composed brief
+  const set = (k, v) => { setF(s => ({ ...s, [k]: v })); setOverride(null) }
+  const canDraft = (f.product.trim() || f.link.trim()) && !drafting
+  const brief = override ?? composeBriefClient(f)
+
+  async function autodraft() {
+    if (!canDraft) return
+    setDrafting(true)
+    const d = await onDraft({ product: f.product, link: f.link })
+    setDrafting(false)
+    if (d && !d.error) {
+      setF(s => ({ ...s, product: d.product || s.product, pitch: d.pitch || '', audience: d.audience || '', keyPoints: (d.key_points || []).join('\n'), avoid: d.avoid || '' }))
+      setStep(1)
+    }
+  }
+  async function submit() {
+    const product = f.product.trim(); if (!product) return
+    setBusy(true)
+    const ok = await onCreate({
+      product, name: product.length > 42 ? product.slice(0, 42).trimEnd() + '…' : product,
+      link: f.link.trim() || null, brief, intensity: f.intensity, active: true,
+    })
+    setBusy(false)
+    if (ok) onCancel()
+  }
+
+  return (
+    <div className="card camp-onb">
+      <div className="onb-dots" style={{ marginBottom: 16 }}>{[0, 1, 2].map(i => <span key={i} className={'ob-dot' + (i <= step ? ' on' : '')} />)}</div>
+
+      {step === 0 && (<>
+        <div className="onb-q">What are the agents promoting?</div>
+        <input className="field" autoFocus placeholder="e.g. Cluey — the AI study copilot for students" value={f.product} onChange={e => set('product', e.target.value)} />
+        <input className="field" style={{ marginTop: 8 }} placeholder="Link (optional — paste it and I'll draft the brief)" value={f.link} onChange={e => set('link', e.target.value)} />
+        <button className="onb-draft" disabled={!canDraft} onClick={autodraft}>
+          {drafting ? <><Loader2 size={14} className="spin" /> Reading + drafting the brief…</> : <><Sparkles size={14} /> Draft the brief for me</>}
+        </button>
+        <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+          <button className="mini" onClick={onCancel}>Cancel</button>
+          <button className="btn-primary btn-sm" disabled={!f.product.trim()} onClick={() => setStep(1)}>Fill it in myself →</button>
+        </div>
+      </>)}
+
+      {step === 1 && (<>
+        <div className="onb-q">The brief <span className="muted tiny" style={{ fontWeight: 400 }}>· what the agents lean on</span></div>
+        <label className="onb-label">The pitch</label>
+        <input className="field" placeholder="One line: what it is and why it matters" value={f.pitch} onChange={e => set('pitch', e.target.value)} />
+        <label className="onb-label">Who it's for</label>
+        <input className="field" placeholder="e.g. CS students cramming for finals" value={f.audience} onChange={e => set('audience', e.target.value)} />
+        <label className="onb-label">What lands <span className="muted tiny" style={{ fontWeight: 400 }}>· one point per line</span></label>
+        <textarea className="field dp-grow" rows={3} placeholder={'cuts study time in half\nactually explains, doesn\'t just answer\nfree to start'} value={f.keyPoints} onChange={e => set('keyPoints', e.target.value)} />
+        <label className="onb-label">Anything to avoid <span className="muted tiny" style={{ fontWeight: 400 }}>· optional</span></label>
+        <input className="field" placeholder="e.g. don't call it a 'cheating' tool" value={f.avoid} onChange={e => set('avoid', e.target.value)} />
+        <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+          <button className="mini" onClick={() => setStep(0)}>← Back</button>
+          <button className="btn-primary btn-sm" onClick={() => setStep(2)}>Next →</button>
+        </div>
+      </>)}
+
+      {step === 2 && (<>
+        <div className="onb-q">How hard should they push it?</div>
+        <div className="onb-intensity">
+          {INTENSITY_OPTS.map(([k, l]) => (
+            <button key={k} className={'onb-int' + (f.intensity === k ? ' on' : '')} onClick={() => set('intensity', k)}>
+              <span className="onb-int-l">{l}</span>
+              <span className="onb-int-d">{INTENSITY_DESC[k]}</span>
+            </button>
+          ))}
+        </div>
+        <label className="onb-label">Brief preview <span className="muted tiny" style={{ fontWeight: 400 }}>· this is what the agents read — edit freely</span></label>
+        <textarea className="field dp-grow" rows={3} value={brief} onChange={e => setOverride(e.target.value)} placeholder="Add a pitch or points in the previous step to see the brief." />
+        <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+          <button className="mini" onClick={() => setStep(1)}>← Back</button>
+          <button className="btn-primary btn-sm" disabled={busy || !f.product.trim()} onClick={submit}>{busy ? <Loader2 size={13} className="spin" /> : 'Launch campaign'}</button>
+        </div>
+      </>)}
+    </div>
+  )
+}
+
+function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent, onOpenAgent, onDraftCamp }) {
   const [form, setForm] = useState(null)        // create-campaign draft
   const [busy, setBusy] = useState(false)
   const [manageFor, setManageFor] = useState(null) // campaign id with the crew panel open
@@ -1802,23 +1905,11 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
         )
       })}
 
-      {/* Create */}
+      {/* Create — guided onboarding */}
       {form ? (
-        <div className="card camp-form">
-          <input className="field" placeholder="What are the agents promoting?" value={form.product} onChange={e => setForm(f => ({ ...f, product: e.target.value, name: e.target.value.length > 42 ? e.target.value.slice(0, 42).trimEnd() + '…' : e.target.value }))} autoFocus />
-          <input className="field" style={{ marginTop: 8 }} placeholder="Link (optional)" value={form.link} onChange={e => setForm(f => ({ ...f, link: e.target.value }))} />
-          <div className="row" style={{ gap: 6, marginTop: 10 }}>
-            {INTENSITY_OPTS.map(([k, l, hint]) => (
-              <button key={k} className={'chip' + (form.intensity === k ? ' on' : '')} title={hint} onClick={() => setForm(f => ({ ...f, intensity: k }))}>{l}</button>
-            ))}
-          </div>
-          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-            <button className="mini" onClick={() => setForm(null)}>Cancel</button>
-            <button className="btn-primary btn-sm" disabled={busy || !form.product.trim()} onClick={create}>{busy ? <Loader2 size={13} className="spin" /> : 'Create campaign'}</button>
-          </div>
-        </div>
+        <CampaignOnboarding onCancel={() => setForm(null)} onCreate={onSaveCamp} onDraft={onDraftCamp} />
       ) : (
-        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginTop: 4 }} onClick={() => setForm({ name: '', product: '', link: '', brief: '', intensity: 'subtle' })}><Plus size={14} /> New campaign</button>
+        <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginTop: 4 }} onClick={() => setForm(true)}><Plus size={14} /> New campaign</button>
       )}
     </>
   )
@@ -2338,6 +2429,14 @@ function App({ session }) {
     if (d.error) { setBanner(d.error); return false }
     setBanner('Campaign created — deploy agents to it'); loadAgentCamps(); return true
   }
+  async function draftAgentCamp(body) {
+    try {
+      const r = await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify({ action: 'draft', ...body }) })
+      const d = await r.json()
+      if (d.draft && !d.draft.error) return d.draft
+      setBanner(d.draft?.error || d.error || 'Could not draft that — fill it in manually.'); return null
+    } catch { setBanner('Could not draft that — fill it in manually.'); return null }
+  }
   async function patchAgentCamp(id, patch, note) { await authed('/api/agent-campaigns', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); if (note) setBanner(note); loadAgentCamps() }
   async function deleteAgentCamp(id) {
     if (!confirm('Delete this campaign? Its agents stay — they just stop promoting it.')) return
@@ -2766,7 +2865,7 @@ function App({ session }) {
                 <AgentFleet agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts} onOpen={setAgentProfileId} />
                 <div className="muted tiny" style={{ margin: '0 2px 12px' }}>Missions for your agents. Pick something to promote, deploy agents across platforms — each one works it into its own posting, in its own voice.</div>
                 <AgentCampaigns campaigns={agentCampaigns} agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts}
-                  onSaveCamp={saveAgentCamp} onPatchCamp={patchAgentCamp} onDeleteCamp={deleteAgentCamp}
+                  onSaveCamp={saveAgentCamp} onPatchCamp={patchAgentCamp} onDeleteCamp={deleteAgentCamp} onDraftCamp={draftAgentCamp}
                   onSpawn={spawnAgent} onPatchAgent={patchAgent} onRunAgent={runAgent} onOpenAgent={setAgentProfileId} />
               </>)}
 
@@ -3449,6 +3548,20 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .camp2-stats b { color: var(--ink); font-weight: 700; }
 .camp2-manage { border-top: 1px dashed var(--line); margin-top: 12px; padding-top: 10px; }
 .chip.sm { padding: 3px 9px; font-size: 11px; }
+/* campaign onboarding — guided brief */
+.camp-onb { padding: 20px 20px 18px; margin-bottom: 12px; border-radius: 14px; }
+.onb-dots { display: flex; gap: 6px; }
+.onb-q { font-family: var(--serif); font-size: 18px; font-weight: 600; margin-bottom: 13px; line-height: 1.25; }
+.onb-label { display: block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 12px 0 6px; }
+.onb-draft { width: 100%; margin-top: 10px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 11px; border-radius: 10px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border: 1px dashed var(--accent-line); transition: .15s; }
+.onb-draft:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.onb-draft:disabled { opacity: .5; cursor: default; }
+.onb-intensity { display: flex; flex-direction: column; gap: 8px; }
+.onb-int { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 11px 14px; border-radius: 11px; border: 1px solid var(--line2); background: var(--surface); cursor: pointer; font-family: inherit; transition: .15s; }
+.onb-int:hover { border-color: var(--line-hover); }
+.onb-int.on { border-color: var(--accent); background: var(--accent-soft); }
+.onb-int-l { font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.onb-int-d { font-size: 11.5px; color: var(--muted); }
 /* chat platform-scope selector */
 .chat-scope { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-bottom: 9px; }
 .scope-chip { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--line2); border-radius: 999px; color: var(--muted); font-size: 11.5px; font-weight: 600; padding: 4px 10px; cursor: pointer; font-family: inherit; transition: .15s; white-space: nowrap; }
