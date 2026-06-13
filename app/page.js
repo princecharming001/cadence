@@ -2915,6 +2915,25 @@ function App({ session }) {
 
   useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps(); loadTrends(); loadAutopilot() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps, loadTrends, loadAutopilot])
 
+  // ── Coordinated state sync ──────────────────────────────────────────────────
+  // Every view derives from a shared set of lists. Mutations used to hand-pick
+  // which loader to call, so deleting a post (etc.) left badges, counts, agent
+  // stats and campaign metrics on OTHER tabs stale — and background cron changes
+  // (auto-published posts, agent output) never showed until a manual reload.
+  // refreshLive re-pulls everything that changes, and we run it after mutations,
+  // on a 20s poll, and whenever the tab regains focus — so the whole app stays
+  // consistent no matter where (or what) changed it.
+  const refreshLive = useCallback(() => {
+    loadQueue(); loadAutopilot(); loadAgents(); loadAgentCamps(); loadSlideshows(); loadSocialEng(); loadEngagement(); loadClips(); loadBrand()
+  }, [loadQueue, loadAutopilot, loadAgents, loadAgentCamps, loadSlideshows, loadSocialEng, loadEngagement, loadClips, loadBrand])
+  useEffect(() => {
+    const sync = () => { if (document.visibilityState === 'visible') refreshLive() }
+    const id = setInterval(sync, 20000)            // background-change safety net
+    document.addEventListener('visibilitychange', sync) // instant on tab return
+    window.addEventListener('focus', refreshLive)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', sync); window.removeEventListener('focus', refreshLive) }
+  }, [refreshLive])
+
   // Capture the browser timezone once, so smart scheduling thinks in THEIR time.
   useEffect(() => {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -3017,7 +3036,7 @@ function App({ session }) {
   async function runEngagementNow(id) {
     setBanner('Running engagement…'); loadEngagement()
     const poll = setInterval(loadEngagement, 1400)
-    try { await authed('/api/engagement', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }) } finally { clearInterval(poll); loadEngagement(); loadQueue() }
+    try { await authed('/api/engagement', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }) } finally { clearInterval(poll); loadEngagement(); refreshLive() }
   }
   async function openPortal() { const r = await authed('/api/stripe/portal', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Billing portal unavailable.') }
 
@@ -3050,7 +3069,7 @@ function App({ session }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [confirmReq]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function deleteEngagement(id) { if (!await askConfirm({ title: 'Delete engagement rule?', body: 'It stops finding and replying to niche posts.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); loadQueue() }
+  async function deleteEngagement(id) { if (!await askConfirm({ title: 'Delete engagement rule?', body: 'It stops finding and replying to niche posts.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/engagement', { method: 'DELETE', body: JSON.stringify({ id }) }); loadEngagement(); refreshLive() }
 
   // Feeder agents — payload is either a feeder connection id (X tab shorthand)
   // or a full body ({ social_account_id | x_connection_id, interests, campaign_id }).
@@ -3061,12 +3080,12 @@ function App({ session }) {
     if (d.error) { setBanner(d.error); return false }
     setBanner(`“${d.agent?.name || 'Agent'}” is ready — flip it on when you are`); loadAgents(); loadAgentCamps(); return true
   }
-  async function patchAgent(id, patch, note) { await authed('/api/feeder-agents', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); if (note) setBanner(note); loadAgents(); loadQueue() }
-  async function deleteAgent(id) { if (!await askConfirm({ title: 'Delete agent?', body: 'Its unpublished posts are removed too.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/feeder-agents', { method: 'DELETE', body: JSON.stringify({ id }) }); loadAgents(); loadQueue() }
+  async function patchAgent(id, patch, note) { await authed('/api/feeder-agents', { method: 'PATCH', body: JSON.stringify({ id, ...patch }) }); if (note) setBanner(note); loadAgents(); refreshLive() }
+  async function deleteAgent(id) { if (!await askConfirm({ title: 'Delete agent?', body: 'Its unpublished posts are removed too.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/feeder-agents', { method: 'DELETE', body: JSON.stringify({ id }) }); loadAgents(); refreshLive() }
   async function runAgent(id) {
     setBanner('Agent thinking…'); loadAgents()
     const poll = setInterval(loadAgents, 1500)
-    try { await authed('/api/feeder-agents', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }) } finally { clearInterval(poll); loadAgents(); loadQueue() }
+    try { await authed('/api/feeder-agents', { method: 'POST', body: JSON.stringify({ action: 'run', id }) }) } finally { clearInterval(poll); loadAgents(); refreshLive() }
   }
   async function rerollAgent(id) {
     setBanner('Reinventing the persona…')
@@ -3164,7 +3183,7 @@ function App({ session }) {
     setSuggesting(platform)
     const r = await authed('/api/suggest', { method: 'POST', body: JSON.stringify({ platform, n: 3 }) }); const d = await r.json()
     setSuggesting('')
-    if (d.error) setBanner(d.error); else { setBanner(`${d.posts?.length || 0} ${platform === 'x' ? 'X' : 'LinkedIn'} posts ready to approve`); loadQueue() }
+    if (d.error) setBanner(d.error); else { setBanner(`${d.posts?.length || 0} ${platform === 'x' ? 'X' : 'LinkedIn'} posts ready to approve`); refreshLive() }
   }
   async function addInspo(platform, handle) {
     const r = await authed('/api/inspiration', { method: 'POST', body: JSON.stringify({ platform, handle }) }); const d = await r.json()
@@ -3244,8 +3263,8 @@ function App({ session }) {
   }
   function openNew() { setCompose({ mode: 'new', platform: 'x', content: '', when: defaultWhen(defaultHour), imgOn: imgDefault, img: '', connId: xConns[0]?.id || '', personal: false }) }
   function openSchedule(p) { setCompose({ mode: p.status === 'draft' ? 'draft' : 'edit', id: p.id, platform: p.platform || 'x', content: p.content, when: toLocalInput(new Date(p.scheduled_for)), imgOn: !!p.image_url, img: p.image_url || '', connId: p.x_connection_id || xConns[0]?.id || '', personal: false }) }
-  async function saveEdit(id, content) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, content }) }); loadQueue() }
-  async function pausePost(id) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, status: 'paused' }) }); setBanner('Held — it won’t go out until you resume it'); loadQueue() }
+  async function saveEdit(id, content) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, content }) }); refreshLive() }
+  async function pausePost(id) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, status: 'paused' }) }); setBanner('Held — it won’t go out until you resume it'); refreshLive() }
   async function composeGenImg() {
     setCompose(c => ({ ...c, imgBusy: true }))
     const r = await authed('/api/image', { method: 'POST', body: JSON.stringify({ prompt: compose.content || 'social post', fromContent: true, personal: !!compose.personal, seed: Math.floor(Math.random() * 1e5) }) })
@@ -3266,14 +3285,14 @@ function App({ session }) {
       }
       if (postNow && id) { const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id, action: 'post_now' }) }); const d = await r.json(); setBanner(d.status === 'posted' ? `Posted as @${d.as}` : `Saved to Queue — couldn't post now: ${d.error || 'error'}`) }
       else setBanner('Added to queue')
-      setCompose(null); loadQueue()
+      setCompose(null); refreshLive()
     } finally { setComposeBusy(false) }
   }
-  async function delPost(id) { if (!await askConfirm({ title: 'Delete post?', confirmLabel: 'Delete', danger: true })) return; await authed('/api/posts', { method: 'DELETE', body: JSON.stringify({ id }) }); loadQueue() }
+  async function delPost(id) { if (!await askConfirm({ title: 'Delete post?', confirmLabel: 'Delete', danger: true })) return; await authed('/api/posts', { method: 'DELETE', body: JSON.stringify({ id }) }); refreshLive() }
   async function postNow(id) {
     setBanner('Posting…')
     const r = await authed('/api/posts', { method: 'POST', body: JSON.stringify({ id, action: 'post_now' }) }); const d = await r.json()
-    setBanner(d.status === 'posted' ? `Posted as @${d.as}` : `Failed: ${d.error || 'error'}`); loadQueue(); if (d.reconnect) loadX()
+    setBanner(d.status === 'posted' ? `Posted as @${d.as}` : `Failed: ${d.error || 'error'}`); refreshLive(); if (d.reconnect) loadX()
   }
   async function startCheckout(plan, interval, seats) {
     const r = await authed('/api/stripe/checkout', { method: 'POST', body: JSON.stringify({ plan, interval, seats }) })
@@ -3333,7 +3352,7 @@ function App({ session }) {
       const data = await res.json()
       const proposals = Array.isArray(data.proposals) ? data.proposals : (data.proposal ? [data.proposal] : [])
       const withReply = [...next, { role: 'assistant', content: data.reply, proposals }]
-      setMessages(withReply); saveChat(withReply); loadQueue()
+      setMessages(withReply); saveChat(withReply); refreshLive()
     }
     catch (e) { setMessages(p => [...p, { role: 'assistant', content: '⚠️ ' + e.message }]) } finally { setLoading(false) }
   }
@@ -3485,6 +3504,8 @@ function App({ session }) {
 
                 {(() => {
                   const ap = apFor('x')
+                  // LIVE count from the shared queue (never a stale snapshot string)
+                  const xQueued = posts.filter(p => (p.platform || 'x') === 'x' && ['queued', 'posting'].includes(p.status)).length
                   const arOn = !!engSettings.find(s => s.platform === 'x')?.enabled
                   const engRule = engRules.find(r => r.active) || engRules[0]
                   const liveCamps = campsTouching(['x']).filter(c => c.active).length
@@ -3500,7 +3521,7 @@ function App({ session }) {
                     </Section>
 
                     {/* Autopilot — hands-free; toggle gated behind brand onboarding */}
-                    <Section title="Autopilot" hint="run your account hands-free" badge={ap.enabled && ap.status_detail ? <span className="muted tiny">{ap.status_detail}</span> : null}
+                    <Section title="Autopilot" hint="run your account hands-free" badge={ap.enabled ? <span className="muted tiny">{ap.running ? 'writing…' : `${xQueued} queued`}</span> : null}
                       toggle={{ on: ap.enabled, onChange: v => { if (v && !brandOnboarded) setBrandOnb('x'); else patchAutopilot('x', { enabled: v }) } }}>
                       <AutopilotBody row={ap} onToggle={patch => patchAutopilot('x', patch)} onEditBrief={() => setBrandOnb('x')} />
                     </Section>
@@ -3612,7 +3633,7 @@ function App({ session }) {
                     <CrossCampHint plats={['linkedin']} />
                   </Section>
 
-                  <Section title="Autopilot" hint="run your account hands-free" badge={ap.enabled && ap.status_detail ? <span className="muted tiny">{ap.status_detail}</span> : null}
+                  <Section title="Autopilot" hint="run your account hands-free" badge={ap.enabled ? <span className="muted tiny">{ap.running ? 'writing…' : `${queue.filter(p => p.platform === 'linkedin' && ['queued', 'posting'].includes(p.status)).length} queued`}</span> : null}
                     toggle={{ on: ap.enabled, onChange: v => { if (v && !brandOnboarded) setBrandOnb('linkedin'); else patchAutopilot('linkedin', { enabled: v }) } }}>
                     <AutopilotBody row={ap} onToggle={patch => patchAutopilot('linkedin', patch)} onEditBrief={() => setBrandOnb('linkedin')} />
                   </Section>
