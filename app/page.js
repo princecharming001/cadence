@@ -3441,8 +3441,8 @@ function App({ session }) {
                         <span className="status-dot" style={{ background: platformDot(s._platforms?.[0] || 'instagram'), flex: 'none' }} />
                         {s.image_urls?.[0] && <img src={s.image_urls[0]} className="ss-thumb" alt="" />}
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className="conn-title row" style={{ gap: 7 }}>{s.title || s.topic}<span className={'camp-state' + (s.status === 'failed' ? '' : ' on')}>{s.status}</span></div>
-                          <div className="muted tiny">{s.image_urls?.length || 0}-slide carousel{s._platforms?.length ? ' · ' + s._platforms.join(', ') : ''} · {s.style}{s.scheduled_for ? ` · ${fmt(s.scheduled_for)}` : ''}{s.error ? ` · ${s.error}` : ''}</div>
+                          <div className="conn-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{titleOf(s.title || s.topic)}</div>
+                          <div className="muted tiny" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.status === 'failed' ? <span style={{ color: '#B3372F' }}>Failed — {s.error || 'see Slideshows'} · </span> : s.status === 'posting' ? 'Posting · ' : ''}{s.image_urls?.length || 0} slides · {s._platforms?.[0] || 'instagram'} · {s.scheduled_for ? fmt(s.scheduled_for) : s.style}</div>
                         </div>
                         {canEdit && <button className="mini" onClick={() => editing ? setSsEdit(null) : setSsEdit({ id: s.id, when: toLocalInput(new Date(s.scheduled_for)) })}><Clock size={12} /> {editing ? 'Close' : 'Reschedule'}</button>}
                         {s.status !== 'posted' && <button className="mini danger" onClick={() => deleteSlideshow(s.id)}><Trash2 size={12} /></button>}
