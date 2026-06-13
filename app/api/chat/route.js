@@ -8,6 +8,7 @@ import { generateSlideshow } from '@/lib/slideshow'
 import { createPost, zernioEnabled } from '@/lib/zernio'
 import { runSocialEngagement, SOCIAL_ENGAGEMENT_PLATFORMS } from '@/lib/social-engagement'
 import { analyzeViralVideo, analyzeViralText, trendingBlock } from '@/lib/trends'
+import { runTrendHarvest } from '@/lib/trends-harvest'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -219,6 +220,14 @@ const tools = [
     name: 'run_agent',
     description: 'Run a feeder agent\'s think-post cycle right now. Output lands as drafts (or queued when the agent is autonomous).',
     input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'find_trends',
+    description: "Scan the user's niche for what's going viral RIGHT NOW (Instagram/TikTok via scraping, plus active ad formats) and reverse-engineer the top formats into the library. Use when the user asks 'what's trending', 'find viral formats', 'what's working on TikTok', etc. Takes ~1-2 min. Costs a small scraping fee.",
+    input_schema: {
+      type: 'object',
+      properties: { platforms: { type: 'array', items: { type: 'string', enum: ['tiktok', 'instagram'] }, description: 'Which to scan (default both).' } },
+    },
   },
   {
     name: 'learn_trend',
@@ -477,6 +486,13 @@ async function executeTool(name, input, userId) {
       return await runFeederAgentById(input.id, userId)
     }
 
+    case 'find_trends': {
+      try {
+        const summary = await runTrendHarvest(userId, { platforms: Array.isArray(input.platforms) && input.platforms.length ? input.platforms : ['tiktok', 'instagram'], deepN: 3 })
+        return { summary, note: 'Saved to your formats. Video formats map to a clip render style; text/ad patterns feed your drafts.' }
+      } catch (e) { return { error: String(e.message || 'Harvest failed.').slice(0, 180) } }
+    }
+
     case 'learn_trend': {
       try {
         if (input.url && /^https?:\/\//.test(String(input.url)) && /(tiktok|instagram|youtube|youtu\.be|\.mp4)/i.test(String(input.url))) {
@@ -602,7 +618,7 @@ Cross-platform powers (use the tools, don't just explain — the ENTIRE product 
 - list_agents / set_agent / run_agent: see and manage the user's feeder agents (autonomous personas on their other accounts) — activate, pause, make autonomous, assign to campaigns, run a cycle now.
 - create_feeder_campaign: launch a promotion mission the agents weave into their own posting ("launch a feeder campaign promoting X").
 - create_promo_campaign: a recurring promo on the user's OWN accounts (their voice, their primary accounts, on a cadence).
-- learn_trend: study a viral reel/post (link or pasted text) — reverse-engineers its hook/editing format; text hook patterns then feed the user's own drafts.
+- find_trends: scan the niche for what's going viral now (IG/TikTok + ad formats) and bank the top formats. learn_trend: study one viral reel/post the user pastes — reverse-engineers its hook/editing format; text hook patterns then feed the user's own drafts.
 After any action, confirm what happened in one or two sentences. Never invent results — only report what tools returned.
 
 ${CHAT_STYLE}

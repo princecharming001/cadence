@@ -1299,6 +1299,44 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
   )
 }
 
+// ── Trend formats — what's working now, reverse-engineered into reusable
+// patterns. Video formats carry a render-style badge (use it on a clip);
+// text/ad patterns feed generation automatically. ───────────────────────────
+const RENDER_LABEL = { captions: 'Captions', cold_open: 'Cold open', sludge: 'Sludge split', tweet: 'Tweet quote', thread: 'Thread', reddit: 'Reddit story' }
+function TrendFormats({ platform, formats, busy, canScan, onScan, onDelete }) {
+  const mine = formats.filter(f => f.platform === platform || (platform === 'instagram' && f.platform === 'meta_ads'))
+  const isVideo = platform === 'instagram' || platform === 'tiktok'
+  return (
+    <>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+        <span className="muted tiny">{mine.length ? `${mine.length} format${mine.length === 1 ? '' : 's'} banked` : 'Nothing banked yet'}</span>
+        {canScan
+          ? <button className="mini accent" disabled={busy} onClick={onScan}>{busy ? <><Loader2 size={11} className="spin" /> Scanning…</> : <><RefreshCw size={11} /> Scan {platform === 'tiktok' ? 'TikTok' : 'Instagram'} now</>}</button>
+          : <span className="muted tiny">Paste a post link in chat to learn one</span>}
+      </div>
+      {mine.length === 0 && <div className="muted tiny" style={{ padding: '2px 0 4px' }}>{isVideo ? 'Scan to reverse-engineer the top viral formats in your niche — each maps to a clip style you can apply.' : 'Ask the chat to “study this post” with a link, or scan a platform — winning hook patterns feed your drafts automatically.'}</div>}
+      {mine.map(f => (
+        <div className="trend-card card" key={f.id}>
+          <div className="row" style={{ justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+            <div style={{ minWidth: 0 }}>
+              <div className="trend-name">{f.name}</div>
+              {f.summary && <div className="muted tiny" style={{ marginTop: 2, lineHeight: 1.5 }}>{f.summary.slice(0, 150)}</div>}
+            </div>
+            <button className="hist-del" title="Forget this format" onClick={() => onDelete(f.id)}><Trash2 size={12} /></button>
+          </div>
+          {f.pattern && <div className="trend-pattern">{f.pattern.slice(0, 220)}</div>}
+          <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            {f.render_style && RENDER_LABEL[f.render_style] && <span className="trend-badge render"><Wand2 size={10} /> {RENDER_LABEL[f.render_style]}</span>}
+            {f.kind === 'ad' && <span className="trend-badge ad">Ad format</span>}
+            {f.metrics?.views ? <span className="trend-badge">{fmtNum(f.metrics.views)} views</span> : null}
+            {f.example_url && <a className="trend-badge link" href={f.example_url} target="_blank" rel="noreferrer">source ↗</a>}
+          </div>
+        </div>
+      ))}
+    </>
+  )
+}
+
 // "Ready to post" — AI-drafted posts for this platform, waiting for one-tap
 // approval. The heart of each content tab: open the tab, see posts ready to go.
 function Suggestions({ platform, drafts, busy, canPost, onGenerate, onPostNow, onSchedule, onDiscard }) {
@@ -2233,6 +2271,7 @@ function App({ session }) {
   const [agentCampaigns, setAgentCampaigns] = useState([])
   const [chatList, setChatList] = useState([]); const [historyOpen, setHistoryOpen] = useState(false)
   const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
+  const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
   const chatIdRef = useRef(null) // current saved-chat id; null until first save
   const inputRef = useRef(null); const bottomRef = useRef(null)
   const [leftPct, setLeftPct] = useState(47); const colsRef = useRef(null); const [dragging, setDragging] = useState(false)
@@ -2278,7 +2317,7 @@ function App({ session }) {
   const loadAgents = useCallback(async () => { const r = await authed('/api/feeder-agents'); const d = await r.json(); setFeederAgents(d.agents || []) }, [authed])
   const loadAgentCamps = useCallback(async () => { const r = await authed('/api/agent-campaigns'); const d = await r.json(); setAgentCampaigns(d.campaigns || []) }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps(); loadTrends() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps, loadTrends])
 
   // Capture the browser timezone once, so smart scheduling thinks in THEIR time.
   useEffect(() => {
@@ -2430,6 +2469,19 @@ function App({ session }) {
     if (d.error) { setBanner(d.error); return false }
     setBanner('Campaign created — deploy agents to it'); loadAgentCamps(); return true
   }
+  const loadTrends = useCallback(async () => {
+    try { const r = await authed('/api/trends'); const d = await r.json(); setTrends(d.formats || []) } catch {}
+  }, [authed])
+  async function scanTrends(platform) {
+    setScanning(platform)
+    try {
+      const r = await authed('/api/trends', { method: 'POST', body: JSON.stringify({ action: 'harvest', platforms: [platform], deepN: 3 }) })
+      const d = await r.json()
+      if (d.error) setBanner(d.error)
+      else { const n = d.summary?.formats || 0; setBanner(n ? `Banked ${n} ${platform} format${n === 1 ? '' : 's'}` : `Scanned ${platform} — nothing new this round`); loadTrends() }
+    } catch { setBanner('Scan failed — try again.') } finally { setScanning('') }
+  }
+  async function deleteTrend(id) { await authed('/api/trends', { method: 'DELETE', body: JSON.stringify({ id }) }); loadTrends() }
   async function draftAgentCamp(body) {
     try {
       const r = await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify({ action: 'draft', ...body }) })
@@ -2767,6 +2819,9 @@ function App({ session }) {
                 <Section title="Feeder agents" hint="autonomous personas on your other accounts" badge={<OnBadge on={feederAgents.some(a => a.active)} />}>
                   <FeederAgents agents={feederAgents} xConns={xConns} posts={posts} campaigns={agentCampaigns} onSpawn={spawnAgent} onPatch={patchAgent} onDelete={deleteAgent} onRun={runAgent} onReroll={rerollAgent} />
                 </Section>
+                <Section title="What's working now" hint="viral hook patterns feed your drafts" badge={trends.filter(f => f.platform === 'x').length ? <span className="camp-state on">{trends.filter(f => f.platform === 'x').length}</span> : null}>
+                  <TrendFormats platform="x" formats={trends} canScan={false} onDelete={deleteTrend} />
+                </Section>
                 <div style={{ marginTop: 14 }}>
                   <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
                     onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
@@ -2823,6 +2878,9 @@ function App({ session }) {
                       <PlatformCampaign campaigns={campsFor([plat])} targets={platCampTargets} supportsCarousel canCreate={platCampTargets.length > 0} connectHint={`Connect ${platLabel} first (accounts, bottom-right).`} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
                       <CrossCampHint plats={[plat]} />
                     </Section>
+                    <Section title="What's working now" hint="viral formats in your niche → clip styles" defaultOpen badge={trends.filter(f => f.platform === plat).length ? <span className="camp-state on">{trends.filter(f => f.platform === plat).length}</span> : null}>
+                      <TrendFormats platform={plat} formats={trends} busy={scanning === plat} canScan onScan={() => scanTrends(plat)} onDelete={deleteTrend} />
+                    </Section>
                   </div>
                 </>)
               })()}
@@ -2851,6 +2909,9 @@ function App({ session }) {
                 <Section title="Campaign" hint="promote a topic on a schedule" badge={<OnBadge on={campsTouching(['linkedin']).some(c => c.active)} />}>
                   <PlatformCampaign campaigns={campsFor(['linkedin'])} targets={liCampTargets} canCreate={!!liAccount} connectHint="Connect LinkedIn first (accounts, bottom-right)." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
                   <CrossCampHint plats={['linkedin']} />
+                </Section>
+                <Section title="What's working now" hint="viral hook patterns feed your drafts" badge={trends.filter(f => f.platform === 'linkedin').length ? <span className="camp-state on">{trends.filter(f => f.platform === 'linkedin').length}</span> : null}>
+                  <TrendFormats platform="linkedin" formats={trends} canScan={false} onDelete={deleteTrend} />
                 </Section>
 
                 <div style={{ marginTop: 14 }}>
@@ -3563,6 +3624,15 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .onb-int.on { border-color: var(--accent); background: var(--accent-soft); }
 .onb-int-l { font-size: 13.5px; font-weight: 700; color: var(--ink); }
 .onb-int-d { font-size: 11.5px; color: var(--muted); }
+/* trend formats — what's working now */
+.trend-card { padding: 12px 14px; margin-bottom: 8px; }
+.trend-name { font-weight: 700; font-size: 13.5px; }
+.trend-pattern { font-size: 12px; color: var(--body); background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 8px; line-height: 1.5; white-space: pre-wrap; }
+.trend-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--bg2); border: 1px solid var(--line2); color: var(--muted); }
+.trend-badge.render { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+.trend-badge.ad { background: var(--gold-soft); border-color: var(--gold-line); color: var(--gold); }
+.trend-badge.link { text-decoration: none; cursor: pointer; }
+.trend-badge.link:hover { color: var(--accent-text); border-color: var(--accent-line); }
 /* chat platform-scope selector */
 .chat-scope { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-bottom: 9px; }
 .scope-chip { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--line2); border-radius: 999px; color: var(--muted); font-size: 11.5px; font-weight: 600; padding: 4px 10px; cursor: pointer; font-family: inherit; transition: .15s; white-space: nowrap; }

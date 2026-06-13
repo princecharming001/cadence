@@ -5,6 +5,7 @@
 //   DELETE {id}        → forget a format
 import { admin, getUser } from '@/lib/supabase'
 import { analyzeViralVideo, analyzeViralText } from '@/lib/trends'
+import { runTrendHarvest } from '@/lib/trends-harvest'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // video download + transcription + vision
@@ -24,6 +25,10 @@ export async function POST(req) {
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
   try {
+    if (b.action === 'harvest') {
+      const summary = await runTrendHarvest(user.id, { platforms: b.platforms, deepN: Math.min(Math.max(Number(b.deepN) || 3, 1), 5) })
+      return Response.json({ summary })
+    }
     if (b.url && /^https?:\/\//.test(String(b.url))) {
       const format = await analyzeViralVideo(String(b.url), { userId: user.id, platform: b.platform })
       return Response.json({ format })
