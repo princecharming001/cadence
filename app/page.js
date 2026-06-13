@@ -1118,8 +1118,20 @@ function FloatingAccounts({ glyph, count, label, children }) {
 // Compact stat tiles (e.g. followers / following / posts).
 const fmtNum = n => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(n)
 function StatTiles({ tiles, vertical }) {
+  // Vertical (X tab, beside the brain): one calm panel with hairline rows —
+  // not three boxy tiles with heavy top bars.
+  if (vertical) return (
+    <div className="stat-col card">
+      {tiles.map((t, i) => (
+        <div className="stat-col-row" key={i}>
+          <span className="stat-col-num">{t.value}</span>
+          <span className="stat-col-lbl">{t.label}</span>
+        </div>
+      ))}
+    </div>
+  )
   return (
-    <div className={'stat-tiles' + (vertical ? ' vertical' : '')}>
+    <div className="stat-tiles">
       {tiles.map((t, i) => (
         <div className="stat-tile" key={i}>
           <div className="stat-num">{t.value}</div>
@@ -3996,9 +4008,12 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .phead { display: flex; gap: 12px; height: 190px; margin-bottom: 14px; }
 .phead-brain { flex: 1.7; min-width: 0; border-radius: 14px; overflow: hidden; }
 .phead-brain .brain-stage { height: 100% !important; margin-bottom: 0 !important; border-radius: 14px; }
-.phead .stat-tiles.vertical { flex: 1; min-width: 130px; height: 100%; }
-.stat-tiles.vertical { display: flex; flex-direction: column; gap: 8px; margin: 0; }
-.stat-tiles.vertical .stat-tile { flex: 1; display: flex; flex-direction: column; justify-content: center; text-align: left; padding: 10px 14px; }
+.phead .stat-col { flex: 1; min-width: 144px; }
+.stat-col { height: 100%; display: flex; flex-direction: column; padding: 0; border-radius: 14px; overflow: hidden; }
+.stat-col-row { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 0 18px; border-top: 1px solid var(--line); }
+.stat-col-row:first-child { border-top: none; }
+.stat-col-num { font-family: var(--serif); font-size: 25px; font-weight: 600; line-height: 1; letter-spacing: -0.01em; color: var(--ink); }
+.stat-col-lbl { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
 /* autopilot / engage cadence row + stepper + edit-brief link */
 .ap-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
 .ap-rowlabel { font-size: 13px; font-weight: 600; color: var(--ink); }
