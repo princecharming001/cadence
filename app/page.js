@@ -1152,7 +1152,7 @@ function BrandOnboarding({ initial, busy, onSave, onClose }) {
   function submit() {
     onSave({
       brief: { positioning: f.positioning.trim(), audience: f.audience.trim(), pillars: f.pillars.split('\n').map(s => s.trim()).filter(Boolean).slice(0, 5), tone: f.tone, goal: f.goal, avoid: f.avoid.trim() },
-      cadence: { per_run: Number(f.per_run), comments_per_day: Number(f.comments_per_day), interval_hours: Number(f.interval_hours) },
+      cadence: { per_run: Number(f.per_run), interval_hours: 24 },
     })
   }
   return (
@@ -1185,10 +1185,9 @@ function BrandOnboarding({ initial, busy, onSave, onClose }) {
           <label className="onb-label">What's the goal?</label>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>{GOAL_OPTS.map(g => <button key={g} type="button" className={'chip' + (f.goal === g ? ' on' : '')} onClick={() => set('goal', g)}>{g}</button>)}</div>
           <label className="onb-label">How often</label>
-          <div className="ap-grid">
-            <label className="camp-num"><input type="number" min={1} max={3} className="field" value={f.per_run} onChange={e => set('per_run', e.target.value)} /> posts /</label>
-            <label className="camp-num"><input type="number" min={0} max={20} className="field" value={f.comments_per_day} onChange={e => set('comments_per_day', e.target.value)} /> comments</label>
-            <label className="camp-num">every <input type="number" min={1} className="field" value={f.interval_hours} onChange={e => set('interval_hours', e.target.value)} /> h</label>
+          <div className="ap-row">
+            <span className="ap-rowlabel">Posts per day</span>
+            <Stepper value={Number(f.per_run) || 1} min={1} max={3} onChange={v => set('per_run', v)} />
           </div>
           <label className="onb-label">Anything to avoid <span className="muted tiny" style={{ fontWeight: 400 }}>· optional</span></label>
           <input className="field" placeholder="e.g. politics, dunking on competitors" value={f.avoid} onChange={e => set('avoid', e.target.value)} />
@@ -1199,19 +1198,29 @@ function BrandOnboarding({ initial, busy, onSave, onClose }) {
   )
 }
 
-// ── Autopilot body — the cadence settings. The on/off toggle lives in the
-// section header (gated behind brand onboarding). Runs the account hands-free:
-// posts AND niche comments in the user's voice, no campaign needed.
+// ── Stepper — compact − value + control for small counts (posts/day, etc.)
+function Stepper({ value, min = 1, max = 9, onChange }) {
+  return (
+    <div className="stepper">
+      <button type="button" onClick={() => onChange(Math.max(min, value - 1))} disabled={value <= min} aria-label="Fewer">−</button>
+      <span className="stepper-val">{value}</span>
+      <button type="button" onClick={() => onChange(Math.min(max, value + 1))} disabled={value >= max} aria-label="More">+</button>
+    </div>
+  )
+}
+
+// ── Autopilot body — cadence settings. The on/off toggle (in the section
+// header) IS the autopost switch — when on, Cadence writes AND publishes. No
+// second toggle. Comments live under Engage. Gated behind brand onboarding.
 function AutopilotBody({ row, onToggle, onEditBrief }) {
+  const perDay = row.per_run || 1
   return (
     <>
-      <div className="muted tiny" style={{ marginBottom: 10 }}>Cadence runs your account in your voice — writes posts and joins conversations on a schedule.{row?.enabled && row?.status_detail ? ` · ${row.status_detail}` : ''}</div>
-      <div className="ap-grid">
-        <label className="camp-num"><input type="number" min={1} max={3} className="field" value={row.per_run} onChange={e => onToggle({ per_run: e.target.value })} /> posts /</label>
-        <label className="camp-num"><input type="number" min={0} max={20} className="field" value={row.comments_per_day ?? 0} onChange={e => onToggle({ comments_per_day: e.target.value })} /> comments</label>
-        <label className="camp-num">every <input type="number" min={1} className="field" value={row.interval_hours} onChange={e => onToggle({ interval_hours: e.target.value })} /> h</label>
+      <div className="muted tiny" style={{ marginBottom: 12 }}>Writes posts in your voice and publishes them across your best times.{row?.enabled && row?.status_detail ? ` · ${row.status_detail}` : ''}</div>
+      <div className="ap-row">
+        <span className="ap-rowlabel">Posts per day</span>
+        <Stepper value={perDay} min={1} max={3} onChange={v => onToggle({ per_run: v, interval_hours: 24 })} />
       </div>
-      <label className="row" style={{ gap: 7, fontSize: 12.5, marginTop: 10 }} title={row.auto_post ? 'Schedules into your smart slots automatically' : 'Leaves drafts for you to approve'}><Toggle on={!!row.auto_post} onChange={v => onToggle({ auto_post: v })} /> {row.auto_post ? 'Posts automatically' : 'Holds drafts for review'}</label>
       <button className="ap-edit" onClick={onEditBrief}>Edit your brand brief →</button>
     </>
   )
@@ -1612,7 +1621,11 @@ function EngageBody({ rule, xReadEnabled, posts, onPatch }) {
   return (
     <>
       {!rule?.id && <div className="muted tiny" style={{ marginBottom: 8 }}>Turn it on, then add what to watch.</div>}
-      <label className="ob-label" style={{ marginTop: 0 }}>Keywords <span className="muted tiny" style={{ fontWeight: 400 }}>· enter to add</span></label>
+      <div className="ap-row">
+        <span className="ap-rowlabel">Replies per day</span>
+        <Stepper value={rule?.replies_per_run || 4} min={1} max={12} onChange={v => rule?.id && onPatch(rule.id, { replies_per_run: v })} />
+      </div>
+      <label className="ob-label">Keywords <span className="muted tiny" style={{ fontWeight: 400 }}>· enter to add</span></label>
       <TagInput value={kw} onChange={setKwSaved} placeholder="AI agents, indie hacking…" max={8} />
       <label className="ob-label">Accounts to always reply to <span className="muted tiny" style={{ fontWeight: 400 }}>· up to 5</span></label>
       <TagInput value={handles} onChange={setHandlesSaved} placeholder="@handle…" max={5} prefix="@" />
@@ -3121,8 +3134,7 @@ function App({ session }) {
 
                     {/* Auto-reply — replies to comments on your posts (after a human pause) */}
                     <Section title="Auto-reply" hint="reply to comments on your posts" toggle={{ on: arOn, onChange: v => toggleReplies('x', { enabled: v }) }}>
-                      <div className="muted tiny" style={{ marginBottom: 6 }}>{arOn ? 'Replies automatically — after a natural 30–90s pause so it never reads as a bot.' : 'Off — turn on to reply to comments in your voice.'}</div>
-                      <div className="row" style={{ justifyContent: 'flex-end' }}><button className="mini" disabled={!connected} onClick={() => runReplies('x')}><RefreshCw size={11} /> Check now</button></div>
+                      <div className="muted tiny" style={{ marginBottom: 4 }}>{arOn ? 'Cadence checks for new comments on a schedule and replies automatically — after a natural 30–90s pause so it never reads as a bot.' : 'Off — turn on to reply to comments in your voice.'}</div>
                       <RepliesFeed posts={posts} platform="x" source="reply" />
                     </Section>
 
@@ -3987,10 +3999,14 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .phead .stat-tiles.vertical { flex: 1; min-width: 130px; height: 100%; }
 .stat-tiles.vertical { display: flex; flex-direction: column; gap: 8px; margin: 0; }
 .stat-tiles.vertical .stat-tile { flex: 1; display: flex; flex-direction: column; justify-content: center; text-align: left; padding: 10px 14px; }
-/* autopilot 3-up cadence grid + edit-brief link */
-.ap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
-.ap-grid .camp-num { font-size: 12px; }
-.ap-grid .camp-num .field { width: 52px; }
+/* autopilot / engage cadence row + stepper + edit-brief link */
+.ap-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
+.ap-rowlabel { font-size: 13px; font-weight: 600; color: var(--ink); }
+.stepper { display: inline-flex; align-items: center; gap: 2px; background: var(--bg2); border: 1px solid var(--line2); border-radius: 9px; padding: 2px; }
+.stepper button { width: 28px; height: 26px; border: none; background: none; border-radius: 7px; color: var(--muted); font-size: 17px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.stepper button:hover:not(:disabled) { background: var(--surface); color: var(--ink); }
+.stepper button:disabled { opacity: .35; cursor: default; }
+.stepper-val { min-width: 26px; text-align: center; font-size: 14px; font-weight: 700; color: var(--ink); }
 .ap-edit { margin-top: 12px; background: none; border: none; padding: 0; color: var(--accent-text); font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .ap-edit:hover { color: var(--accent-deep); }
 /* calendar: clickable cells + day detail panel */
