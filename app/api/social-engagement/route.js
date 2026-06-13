@@ -31,7 +31,10 @@ export async function PATCH(req) {
   if (!SOCIAL_ENGAGEMENT_PLATFORMS.includes(b.platform)) return Response.json({ error: 'Bad platform' }, { status: 400 })
   const patch = {}
   for (const k of ['enabled', 'auto_post', 'instructions']) if (k in b) patch[k] = b[k]
-  await admin.from('social_engagement').update(patch).eq('user_id', user.id).eq('platform', b.platform)
+  // The tab's Auto-reply is a single on/off — enabling it means "reply
+  // automatically", so default auto_post on unless the caller said otherwise.
+  if (patch.enabled === true && !('auto_post' in b)) patch.auto_post = true
+  await admin.from('social_engagement').upsert({ user_id: user.id, platform: b.platform, ...patch }, { onConflict: 'user_id,platform' })
   return Response.json({ ok: true })
 }
 
