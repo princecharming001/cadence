@@ -18,9 +18,38 @@ export async function POST(req) {
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
 
+  // Schedule/post an EXISTING saved draft by id (from the Slideshows list) —
+  // dispatch it to Zernio and flip its status in place, no duplicate row.
+  if (b.action === 'schedule' && b.id) {
+    const { data: deck } = await admin.from('slideshows').select('*').eq('id', b.id).eq('user_id', user.id).single()
+    if (!deck) return Response.json({ error: 'Slideshow not found.' }, { status: 404 })
+    if (deck.status !== 'draft') return Response.json({ error: 'That deck has already gone out.' }, { status: 400 })
+    if (!zernioEnabled()) return Response.json({ error: 'Connect a Zernio account first (set ZERNIO_API_KEY).' }, { status: 400 })
+    const accountIds = Array.isArray(b.account_ids) ? b.account_ids : []
+    if (!accountIds.length) return Response.json({ error: 'Pick at least one account to post to.' }, { status: 400 })
+    if (!(deck.image_urls || []).length) return Response.json({ error: 'No slides to post.' }, { status: 400 })
+    const { data: accts } = await admin.from('social_accounts').select('*').eq('user_id', user.id).in('id', accountIds)
+      .in('platform', ['instagram', 'tiktok', 'linkedin', 'facebook'])
+    if (!accts?.length) return Response.json({ error: 'Those accounts are not connected.' }, { status: 400 })
+    const scheduledFor = b.scheduled_for || null
+    try {
+      const title = deck.slides?.[0]?.heading || deck.title || deck.topic
+      const r = await createPost({ userId: user.id, accounts: accts, content: deck.caption || '', mediaUrls: deck.image_urls, scheduledFor: scheduledFor || undefined, title })
+      const { data, error } = await admin.from('slideshows')
+        .update({ status: scheduledFor ? 'scheduled' : 'posted', zernio_post_id: r.id, account_ids: accountIds, scheduled_for: scheduledFor, error: null })
+        .eq('id', b.id).eq('user_id', user.id).select().single()
+      if (error) return Response.json({ error: error.message }, { status: 500 })
+      return Response.json({ slideshow: data })
+    } catch (e) {
+      await admin.from('slideshows').update({ status: 'failed', error: e.message }).eq('id', b.id).eq('user_id', user.id)
+      return Response.json({ error: e.message }, { status: 500 })
+    }
+  }
+
   const row = {
     user_id: user.id,
     topic: String(b.topic || '').trim() || 'Untitled',
+    title: b.title ? String(b.title).trim().slice(0, 120) : null,
     format: b.format || 'listicle', style: b.style || 'bold',
     slides: Array.isArray(b.slides) ? b.slides : [],
     caption: b.caption || null,
@@ -70,11 +99,17 @@ export async function PATCH(req) {
   if (!b.id) return Response.json({ error: 'id required' }, { status: 400 })
   const { data: row } = await admin.from('slideshows').select('status').eq('id', b.id).eq('user_id', user.id).single()
   if (!row) return Response.json({ error: 'Not found' }, { status: 404 })
-  if (row.status !== 'draft') return Response.json({ error: 'Only draft slideshows can be edited — scheduled or posted decks are already out.' }, { status: 400 })
   const patch = {}
-  if (Array.isArray(b.slides)) patch.slides = b.slides
-  if (Array.isArray(b.image_urls)) patch.image_urls = b.image_urls
-  if (typeof b.caption === 'string') patch.caption = b.caption
+  // Title is just a memorable label — renameable at any status.
+  if (typeof b.title === 'string') patch.title = b.title.trim().slice(0, 120) || null
+  // Content edits only make sense before the deck has gone out.
+  const wantsContent = Array.isArray(b.slides) || Array.isArray(b.image_urls) || typeof b.caption === 'string'
+  if (wantsContent) {
+    if (row.status !== 'draft') return Response.json({ error: 'Only draft slideshows can be edited — scheduled or posted decks are already out.' }, { status: 400 })
+    if (Array.isArray(b.slides)) patch.slides = b.slides
+    if (Array.isArray(b.image_urls)) patch.image_urls = b.image_urls
+    if (typeof b.caption === 'string') patch.caption = b.caption
+  }
   if (!Object.keys(patch).length) return Response.json({ error: 'Nothing to update' }, { status: 400 })
   const { data, error } = await admin.from('slideshows').update(patch).eq('id', b.id).eq('user_id', user.id).select().single()
   if (error) return Response.json({ error: error.message }, { status: 500 })

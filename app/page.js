@@ -1010,8 +1010,9 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
   const [count, setCount] = useState(6)
   const [busy, setBusy] = useState(false); const [deck, setDeck] = useState(null) // {slides,caption,image_urls,style,format}
   const [pickedAccts, setPickedAccts] = useState([]); const [when, setWhen] = useState('')
-  // Inline edit of a SAVED draft deck (status==='draft' only).
-  const [edit, setEdit] = useState(null) // { id, slides, image_urls, caption, busy }
+  // Inline edit / schedule of a SAVED draft deck (status==='draft' only).
+  const [edit, setEdit] = useState(null) // { id, title, slides, image_urls, caption, busy }
+  const [sched, setSched] = useState(null) // { id, picked:[ids], when, busy }
 
   // Every platform that takes an image carousel — Instagram, TikTok, LinkedIn, Facebook.
   // On a platform tab, that platform's accounts are the default target and the
@@ -1047,10 +1048,18 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
   async function saveEdit() {
     if (!edit) return
     setEdit(e => ({ ...e, busy: true }))
-    await authed('/api/slideshow', { method: 'PATCH', body: JSON.stringify({ id: edit.id, slides: edit.slides, image_urls: edit.image_urls, caption: edit.caption }) })
+    await authed('/api/slideshow', { method: 'PATCH', body: JSON.stringify({ id: edit.id, title: edit.title, slides: edit.slides, image_urls: edit.image_urls, caption: edit.caption }) })
     setEdit(null)
     onRefresh && onRefresh()
   }
+  // Schedule / post a SAVED draft in place (no duplicate row).
+  async function scheduleSaved(post) {
+    if (!sched || !sched.picked.length) return
+    setSched(s => ({ ...s, busy: true }))
+    const ok = await onSave({ action: 'schedule', id: sched.id, account_ids: sched.picked, scheduled_for: post && sched.when ? new Date(sched.when).toISOString() : null })
+    if (ok) setSched(null); else setSched(s => ({ ...s, busy: false }))
+  }
+  const togglePick = id => setSched(s => ({ ...s, picked: s.picked.includes(id) ? s.picked.filter(x => x !== id) : [...s.picked, id] }))
 
   return (
     <>
@@ -1134,23 +1143,32 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
         <div className="conn-sec">Your slideshows</div>
         {slideshows.map(s => {
           const editing = edit?.id === s.id
+          const scheduling = sched?.id === s.id
+          const isDraft = s.status === 'draft'
+          const hasSlides = Array.isArray(s.slides) && s.slides.length > 0
           return (
           <div className="card camp-card" key={s.id}>
             <div className="row" style={{ gap: 10 }}>
               {s.image_urls?.[0] && <img src={s.image_urls[0]} className="ss-thumb" alt="" />}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="conn-title row" style={{ gap: 7 }}>{s.topic}<span className={'camp-state' + (s.status === 'posted' || s.status === 'scheduled' ? ' on' : '')}>{s.status}</span></div>
+                <div className="conn-title row" style={{ gap: 7 }}>{s.title || s.topic}<span className={'camp-state' + (s.status === 'posted' || s.status === 'scheduled' ? ' on' : '')}>{s.status}</span></div>
                 <div className="muted tiny" style={{ marginTop: 3 }}>{s.image_urls?.length || 0} slides · {s.style} · {s.format}{s.scheduled_for ? ` · ${fmt(s.scheduled_for)}` : ''}{s.error ? ` · ${s.error}` : ''}</div>
               </div>
-              {s.status === 'draft' && Array.isArray(s.slides) && s.slides.length > 0 && (
-                <button className="mini" onClick={() => editing ? setEdit(null) : setEdit({ id: s.id, slides: s.slides, image_urls: s.image_urls || [], caption: s.caption || '', busy: false })}><Pencil size={12} /> {editing ? 'Close' : 'Edit text'}</button>
+              {isDraft && igLike.length > 0 && configured && (
+                <button className="mini" onClick={() => scheduling ? setSched(null) : (setEdit(null), setSched({ id: s.id, picked: focusAccts.map(a => a.id), when: '', busy: false }))}><Clock size={12} /> {scheduling ? 'Close' : 'Schedule'}</button>
+              )}
+              {isDraft && hasSlides && (
+                <button className="mini" onClick={() => editing ? setEdit(null) : (setSched(null), setEdit({ id: s.id, title: s.title || '', slides: s.slides, image_urls: s.image_urls || [], caption: s.caption || '', busy: false }))}><Pencil size={12} /> {editing ? 'Close' : 'Edit'}</button>
               )}
               <button className="mini danger" onClick={() => onDelete(s.id)}><Trash2 size={12} /></button>
             </div>
             <AnimatePresence initial={false}>
               {editing && (
-                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.18 }} style={{ overflow: 'hidden' }}>
+                <motion.div key="edit" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.18 }} style={{ overflow: 'hidden' }}>
                   <div style={{ marginTop: 12 }}>
+                    <label className="ob-label">Title <span className="muted tiny" style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· a name you'll remember</span></label>
+                    <input className="field" value={edit.title} placeholder={s.topic} onChange={e => setEdit(p => ({ ...p, title: e.target.value }))} />
+                    <label className="ob-label" style={{ marginTop: 12 }}>Slides <span className="muted tiny" style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· tap one to edit its text</span></label>
                     <SlideEditor slides={edit.slides} imageUrls={edit.image_urls} style={s.style} format={s.format} handle={s.handle} authed={authed}
                       onChange={(sl, u) => setEdit(e => ({ ...e, slides: sl, image_urls: u }))} />
                     <label className="ob-label" style={{ marginTop: 12 }}>Caption</label>
@@ -1158,6 +1176,28 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
                     <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
                       <button className="mini" onClick={() => setEdit(null)}>Cancel</button>
                       <button className="btn-primary btn-sm" disabled={edit.busy} onClick={saveEdit}>{edit.busy ? 'Saving…' : 'Save changes'}</button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+              {scheduling && (
+                <motion.div key="sched" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.18 }} style={{ overflow: 'hidden' }}>
+                  <div style={{ marginTop: 12 }}>
+                    <div className="muted tiny" style={{ marginBottom: 6 }}>Post to:</div>
+                    <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                      {focusAccts.map(a => <button key={a.id} type="button" className={'chip' + (sched.picked.includes(a.id) ? ' on' : '')} onClick={() => togglePick(a.id)}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform}</button>)}
+                    </div>
+                    {crossAccts.length > 0 && <>
+                      <div className="muted tiny" style={{ margin: '10px 0 6px' }}>Cross-post to:</div>
+                      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                        {crossAccts.map(a => <button key={a.id} type="button" className={'chip' + (sched.picked.includes(a.id) ? ' on' : '')} onClick={() => togglePick(a.id)}><span className="status-dot" style={{ background: platformDot(a.platform) }} />{a.username || a.platform} · {a.platform}</button>)}
+                      </div>
+                    </>}
+                    <input type="datetime-local" className="field" style={{ marginTop: 10 }} value={sched.when} onChange={e => setSched(p => ({ ...p, when: e.target.value }))} />
+                    <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+                      <button className="mini" onClick={() => setSched(null)}>Cancel</button>
+                      <button className="btn-ghost btn-sm" disabled={sched.busy || !sched.picked.length || !sched.when} onClick={() => scheduleSaved(true)}>Schedule</button>
+                      <button className="btn-primary btn-sm" disabled={sched.busy || !sched.picked.length} onClick={() => scheduleSaved(false)}>{sched.busy ? 'Posting…' : 'Post now'}</button>
                     </div>
                   </div>
                 </motion.div>
