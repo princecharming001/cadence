@@ -3133,7 +3133,7 @@ function App({ session }) {
                   }
                   return (<>
                     {/* Campaigns — the headline feature, open by default */}
-                    <Section title="Campaigns" hint="promote on a schedule, in your voice" defaultOpen badge={liveCamps ? <span className="live-pill on"><span className="pulse" />{liveCamps} live</span> : null}>
+                    <Section title="Campaigns" defaultOpen badge={liveCamps ? <span className="live-pill on"><span className="pulse" />{liveCamps} live</span> : null}>
                       <PlatformCampaign campaigns={campsFor(['x'])} targets={xCampTargets} allowImage canCreate={connected} connectHint="Connect your X account first." onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
                       <CrossCampHint plats={['x']} />
                     </Section>
@@ -3156,7 +3156,7 @@ function App({ session }) {
                     </Section>
 
                     {/* Ready to post */}
-                    <Section title="Ready to post" hint="drafts waiting for you" defaultOpen={xDrafts.length > 0} badge={xDrafts.length ? <span className="camp-state on">{xDrafts.length}</span> : null}>
+                    <Section title="Ready to post" defaultOpen={xDrafts.length > 0} badge={xDrafts.length ? <span className="camp-state on">{xDrafts.length}</span> : null}>
                       <Suggestions platform="x" drafts={xDrafts} busy={suggesting === 'x'} canPost={connected}
                         onGenerate={() => suggestPosts('x')} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
                     </Section>
