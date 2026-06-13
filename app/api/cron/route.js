@@ -18,6 +18,7 @@ import { runDueEngagement } from '@/lib/engagement'
 import { runDueBrandCampaigns } from '@/lib/brand-campaigns'
 import { runDueSocialEngagement } from '@/lib/social-engagement'
 import { runDueFeederAgents } from '@/lib/feeder-agents'
+import { harvestDueTrends } from '@/lib/trends-harvest'
 import { releaseStaleClaims, sweepInterruptedPosts } from '@/lib/engine'
 import { isCron } from '@/lib/supabase'
 
@@ -81,6 +82,9 @@ export async function GET(req) {
   after(async () => {
     await fetch(`${base}/api/clips/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
     await refreshPostMetrics().catch(() => {}) // pull engagement back onto published posts
+    // Intrinsic daily trend detection: harvest a few stale users' niches so
+    // fresh viral formats feed generation without anyone pressing a button.
+    await harvestDueTrends({ limit: 3, deepN: 2 }).catch(() => {})
     await admin.from('x_oauth_states').delete().lt('created_at', new Date(Date.now() - 3600 * 1000).toISOString()).then(() => {}, () => {})
   })
 

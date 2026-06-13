@@ -9,6 +9,7 @@ import {
   Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, Image as LImage,
   ThumbsUp, ThumbsDown, Upload, Play, MessageCircle, Star, Loader2,
   ArrowLeft, CreditCard, Users, User as LUser, Bot, History as LHistory,
+  Calendar as LCalendar, List as LList,
 } from 'lucide-react'
 import { SLIDESHOW_FORMATS, SLIDE_STYLE_LIST } from '@/lib/slideshow-styles'
 import { PLANS, PLAN_LIST, monthlyEquivalent } from '@/lib/plans'
@@ -606,6 +607,56 @@ function QueueCard({ p, i, connected, socialPlatforms, defaultCollapsed, onSaveE
 }
 
 function Empty({ icon, children }) { return <motion.div className="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div className="empty-icon">{icon}</div><div>{children}</div></motion.div> }
+
+// ── Calendar view of the queue — a clean month grid. Each post is a thin
+// platform-colored chip on its scheduled day; click to open/retime. ──────────
+function QueueCalendar({ posts, onOpen }) {
+  const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
+  const year = cursor.getFullYear(), month = cursor.getMonth()
+  const today = new Date()
+  const dayKey = iso => { const d = new Date(iso); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` }
+  const byDay = {}
+  for (const p of posts) (byDay[dayKey(p.posted_at || p.scheduled_for)] ||= []).push(p)
+  const firstWeekday = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const cells = []
+  for (let i = 0; i < firstWeekday; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+  while (cells.length % 7) cells.push(null)
+  return (
+    <div className="cal">
+      <div className="cal-head">
+        <button className="cal-nav" onClick={() => setCursor(new Date(year, month - 1, 1))} aria-label="Previous month"><ChevronDown size={15} style={{ transform: 'rotate(90deg)' }} /></button>
+        <span className="cal-title">{cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+        <button className="cal-nav" onClick={() => setCursor(new Date(year, month + 1, 1))} aria-label="Next month"><ChevronDown size={15} style={{ transform: 'rotate(-90deg)' }} /></button>
+        <button className="cal-today" onClick={() => setCursor(new Date(today.getFullYear(), today.getMonth(), 1))}>Today</button>
+      </div>
+      <div className="cal-grid cal-dow">{['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => <div key={i} className="cal-dowcell">{d}</div>)}</div>
+      <div className="cal-grid">
+        {cells.map((d, i) => {
+          if (d == null) return <div key={i} className="cal-cell empty" />
+          const dt = new Date(year, month, d)
+          const isToday = dt.toDateString() === today.toDateString()
+          const dayPosts = (byDay[`${year}-${month}-${d}`] || []).sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))
+          return (
+            <div key={i} className={'cal-cell' + (isToday ? ' today' : '')}>
+              <div className="cal-daynum">{d}</div>
+              <div className="cal-chips">
+                {dayPosts.slice(0, 3).map(p => (
+                  <button key={p.id} className={'cal-chip' + (p.status === 'posted' ? ' done' : '') + (p.status === 'failed' ? ' bad' : '')} onClick={() => onOpen(p)} title={(p.content || '').slice(0, 90)}>
+                    <span className="status-dot" style={{ background: platformDot(p.platform || 'x'), width: 5, height: 5, flex: 'none' }} />
+                    <span className="cal-chip-t">{new Date(p.scheduled_for).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
+                  </button>
+                ))}
+                {dayPosts.length > 3 && <span className="cal-more">+{dayPosts.length - 3}</span>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 // Activity monitor shared by campaigns and engagement rules: everything that
 // has gone out, is due, or is coming up for one campaign/rule.
@@ -2255,7 +2306,7 @@ function App({ session }) {
   const [socialAccounts, setSocialAccounts] = useState([]); const [socialConfigured, setSocialConfigured] = useState(false)
   const [slideshows, setSlideshows] = useState([])
   const [engSettings, setEngSettings] = useState([]); const [socialReplies, setSocialReplies] = useState([])
-  const [qPlatform, setQPlatform] = useState('all')
+  const [qPlatform, setQPlatform] = useState('all'); const [qView, setQView] = useState('list')
   const [showReplies, setShowReplies] = useState(false)
   const [brandCampaigns, setBrandCampaigns] = useState([])
   const [inspoX, setInspoX] = useState([]); const [suggesting, setSuggesting] = useState('')
@@ -2754,13 +2805,19 @@ function App({ session }) {
                 return (<>
                   <div className="qfilter">
                     {chips.map(([k, l]) => <button key={k} className={'qchip' + (qPlatform === k ? ' on' : '')} onClick={() => setQPlatform(k)}>{k !== 'all' && <span className="status-dot" style={{ background: platformDot(k) }} />}{l}</button>)}
-                    {replies.length > 0 && (
-                      <label className="row" style={{ gap: 6, marginLeft: 'auto', fontSize: 11.5, color: 'var(--muted)', cursor: 'pointer' }}>
-                        replies · {replies.length}
-                        <Toggle on={showReplies} onChange={setShowReplies} />
-                      </label>
-                    )}
+                    <div className="qview" style={{ marginLeft: 'auto' }}>
+                      <button className={'qview-btn' + (qView === 'list' ? ' on' : '')} onClick={() => setQView('list')} title="List view"><LList size={13} /></button>
+                      <button className={'qview-btn' + (qView === 'calendar' ? ' on' : '')} onClick={() => setQView('calendar')} title="Calendar view"><LCalendar size={13} /></button>
+                    </div>
                   </div>
+                  {qView === 'calendar'
+                    ? <QueueCalendar posts={[...shown, ...posted.filter(matchP)]} onOpen={openSchedule} />
+                    : (<>
+                  {replies.length > 0 && (
+                    <div className="row" style={{ gap: 6, justifyContent: 'flex-end', fontSize: 11.5, color: 'var(--muted)', cursor: 'pointer', margin: '0 2px 8px' }}>
+                      <label className="row" style={{ gap: 6 }}>replies · {replies.length}<Toggle on={showReplies} onChange={setShowReplies} /></label>
+                    </div>
+                  )}
                   {failed.length > 0 && (
                     <div className="fail-banner">⚠ {failed.length} post{failed.length === 1 ? '' : 's'} failed — open the cards below to retry or fix.</div>
                   )}
@@ -2788,6 +2845,7 @@ function App({ session }) {
                     </div>
                   ))}
                   {posted.filter(matchP).length > 0 && qPlatform !== 'instagram' && qPlatform !== 'tiktok' && <PostedSection posted={posted.filter(matchP)} />}
+                    </>)}
                 </>)
               })()}
 
@@ -3631,6 +3689,32 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .trend-payoff { font-size: 12px; color: var(--body); margin-top: 8px; line-height: 1.5; }
 .trend-payoff span { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--ok); background: var(--ok-soft); border: 1px solid var(--ok-line); padding: 1px 6px; border-radius: 5px; margin-right: 6px; }
 .trend-badge.arch { background: var(--plum-soft); border-color: var(--plum-line); color: var(--plum); text-transform: capitalize; }
+/* queue list/calendar toggle */
+.qview { display: inline-flex; gap: 2px; background: var(--bg2); border: 1px solid var(--line); border-radius: 9px; padding: 2px; }
+.qview-btn { width: 28px; height: 24px; border: none; background: none; border-radius: 7px; color: var(--faint); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: .15s; }
+.qview-btn.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+/* calendar */
+.cal { margin-top: 4px; }
+.cal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.cal-nav { width: 28px; height: 28px; border: 1px solid var(--line2); background: var(--surface); border-radius: 8px; cursor: pointer; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+.cal-nav:hover { border-color: var(--line-hover); color: var(--ink); }
+.cal-title { font-family: var(--serif); font-size: 16.5px; font-weight: 600; }
+.cal-today { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-dow { margin-bottom: 4px; }
+.cal-dowcell { text-align: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); padding: 2px 0; }
+.cal-cell { min-height: 76px; border: 1px solid var(--line); border-radius: 9px; padding: 5px; background: var(--surface); display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
+.cal-cell.empty { border: none; background: none; }
+.cal-cell.today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cal-daynum { font-size: 11px; font-weight: 600; color: var(--muted); padding-left: 2px; }
+.cal-cell.today .cal-daynum { color: var(--accent-text); }
+.cal-chips { display: flex; flex-direction: column; gap: 3px; min-height: 0; }
+.cal-chip { display: flex; align-items: center; gap: 4px; width: 100%; border: none; background: var(--bg2); border-radius: 5px; padding: 2px 5px; cursor: pointer; font-family: inherit; transition: .12s; }
+.cal-chip:hover { background: var(--accent-soft); }
+.cal-chip.done { opacity: .5; }
+.cal-chip.bad { background: var(--bad-soft); }
+.cal-chip-t { font-size: 10px; font-weight: 600; color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-more { font-size: 9.5px; color: var(--faint); font-weight: 600; padding-left: 4px; }
 .trend-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--bg2); border: 1px solid var(--line2); color: var(--muted); }
 .trend-badge.render { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
 .trend-badge.ad { background: var(--gold-soft); border-color: var(--gold-line); color: var(--gold); }
