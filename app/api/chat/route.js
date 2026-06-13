@@ -267,7 +267,7 @@ const tools = [
   },
   {
     name: 'set_agent',
-    description: 'Update a feeder agent: activate/pause (active), let it post autonomously vs draft-for-review (auto_post), or put it on / pull it off a campaign (campaign_id; null unassigns).',
+    description: 'Update a feeder agent: activate/pause (active), let it post autonomously vs draft-for-review (auto_post), or assign it to a campaign (campaign_id — an agent can be on SEVERAL campaigns; this ADDS one; null removes it from all).',
     input_schema: {
       type: 'object',
       properties: {
@@ -561,14 +561,17 @@ async function executeTool(name, input, userId) {
         user_id: userId, name, product,
         link: String(input.link || '').slice(0, 300).trim() || null,
         intensity: ['subtle', 'balanced', 'loud'].includes(input.intensity) ? input.intensity : 'balanced',
-        active: true,
+        slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'campaign',
+        status: 'active', active: true,
       }).select().single()
       if (error) return { error: error.message }
+      // Many-to-many: assign EVERY agent (an agent can be on several campaigns now).
       let assigned = []
       if (input.assign_all !== false) {
-        const { data: free } = await admin.from('feeder_agents').select('id, name, persona').eq('user_id', userId).is('campaign_id', null)
-        for (const a of free || []) {
-          await admin.from('feeder_agents').update({ campaign_id: camp.id }).eq('id', a.id)
+        const { data: all } = await admin.from('feeder_agents').select('id, name, persona').eq('user_id', userId)
+        for (const a of all || []) {
+          await admin.from('agent_campaign_assignments').upsert({ user_id: userId, feeder_agent_id: a.id, campaign_id: camp.id }, { onConflict: 'feeder_agent_id,campaign_id', ignoreDuplicates: true })
+          await admin.from('feeder_agents').update({ campaign_id: camp.id }).eq('id', a.id) // deprecated mirror
           assigned.push(a.persona?.name || a.name)
         }
       }
@@ -576,21 +579,36 @@ async function executeTool(name, input, userId) {
     }
 
     case 'set_agent': {
-      const patch = {}
-      if (input.active !== undefined) patch.active = !!input.active
-      if (input.auto_post !== undefined) patch.auto_post = !!input.auto_post
+      // Assignment is many-to-many: campaign_id ADDS the agent to that campaign
+      // (it can be on several); null removes it from ALL. active/auto_post live
+      // on the agent row.
       if (input.campaign_id !== undefined) {
         if (input.campaign_id) {
           const { data: camp } = await admin.from('agent_campaigns').select('id').eq('id', input.campaign_id).eq('user_id', userId).single()
           if (!camp) return { error: 'Campaign not found.' }
+          await admin.from('agent_campaign_assignments').upsert({ user_id: userId, feeder_agent_id: input.id, campaign_id: input.campaign_id }, { onConflict: 'feeder_agent_id,campaign_id', ignoreDuplicates: true })
+          await admin.from('feeder_agents').update({ campaign_id: input.campaign_id }).eq('id', input.id).eq('user_id', userId)
+        } else {
+          await admin.from('agent_campaign_assignments').delete().eq('user_id', userId).eq('feeder_agent_id', input.id)
+          await admin.from('feeder_agents').update({ campaign_id: null }).eq('id', input.id).eq('user_id', userId)
         }
-        patch.campaign_id = input.campaign_id || null
       }
+      const patch = {}
+      if (input.active !== undefined) patch.active = !!input.active
+      if (input.auto_post !== undefined) patch.auto_post = !!input.auto_post
       if (patch.active === true) patch.next_run_at = new Date().toISOString()
-      const { data, error } = await admin.from('feeder_agents').update(patch)
-        .eq('id', input.id).eq('user_id', userId).select('id, name, persona, active, auto_post, campaign_id').single()
-      if (error || !data) return { error: error?.message || 'Agent not found.' }
-      return { agent: { id: data.id, name: data.persona?.name || data.name, active: data.active, autonomous: data.auto_post, campaign_id: data.campaign_id } }
+      let data
+      if (Object.keys(patch).length) {
+        const r = await admin.from('feeder_agents').update(patch).eq('id', input.id).eq('user_id', userId).select('id, name, persona, active, auto_post').single()
+        if (r.error || !r.data) return { error: r.error?.message || 'Agent not found.' }
+        data = r.data
+      } else {
+        const r = await admin.from('feeder_agents').select('id, name, persona, active, auto_post').eq('id', input.id).eq('user_id', userId).single()
+        if (!r.data) return { error: 'Agent not found.' }
+        data = r.data
+      }
+      const { data: asg } = await admin.from('agent_campaign_assignments').select('campaign_id').eq('feeder_agent_id', input.id).eq('user_id', userId)
+      return { agent: { id: data.id, name: data.persona?.name || data.name, active: data.active, autonomous: data.auto_post, campaign_ids: (asg || []).map(a => a.campaign_id) } }
     }
 
     case 'run_agent': {

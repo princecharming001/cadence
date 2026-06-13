@@ -5,7 +5,9 @@ import { buildAgentPersona, agentAvatar, refreshAgentStats, runDueFeederAgents, 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // a think-cycle does several LLM calls + X reads
 
-const EDITABLE = ['interests', 'support_primary', 'posts_per_day', 'replies_per_day', 'interval_hours', 'auto_post', 'active', 'campaign_id']
+// campaign_id is no longer patched here — assignment is many-to-many, managed
+// via /api/agent-campaigns { action:'assign'|'unassign' }.
+const EDITABLE = ['interests', 'support_primary', 'posts_per_day', 'replies_per_day', 'interval_hours', 'auto_post', 'active']
 const clampInt = (v, lo, hi, dflt) => Math.min(hi, Math.max(lo, parseInt(v, 10) || dflt))
 
 function clean(body) {
@@ -35,7 +37,12 @@ export async function GET(req) {
   } else {
     refreshAgentStats(user.id).catch(() => {})
   }
-  return Response.json({ agents: data || [] })
+  // Attach each agent's live campaign_ids (many-to-many via the join table) so
+  // the UI can show an agent that's on several campaigns.
+  const { data: assigns } = await admin.from('agent_campaign_assignments').select('feeder_agent_id, campaign_id').eq('user_id', user.id)
+  const byAgent = {}
+  for (const a of assigns || []) (byAgent[a.feeder_agent_id] ||= []).push(a.campaign_id)
+  return Response.json({ agents: (data || []).map(a => ({ ...a, campaign_ids: byAgent[a.id] || [] })) })
 }
 
 // POST { x_connection_id, interests }      → spawn an agent (persona generated now)
@@ -108,6 +115,13 @@ export async function POST(req) {
     const msg = /duplicate|unique/i.test(error.message) ? 'This account already has an agent.' : error.message
     return Response.json({ error: msg }, { status: 400 })
   }
+  // Many-to-many: record the assignment (the scalar campaign_id above is a
+  // deprecated back-compat mirror).
+  if (campaignId) {
+    await admin.from('agent_campaign_assignments').upsert(
+      { user_id: user.id, feeder_agent_id: data.id, campaign_id: campaignId },
+      { onConflict: 'feeder_agent_id,campaign_id', ignoreDuplicates: true })
+  }
   return Response.json({ agent: data })
 }
 
@@ -118,12 +132,9 @@ export async function PATCH(req) {
   const body = await req.json().catch(() => ({}))
   if (!body.id) return Response.json({ error: 'id required' }, { status: 400 })
   const patch = clean(body)
-  // campaign_id: null unassigns; a value must be the user's own campaign.
-  if (patch.campaign_id) {
-    const { data: camp } = await admin.from('agent_campaigns').select('id').eq('id', patch.campaign_id).eq('user_id', user.id).single()
-    if (!camp) return Response.json({ error: 'Campaign not found.' }, { status: 404 })
-  }
-  if (patch.active === true) patch.next_run_at = new Date().toISOString()
+  // Arming spreads the first run over the next ~40 min so a fleet armed together
+  // doesn't all wake on the same cron tick (use Run-now for an immediate cycle).
+  if (patch.active === true) patch.next_run_at = new Date(Date.now() + Math.floor(Math.random() * 40) * 60000).toISOString()
   const { data, error } = await admin.from('feeder_agents')
     .update(patch).eq('id', body.id).eq('user_id', user.id).select().single()
   if (error) return Response.json({ error: error.message }, { status: 500 })
