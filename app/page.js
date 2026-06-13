@@ -3555,12 +3555,16 @@ function App({ session }) {
                 const platAccts = socialAccounts.filter(a => a.platform === plat)
                 const platCampTargets = platAccts.map(a => ({ kind: 'social', id: a.id, platform: plat, label: '@' + (a.username || plat) }))
                 const followers = platAccts.reduce((n, a) => n + (a.followers || 0), 0)
+                // "Posted" = the account's REAL all-time post count (Zernio
+                // mediaCount/videoCount), not just posts made through Cadence.
+                const realPosted = platAccts.reduce((n, a) => n + (a.posts_count || 0), 0)
+                const platPosted = realPosted || posts.filter(p => p.platform === plat && p.status === 'posted').length
                 return (<>
                   <BrainBanner theme={plat} />
                   {platAccts.length ? (
                     <StatTiles tiles={[
                       { value: platAccts.some(a => a.followers != null) ? fmtNum(followers) : '—', label: 'Followers' },
-                      { value: fmtNum(posts.filter(p => p.platform === plat && p.status === 'posted').length), label: 'Posted' },
+                      { value: platPosted ? fmtNum(platPosted) : '—', label: 'Posted' },
                       { value: fmtNum(queue.filter(p => p.platform === plat).length), label: 'Queued' },
                     ]} />
                   ) : (
@@ -3613,13 +3617,20 @@ function App({ session }) {
                 const ap = apFor('linkedin')
                 const arOn = !!engSettings.find(s => s.platform === 'linkedin')?.enabled
                 const liLive = campsTouching(['linkedin']).filter(c => c.active).length
+                // LinkedIn all-time "Posted": Zernio gives no post count, so use
+                // the scraped own-profile post count (Apify), not just Cadence posts.
+                const liSelfIds = new Set(liSelf.map(s => s.id))
+                const liScraped = liPosts.filter(p => liSelfIds.has(p.account_id)).length
+                const liPosted = liScraped || posts.filter(p => p.platform === 'linkedin' && p.status === 'posted').length
+                // The scrape is capped (max_posts), so a full scrape means "≥ N".
+                const liAtCap = liScraped > 0 && liScraped >= (liSelf[0]?.max_posts || Infinity)
                 return (<>
                   {liAccount ? (
                     <div className="phead">
                       <div className="phead-brain"><BrainBanner theme="linkedin" /></div>
                       <StatTiles vertical tiles={[
                         { value: liAccount.followers != null ? fmtNum(liAccount.followers) : '—', label: 'Followers' },
-                        { value: fmtNum(posts.filter(p => p.platform === 'linkedin' && p.status === 'posted').length), label: 'Posted' },
+                        { value: liPosted ? fmtNum(liPosted) + (liAtCap ? '+' : '') : '—', label: 'Posted' },
                         { value: fmtNum(queue.filter(p => p.platform === 'linkedin').length), label: 'Queued' },
                       ]} />
                     </div>
