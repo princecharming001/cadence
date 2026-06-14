@@ -9,6 +9,7 @@ import { createPost, zernioEnabled } from '@/lib/zernio'
 import { runSocialEngagement, SOCIAL_ENGAGEMENT_PLATFORMS } from '@/lib/social-engagement'
 import { analyzeViralVideo, analyzeViralText, trendingBlock } from '@/lib/trends'
 import { runTrendHarvest } from '@/lib/trends-harvest'
+import { draftCampaignBrief, composeBrief } from '@/lib/campaign-brief'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -315,6 +316,44 @@ const tools = [
         interval_hours: { type: 'number', description: 'Hours between posts (default 24).' },
       },
       required: ['topic', 'platforms'],
+    },
+  },
+  {
+    name: 'clarify',
+    description: "Ask the user ONE structured multiple-choice question as an inline card — ONLY when a creative direction genuinely forks (which of 2-3 distinct angles, short vs long) or an ESSENTIAL slot is missing (a from-scratch video/carousel has no subject; a clip/edit has no source). NEVER use it to ask the topic of a TEXT post — for that, pick the strongest angle and draft. Tapping an option becomes the user's reply and continues the chat, so do NOT proceed until they answer. Use at most ONCE per request; never chain two.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'One short sentence, phrased as a creative choice.' },
+        header: { type: 'string', description: '1-3 word eyebrow, e.g. "Angle", "Length".' },
+        options: {
+          type: 'array',
+          description: '2-4 choices phrased as concrete creative directions (not jargon).',
+          items: { type: 'object', properties: { label: { type: 'string' }, value: { type: 'string', description: 'Text re-sent on pick (defaults to label).' }, description: { type: 'string', description: 'Optional one-line subtext.' } }, required: ['label'] },
+        },
+        allow_other: { type: 'boolean', description: 'Show a "Something else…" free-text row (default true).' },
+      },
+      required: ['question', 'options'],
+    },
+  },
+  {
+    name: 'propose_campaign',
+    description: "Propose a feeder-agent campaign as an editable CONSENT card — does NOT create it. The user reviews/edits the brief and taps Launch. Use this (instead of create_feeder_campaign) whenever building a campaign through chat. Fill in as much of the brief as you can from what they said; leave the rest and it'll be auto-drafted.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        product: { type: 'string', description: 'What the agents promote.' },
+        link: { type: 'string' },
+        intensity: { type: 'string', enum: ['subtle', 'balanced', 'loud'] },
+        objective: { type: 'string', enum: ['awareness', 'signups', 'installs', 'traffic', 'waitlist', 'launch_buzz'] },
+        platforms: { type: 'array', items: { type: 'string', enum: ['x', 'linkedin', 'instagram', 'tiktok'] } },
+        pitch: { type: 'string', description: 'One punchy sentence on what it is and why it matters.' },
+        audience: { type: 'string', description: 'Who it is for, concretely.' },
+        key_points: { type: 'array', items: { type: 'string' }, description: '3-4 concrete reasons it is worth talking about.' },
+        cta: { type: 'string' },
+        link_strategy: { type: 'string', enum: ['never', 'occasional', 'cta_only', 'every_promo'] },
+      },
+      required: ['product'],
     },
   },
 ]
@@ -702,7 +741,7 @@ export async function POST(req) {
         .filter(a => a && typeof a.url === 'string')
         .map(a => ({ id: String(a.id || ''), type: a.type === 'video' ? 'video' : 'image', url: a.url.slice(0, 600), filename: String(a.filename || '').slice(0, 120) }))
       studio = {
-        format: ['carousel', 'clip', 'auto'].includes(rawStudio.format) ? rawStudio.format : 'auto',
+        format: ['carousel', 'clip', 'video', 'auto'].includes(rawStudio.format) ? rawStudio.format : 'auto',
         captions: rawStudio.captions !== false,
         attachments: atts,
       }
@@ -775,7 +814,8 @@ Cross-platform powers — you can do ANYTHING the user can do on the tabs themse
 - set_replies / run_replies: turn on/off (and run now) auto-replies to comments on the user's OWN posts, in their voice — works for x, instagram, tiktok, linkedin.
 - set_niche_engagement: turn on/off X "engage in your niche" and set the keywords / watched accounts / replies-per-run — Cadence replies to fresh in-niche posts to reach new audiences (X only).
 - list_agents / set_agent / run_agent: see and manage the user's feeder agents (autonomous personas on their other accounts) — activate, pause, make autonomous, assign to campaigns, run a cycle now.
-- create_feeder_campaign: launch a promotion mission the agents weave into their own posting ("launch a feeder campaign promoting X").
+- propose_campaign: when building a feeder-agent campaign through chat ("set up a campaign promoting X", "have my agents push Y"), PREFER this — it shows an editable brief CONSENT card the user reviews and launches themselves. Fill in what you can; the rest auto-drafts.
+- create_feeder_campaign: the immediate (no-consent-card) version — only when the user explicitly says "just launch it" / "create it now" or is clearly iterating on an already-agreed campaign.
 - create_promo_campaign / manage_campaign: create a recurring promo on the user's OWN accounts (their voice, on a cadence), and list/pause/resume/delete those campaigns.
 - find_trends: scan the niche for what's going viral now (IG/TikTok + ad formats) and bank the top formats. learn_trend: study one viral reel/post the user pastes — reverse-engineers its hook/editing format; text hook patterns then feed the user's own drafts.
 The ONE thing you can't do is connect or disconnect a social account (that needs the user to log in through the platform) — for that, point them to the account buttons at the bottom-right. Everything else, do it yourself.
@@ -793,7 +833,7 @@ ${LINKEDIN_RUBRIC}
 
 CRITICAL RULE — you never queue or publish a NEW post yourself. To create ANY new post, you call propose_post, which shows the user an editable draft card (text editor + time picker + live countdown + 👍/👎 + Post-now/Schedule/Discard). The user — not you — decides whether it gets scheduled or posted. This applies even when the user says "post this now" or "schedule it": still call propose_post (you can mention you've set it up to post now / for a time, and they just confirm on the card). The same consent rule covers EVERY platform and content type: nothing goes live on X, LinkedIn, Instagram, or TikTok unless the user explicitly approved that exact content. generate_slideshow likewise only RENDERS the carousel into an inline preview card — the user picks the accounts and hits post/schedule themselves; you never publish it.
 
-CRITICAL RULE — when asked to write, DRAFT IMMEDIATELY. Never reply with a clarifying question like "what should it be about?" or "what's the topic?". If the user doesn't give a topic, pick the strongest one yourself from their voice profile, niche, recent posts, or LinkedIn content (call list_linkedin_posts or get_overview if you need material) and call propose_post in your FIRST response. They'll edit the draft or tell you to change direction — a concrete draft is always more useful than a question. Ask a question only when the request is literally impossible to act on.
+CRITICAL RULE — when asked to write, DRAFT IMMEDIATELY. Never reply with a clarifying question like "what should it be about?" or "what's the topic?". If the user doesn't give a topic, pick the strongest one yourself from their voice profile, niche, recent posts, or LinkedIn content (call list_linkedin_posts or get_overview if you need material) and call propose_post in your FIRST response. They'll edit the draft or tell you to change direction — a concrete draft is always more useful than a question. Ask a question only when the request is literally impossible to act on. This DRAFT-IMMEDIATELY rule governs TEXT posts and threads. In the Studio (see STUDIO MODE), the one exception is the "clarify" tool — a single tappable multiple-choice card, used ONLY when a creative direction genuinely forks or an essential slot is missing (a from-scratch video's/carousel's subject, a clip's source). Even there: prefer making it with a confident default over asking.
 
 More rules:
 - For "write/draft/make a tweet", "repurpose my LinkedIn post", "post about X", etc. → call propose_post with the full post text. Then reply in one short line, e.g. "Here's a draft — edit it and approve below."
@@ -825,14 +865,39 @@ ${scopeBlock}${liVoiceBlock}${trendBlocks}${feedbackBlock(fb)}`
     // When invoked from the Studio composer, bias toward MAKING the thing and
     // wire up any attached Library assets so the agent builds from real media.
     const studioBlock = studio ? (() => {
-      const L = ['\n\nSTUDIO MODE — the user is in the create Studio. Your job is to MAKE what they describe and show it inline (a carousel, a clip, a post — whatever fits). Lead with making it, not questions.']
-      if (studio.format === 'carousel') L.push('They want a CAROUSEL — use generate_slideshow.')
-      else if (studio.format === 'clip') L.push('They want a CLIP/REEL — use make_clip.')
       const vids = studio.attachments.filter(a => a.type === 'video')
       const imgs = studio.attachments.filter(a => a.type === 'image')
-      if (vids.length) L.push(`Attached video(s) from their Library — use make_clip with source_url set to: ${vids.map(v => `"${v.filename}" → ${v.url}`).join(' ; ')}${studio.captions === false ? ' (captions off)' : ''}.`)
-      if (imgs.length) L.push(`Attached photo(s) from their Library you can feature: ${imgs.map(v => `"${v.filename}" → ${v.url}`).join(' ; ')}.`)
-      L.push('The Studio is adaptable — if they ask for something other than a carousel/clip (a post, a thread, an ad script, a plan), just do that with the right tool.')
+      const L = [`
+
+STUDIO MODE — the user is in the create Studio, an agent composer. Turn one short description into a FINISHED thing shown inline (a carousel, a clip, a generated video, a UGC/avatar video, an edit/montage, a post, a thread). DEFAULT to MAKING it. You may ask AT MOST ONE short question, and ONLY via the clarify tool, and ONLY when an ESSENTIAL slot is missing or a creative direction genuinely forks. If every essential slot is filled and a confident default exists, do NOT ask — pick sane defaults for everything non-essential, state the assumption in one line, and make it.
+
+STEP 1 — CREATE TYPE (from their words + any attached Library media). Types:
+- CAROUSEL → generate_slideshow. Essential: a TOPIC. Format/style/slide-count ALWAYS default; never ask.
+- CLIP → make_clip. Essential: a SOURCE VIDEO (a link in the message OR an attached Library video). Length/edit-style default; never ask.
+- AI_VIDEO (text/image→video from scratch) → generate_video mode:'ai_video'. Essential: a SUBJECT. If a Library image is attached and they want it animated, pass image_url. Optional one follow-up: LENGTH (short ~6s vs longer ~15s).
+- UGC / AVATAR (a spokesperson reads a script) → generate_video mode:'ugc'. Essential: a SCRIPT or PRODUCT/MESSAGE — draft the script yourself from their brief (avatar/voice default).
+- EDIT / MONTAGE ("edit of me with my media + external media") → generate_video mode:'edit'. Use when Library media is attached and they say edit/montage/stitch/"make something from these". Pass source_asset_ids (attached media) + external_urls (pasted external clips). Essential: at least one piece of media (satisfied by attachments).
+- TEXT (post/tweet/thread) is NOT a create type → propose_post / propose_thread; draft immediately, never ask the topic.
+
+STEP 2 — ESSENTIAL-SLOT CHECK (the only time you may clarify):
+- AI_VIDEO/UGC with NO subject ("make me a video") → clarify "What should the video be about?" with 2-3 tappable angle directions + Something else…
+- CAROUSEL with no topic and nothing to infer → clarify "What's the carousel about?"
+- CLIP/EDIT with no source and none attached → clarify "Drop the video link (or pick one from your Library) and I'll cut it."
+- EVERY other case (slot present, or confidently inferable from their voice/niche/recent posts/attached media) → DO NOT ASK. Make it.
+
+STEP 3 — ONE QUESTION MAX. After they answer the essential question, do NOT batch the rest. At most ONE more lightweight follow-up, only if it changes the OUTPUT materially (e.g. video length). Length, style, format, slide count, edit style, captions are NEVER essential — default them silently.
+
+STEP 4 — DIRECTIONS, NOT INTERROGATION. Once the essential slot is filled, make your single best version, then in ONE short line offer up to three named directions the user can tap to regenerate ("Made a punchy one. Different angle? 1) slow-mo majestic 2) fast-cut hype 3) cute/funny"). The artifact leads; the menu follows, never blocks. Use the clarify card for a genuine fork BEFORE making; use this one-line menu AFTER a confident first draft.
+
+GRACEFUL FALLBACK — generated video may be gated. generate_video returns an inline card that renders async; if generated video isn't enabled, the card itself shows a "coming soon — here's the nearest thing" state. So call generate_video confidently; do NOT pre-apologize.
+
+NON-NEGOTIABLES: never publish (everything renders inline for the user to pick accounts and post/schedule themselves); one create tool call per request; after acting, confirm in one or two sentences; never claim an async render (clip/video) is ready — say it's processing.`]
+      // studio.format is a STRONG override on STEP 1.
+      if (studio.format === 'carousel') L.push('OVERRIDE: they chose CAROUSEL — use generate_slideshow.')
+      else if (studio.format === 'clip') L.push('OVERRIDE: they chose CLIP — use make_clip.')
+      else if (studio.format === 'video') L.push('OVERRIDE: they chose generated VIDEO — use generate_video. Pick the mode from their words: ai_video by default; ugc if they want a spokesperson/avatar reading a script; edit if Library media is attached and they want a montage/edit.')
+      if (vids.length) L.push(`Attached video(s) from their Library: ${vids.map(v => `"${v.filename}" → ${v.url}`).join(' ; ')}. For a CLIP, set make_clip source_url to one${studio.captions === false ? ' (captions off)' : ''}. For an EDIT, pass them as source_asset_ids.`)
+      if (imgs.length) L.push(`Attached photo(s) from their Library: ${imgs.map(v => `"${v.filename}" → ${v.url}`).join(' ; ')}. Feature them in a carousel, animate one as ai_video (image_url), or include them in an edit (source_asset_ids).`)
       return L.join('\n- ')
     })() : ''
     const systemBlocks = [
@@ -920,6 +985,43 @@ ${scopeBlock}${liVoiceBlock}${trendBlocks}${feedbackBlock(fb)}`
                 if (base) fetch(`${base}/api/clips/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
                 result = { ok: true, job_id: job.id, note: 'Clip render started (takes a few minutes). The finished clips appear in the Clips tab where they can be previewed and posted. Tell the user it is rendering — do not claim it is ready yet.' }
               }
+            }
+          } else if (block.name === 'clarify') {
+            // A single inline multiple-choice card. Tapping an option re-sends
+            // that text as the next user turn, so the existing hop loop sees the
+            // answer — no DB write, no resolve persistence (the choice already
+            // lives in the transcript). Hard gate: tell the model to stop here.
+            const opts = (Array.isArray(block.input.options) ? block.input.options : []).slice(0, 4)
+              .map(o => ({ label: String(o.label || o.value || '').slice(0, 80), value: String(o.value || o.label || '').slice(0, 200), description: o.description ? String(o.description).slice(0, 120) : undefined }))
+              .filter(o => o.label)
+            if (opts.length < 2) { result = { error: 'clarify needs 2-4 options.' } }
+            else {
+              proposals.push({ question: { prompt: String(block.input.question || '').slice(0, 300), header: String(block.input.header || '').slice(0, 24), options: opts, allow_other: block.input.allow_other !== false } })
+              result = { ok: true, note: 'Question card shown inline. The user will tap an option (or type) and you will see their choice as their NEXT message — STOP here and wait; do not call more tools or answer further in this turn.' }
+            }
+          } else if (block.name === 'propose_campaign') {
+            // An editable consent card for a feeder-agent campaign. Auto-drafts
+            // the missing brief pieces from product/link, but creates NOTHING —
+            // the user reviews/edits and taps Launch on the card.
+            const product = String(block.input.product || '').slice(0, 300).trim()
+            if (!product) { result = { error: 'Say what to promote.' } }
+            else {
+              let draft = {}
+              try { draft = await draftCampaignBrief({ product, link: block.input.link || '' }) } catch { /* best effort */ }
+              const camp = {
+                product, link: block.input.link || null,
+                intensity: ['subtle', 'balanced', 'loud'].includes(block.input.intensity) ? block.input.intensity : 'balanced',
+                objective: ['awareness', 'signups', 'installs', 'traffic', 'waitlist', 'launch_buzz'].includes(block.input.objective) ? block.input.objective : 'awareness',
+                platforms: (Array.isArray(block.input.platforms) ? block.input.platforms : []).filter(p => ['x', 'linkedin', 'instagram', 'tiktok'].includes(p)),
+                pitch: block.input.pitch || draft.pitch || '',
+                audience: block.input.audience || draft.audience || '',
+                key_points: (Array.isArray(block.input.key_points) && block.input.key_points.length ? block.input.key_points : (draft.key_points || [])).map(s => String(s).slice(0, 120)).slice(0, 6),
+                cta: block.input.cta || '',
+                link_strategy: ['never', 'occasional', 'cta_only', 'every_promo'].includes(block.input.link_strategy) ? block.input.link_strategy : 'occasional',
+              }
+              camp.brief = composeBrief({ pitch: camp.pitch, audience: camp.audience, key_points: camp.key_points, avoid: draft.avoid })
+              proposals.push({ campaign: camp })
+              result = { ok: true, note: 'Campaign brief proposed inline — the user reviews/edits and taps Launch. Do NOT create it yourself; confirm in one short sentence and stop.' }
             }
           } else {
             result = await executeTool(block.name, block.input, user.id)

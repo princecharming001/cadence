@@ -617,6 +617,104 @@ function SlideEditor({ slides: slides0, imageUrls: urls0, style, format, handle,
   )
 }
 
+// ── Clarifying-question card — a single inline multiple-choice gate. Tapping an
+//    option (or typing in "Something else…") sends that text as the user's next
+//    message, so the agent loop sees the answer. Transient: not persisted — the
+//    choice already lives in the transcript as the user's turn. ────────────────
+function QuestionProposal({ proposal, onPick }) {
+  const q = proposal.question || {}
+  const opts = Array.isArray(q.options) ? q.options : []
+  const [pickedIdx, setPickedIdx] = useState(-1)
+  const [otherOpen, setOtherOpen] = useState(false)
+  const [otherText, setOtherText] = useState('')
+  const locked = pickedIdx >= 0
+  function pick(idx, val) { if (locked || !val) return; setPickedIdx(idx); onPick(val) }
+  return (
+    <motion.div className="card qp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
+      {q.header && <div className="qp-eyebrow">{q.header}</div>}
+      <div className="qp-q">{q.prompt}</div>
+      <div className="qp-opts">
+        {opts.map((o, i) => {
+          const on = pickedIdx === i
+          return (
+            <button key={i} type="button" className={'qp-opt' + (on ? ' on' : '') + (locked && !on ? ' dim' : '')} disabled={locked} onClick={() => pick(i, o.value || o.label)}>
+              <span className="qp-key">{String.fromCharCode(65 + i)}</span>
+              <span className="qp-opt-txt"><span className="qp-opt-l">{o.label}</span>{o.description && <span className="qp-opt-d">{o.description}</span>}</span>
+            </button>
+          )
+        })}
+        {q.allow_other && !locked && (otherOpen ? (
+          <div className="qp-other-open">
+            <input className="field" autoFocus placeholder="Describe what you want instead…" value={otherText}
+              onChange={e => setOtherText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); pick(99, otherText.trim()) } }} />
+            <button type="button" className="sc-send" disabled={!otherText.trim()} onClick={() => pick(99, otherText.trim())}><Send size={15} /></button>
+          </div>
+        ) : (
+          <button type="button" className="qp-opt qp-other" onClick={() => setOtherOpen(true)}>
+            <span className="qp-key"><Pencil size={12} /></span>
+            <span className="qp-opt-txt"><span className="qp-opt-l">Something else…</span></span>
+          </button>
+        ))}
+      </div>
+    </motion.div>
+  )
+}
+
+// ── Campaign proposal — an editable consent card for a feeder-agent campaign.
+//    The agent drafts the brief; the user tweaks it here and taps Launch, which
+//    POSTs to /api/agent-campaigns (nothing is created until they do). ──────────
+function CampaignProposal({ proposal, authed, onResolved, onOutcome }) {
+  const c = proposal.campaign || {}
+  const [pitch, setPitch] = useState(c.pitch || '')
+  const [audience, setAudience] = useState(c.audience || '')
+  const [keyPoints, setKeyPoints] = useState((c.key_points || []).join('\n'))
+  const [intensity, setIntensity] = useState(c.intensity || 'balanced')
+  const [objective, setObjective] = useState(c.objective || 'awareness')
+  const [linkStrategy, setLinkStrategy] = useState(c.link_strategy || 'occasional')
+  const [platforms, setPlatforms] = useState(Array.isArray(c.platforms) ? c.platforms : [])
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
+  const [done, setDone] = useState(proposal.resolved || null)
+  const [doneLabel, setDoneLabel] = useState(proposal.resolved_label || '')
+  const togglePlat = k => setPlatforms(p => p.includes(k) ? p.filter(x => x !== k) : [...p, k])
+  function finish(result, label) { setDone(result); setDoneLabel(label); onOutcome && onOutcome(result, label) }
+  async function launch() {
+    setErr(''); setBusy(true)
+    const brief = composeBriefClient({ pitch, audience, keyPoints, avoid: '' })
+    const body = {
+      name: (c.product || 'Campaign').slice(0, 42), product: c.product, link: c.link || undefined, brief,
+      pitch, audience, key_points: keyPoints.split('\n').map(s => s.trim()).filter(Boolean),
+      intensity, objective, platforms, link_strategy: linkStrategy, cta: c.cta || undefined, status: 'active',
+    }
+    const r = await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify(body) })
+    const d = await r.json().catch(() => ({}))
+    setBusy(false)
+    if (!r.ok || d.error) { setErr(d.error || 'Could not launch the campaign.'); return }
+    finish('launched', 'Campaign launched'); onResolved && onResolved()
+  }
+  if (done) return <div className={'dp-done ' + (done === 'discarded' ? 'discarded' : 'posted')}>{doneLabel || done}</div>
+  return (
+    <motion.div className="card dp cp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
+      <div className="dp-head"><span>Campaign · {c.product}</span><span className="muted tiny">agents weave it into their own posting</span></div>
+      <label className="cp-l">Pitch</label>
+      <textarea className="field dp-text" rows={2} placeholder="One line on what it is and why it matters…" value={pitch} onChange={e => setPitch(e.target.value)} />
+      <label className="cp-l">Who it's for</label>
+      <input className="field" placeholder="The audience, concretely" value={audience} onChange={e => setAudience(e.target.value)} />
+      <label className="cp-l">What lands <span className="muted tiny">(one per line)</span></label>
+      <textarea className="field dp-text" rows={3} placeholder={'A concrete reason it\'s worth talking about\nAnother one'} value={keyPoints} onChange={e => setKeyPoints(e.target.value)} />
+      <div className="cp-seg"><span className="cp-l">Push</span><div className="cp-chips">{INTENSITY_OPTS.map(([k, l]) => <button key={k} type="button" className={'chip' + (intensity === k ? ' on' : '')} onClick={() => setIntensity(k)}>{l}</button>)}</div></div>
+      <div className="cp-seg"><span className="cp-l">Objective</span><div className="cp-chips">{OBJECTIVE_OPTS.map(([k, l]) => <button key={k} type="button" className={'chip' + (objective === k ? ' on' : '')} onClick={() => setObjective(k)}>{l}</button>)}</div></div>
+      <div className="cp-seg"><span className="cp-l">Platforms</span><div className="cp-chips">{CAMP_PLATFORMS.map(([k, l]) => <button key={k} type="button" className={'chip' + (platforms.includes(k) ? ' on' : '')} onClick={() => togglePlat(k)}>{l}</button>)}</div></div>
+      <div className="cp-seg"><span className="cp-l">Links</span><div className="cp-chips">{LINK_STRAT_OPTS.map(([k, l]) => <button key={k} type="button" className={'chip' + (linkStrategy === k ? ' on' : '')} onClick={() => setLinkStrategy(k)}>{l}</button>)}</div></div>
+      {err && <div className="notice" style={{ color: '#B3372F', marginTop: 8 }}>{err}</div>}
+      <div className="dp-actions">
+        <button className="icon-btn x" title="Discard" onClick={() => finish('discarded', 'Discarded')}><Ex /></button>
+        <motion.button className="btn-primary btn-sm" whileTap={{ scale: 0.96 }} disabled={busy} onClick={launch}>{busy ? <span className="dots"><i /><i /><i /></span> : 'Launch campaign'}</motion.button>
+      </div>
+    </motion.div>
+  )
+}
+
 // ── Media proposal (carousel / clip) — inline preview in chat, mirrors
 //    DraftProposal's approve/resolve flow but publishes via /api/slideshow or
 //    /api/clips. Lets the user edit the caption, pick which connected accounts
@@ -2955,7 +3053,7 @@ function StudioComposer({ platform, library = [], messages, busy, onSend, onReso
         placeholder={`Describe a ${platform === 'tiktok' ? 'clip, photo carousel' : 'Reel, carousel'} — or anything else to make…`} />
       <div className="sc-opts">
         <div className="sc-chipset">
-          {[['auto', 'Auto'], ['carousel', 'Carousel'], ['clip', 'Clip']].map(([k, l]) => (
+          {[['auto', 'Auto'], ['carousel', 'Carousel'], ['clip', 'Clip'], ['video', 'Video']].map(([k, l]) => (
             <button key={k} className={'sc-chip seg-pill-chip' + (format === k ? ' on' : '')} onClick={() => setFormat(k)}>{l}</button>
           ))}
         </div>
@@ -2997,7 +3095,11 @@ function StudioComposer({ platform, library = [], messages, busy, onSend, onReso
                   <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
                     <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
                       <div className={'bubble ' + m.role}>{m.content}</div>
-                      {props.map((p, j) => (p.slideshow || p.video)
+                      {props.map((p, j) => p.question
+                        ? <QuestionProposal key={j} proposal={p} onPick={(v) => go(v)} />
+                        : p.campaign
+                        ? <CampaignProposal key={j} proposal={p} authed={authed} onResolved={refreshLive} onOutcome={(resolved, label) => onResolve(i, j, resolved, label)} />
+                        : (p.slideshow || p.video)
                         ? <MediaProposal key={j} proposal={p} index={j} total={props.length} authed={authed} socialAccounts={socialAccounts} onResolved={refreshLive} onOutcome={(resolved, label) => onResolve(i, j, resolved, label)} defaultHour={defaultHour} />
                         : <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={refreshLive} onOutcome={(resolved, label) => onResolve(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
                       )}
@@ -4214,7 +4316,11 @@ function App({ session }) {
                   <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
                     <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
                       <div className={'bubble ' + m.role}>{m.content}</div>
-                      {props.map((p, j) => (p.slideshow || p.video)
+                      {props.map((p, j) => p.question
+                        ? <QuestionProposal key={j} proposal={p} onPick={(v) => send(v)} />
+                        : p.campaign
+                        ? <CampaignProposal key={j} proposal={p} authed={authed} onResolved={refreshLive} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} />
+                        : (p.slideshow || p.video)
                         ? <MediaProposal key={j} proposal={p} index={j} total={props.length} authed={authed} socialAccounts={socialAccounts} onResolved={refreshLive} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} />
                         : <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={refreshLive} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
                       )}
@@ -4841,6 +4947,30 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .lib-check.on { background: var(--accent); border-color: var(--accent); }
 .lib-vid-fallback { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--faint); background: var(--bg2); }
 .lib-name { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* clarifying-question card */
+.qp { padding: 14px 14px 12px; width: 100%; }
+.qp-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-text); margin-bottom: 6px; }
+.qp-q { font-size: 14.5px; font-weight: 650; color: var(--ink); line-height: 1.4; margin-bottom: 12px; }
+.qp-opts { display: flex; flex-direction: column; gap: 8px; }
+.qp-opt { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 11px 12px; border-radius: 11px; border: 1px solid var(--line2); background: var(--surface); cursor: pointer; font-family: inherit; color: var(--ink); transition: border-color .15s, background .15s, opacity .15s; }
+.qp-opt:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.qp-opt:disabled { cursor: default; }
+.qp-opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.qp-opt.dim { opacity: .42; }
+.qp-key { flex: none; width: 26px; height: 26px; border-radius: 7px; background: var(--bg2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--muted); }
+.qp-opt.on .qp-key { background: var(--accent); border-color: var(--accent); color: #fff; }
+.qp-opt-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qp-opt-l { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+.qp-opt-d { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+.qp-other { border-style: dashed; color: var(--muted); }
+.qp-other .qp-opt-l { font-weight: 500; }
+.qp-other-open { display: flex; align-items: center; gap: 8px; }
+.qp-other-open .field { flex: 1; }
+/* campaign consent card */
+.cp .cp-l { display: block; font-size: 11px; font-weight: 700; color: var(--muted); margin: 10px 0 4px; }
+.cp .cp-l:first-of-type { margin-top: 4px; }
+.cp-seg { margin-top: 10px; }
+.cp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .ss-thumb { width: 46px; height: 58px; border-radius: 6px; object-fit: cover; flex: none; border: 1px solid var(--line); }
 /* collapsible sections + clip studio */
 .sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }
