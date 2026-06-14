@@ -3165,7 +3165,7 @@ function App({ session }) {
   // and OAuth 2.0 has no force-login, so we let the user switch accounts before authorizing.
   function connectX() { setXConnect(true) }
   async function startXConnect() { setXConnect(false); const r = await authed('/api/x/connect', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Could not start X connection.') }
-  async function disconnectX(id) { const target = id || xConns[0]?.id; if (!target) return; if (!confirm('Disconnect this X account? Its scheduled posts will stop publishing.')) return; await authed('/api/x/status', { method: 'DELETE', body: JSON.stringify({ id: target }) }); setBanner('Disconnected X account'); loadX() }
+  async function disconnectX(id) { const target = id || xConns[0]?.id; if (!target) return; if (!await askConfirm({ title: 'Disconnect this X account?', body: 'Its scheduled posts will stop publishing.', confirmLabel: 'Disconnect', danger: true })) return; await authed('/api/x/status', { method: 'DELETE', body: JSON.stringify({ id: target }) }); setBanner('Disconnected X account'); loadX() }
   async function makePrimary(id) { await authed('/api/x/status', { method: 'PATCH', body: JSON.stringify({ id, is_primary: true }) }); setBanner('Primary account updated'); loadX() }
 
   // "Run now" — trigger one campaign/rule and poll its live status until it
@@ -3621,11 +3621,11 @@ function App({ session }) {
                     return (
                     <div className="card camp-card" key={s.id}>
                       <div className="row" style={{ gap: 10 }}>
-                        <span className="status-dot" style={{ background: platformDot(s._platforms?.[0] || 'instagram'), flex: 'none' }} />
+                        <span className="row" style={{ gap: 3, flex: 'none' }}>{(s._platforms?.length ? s._platforms : [null]).map((pl, k) => <span key={k} className="status-dot" style={{ background: platformDot(pl) }} />)}</span>
                         {s.image_urls?.[0] && <img src={s.image_urls[0]} className="ss-thumb" alt="" />}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div className="conn-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{titleOf(s.title || s.topic)}</div>
-                          <div className="muted tiny" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.status === 'failed' ? <span style={{ color: '#B3372F' }}>Failed — {s.error || 'see Slideshows'} · </span> : s.status === 'posting' ? 'Posting · ' : ''}{s.image_urls?.length || 0} slides · {s._platforms?.[0] || 'instagram'} · {s.scheduled_for ? fmt(s.scheduled_for) : s.style}</div>
+                          <div className="muted tiny" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.status === 'failed' ? <span style={{ color: '#B3372F' }}>Failed — {s.error || 'see Slideshows'} · </span> : s.status === 'posting' ? 'Posting · ' : ''}{s.image_urls?.length || 0} slides · {s._platforms?.length ? s._platforms.join(', ') : 'carousel'} · {s.scheduled_for ? fmt(s.scheduled_for) : s.style}</div>
                         </div>
                         {canEdit && <button className="mini" onClick={() => editing ? setSsEdit(null) : setSsEdit({ id: s.id, when: toLocalInput(new Date(s.scheduled_for)) })}><Clock size={12} /> {editing ? 'Close' : 'Reschedule'}</button>}
                         {s.status !== 'posted' && <button className="mini danger" onClick={() => deleteSlideshow(s.id)}><Trash2 size={12} /></button>}
