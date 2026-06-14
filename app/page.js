@@ -7,7 +7,7 @@ import dynamic from 'next/dynamic'
 import {
   Check as LCheck, X as LX, RefreshCw, Sparkles, Send, Plus,
   Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, Image as LImage,
-  ThumbsUp, ThumbsDown, Upload, Play, MessageCircle, Star, Loader2,
+  ThumbsUp, ThumbsDown, Upload, Play, MessageCircle, Star, Loader2, Film, FolderOpen, Search as LSearch,
   ArrowLeft, CreditCard, Users, User as LUser, Bot, History as LHistory,
   Calendar as LCalendar, List as LList,
 } from 'lucide-react'
@@ -1669,8 +1669,10 @@ const EDIT_FORMAT_LIST = [
   { key: 'thread', label: 'Thread', desc: 'a 2-3 tweet mini-thread that advances with the clip' },
   { key: 'reddit', label: 'Reddit story', desc: 'r/ story card opens the clip, captions carry it' },
 ]
-function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, onPost, platformFocus }) {
+function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, onPost, platformFocus, library = [] }) {
   const [url, setUrl] = useState(''); const [fileName, setFileName] = useState('')
+  const [assetId, setAssetId] = useState(null); const [showLib, setShowLib] = useState(false)
+  const libVideos = library.filter(a => a.type === 'video' && a.url)
   const [format, setFormat] = useState('vertical'); const [len, setLen] = useState('short'); const [maxClips, setMaxClips] = useState(3)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef(null); const logoRef = useRef(null)
@@ -1701,17 +1703,18 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
     e.target.value = ''
   }
   async function go() {
-    if (!url.trim()) return
+    if (!url.trim() && !assetId) return
     setBusy(true)
     const ok = await onCreate({
-      source_url: url.trim(), source_name: fileName || null, format,
+      source_url: assetId ? undefined : url.trim(), source_asset_id: assetId || undefined,
+      source_name: fileName || null, format,
       target_len: len, max_clips: Number(maxClips), captions: true,
       edit_formats: edits,
       watermark: wmOn ? ((watermark || wmDefault).trim() || null) : null,
       outro: outroOn, outro_logo_url: outroOn ? (logoUrl || null) : null,
     })
     setBusy(false)
-    if (ok) { setUrl(''); setFileName('') }
+    if (ok) { setUrl(''); setFileName(''); setAssetId(null) }
   }
 
   return (
@@ -1719,7 +1722,8 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
       <div className="card camp-form">
         <div className="muted tiny" style={{ marginBottom: 8 }}>Drop in a long video — Cadence cuts the best moments into ready-to-post clips.</div>
         <div className="row" style={{ gap: 8 }}>
-          <input className="field" style={{ flex: 1 }} placeholder="Paste a YouTube link or direct video URL" value={fileName ? `Uploaded: ${fileName}` : url} onChange={e => { setUrl(e.target.value); setFileName('') }} disabled={!!fileName} />
+          <input className="field" style={{ flex: 1 }} placeholder="Paste a YouTube link or direct video URL" value={fileName ? `${assetId ? 'Library' : 'Uploaded'}: ${fileName}` : url} onChange={e => { setUrl(e.target.value); setFileName(''); setAssetId(null) }} disabled={!!fileName} />
+          {libVideos.length > 0 && <button className="btn-ghost btn-sm" disabled={busy} onClick={() => setShowLib(true)} title="Pick a video from your Library"><LImage size={13} /> Library</button>}
           <button className="btn-ghost btn-sm" disabled={busy} onClick={() => fileRef.current?.click()}><Upload size={13} /> Upload</button>
           <input ref={fileRef} type="file" accept="video/*" style={{ display: 'none' }} onChange={pickFile} />
         </div>
@@ -1758,7 +1762,7 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
             {[['short', '15–30s'], ['medium', '30–60s']].map(([k, l]) => <button key={k} type="button" className={'chip' + (len === k ? ' on' : '')} onClick={() => setLen(k)}>{l}</button>)}
             <label className="camp-num"><input type="number" min={1} max={5} className="field" value={maxClips} onChange={e => setMaxClips(e.target.value)} /> clips</label>
           </div>
-          <button className="btn-primary btn-sm" disabled={busy || !url.trim()} onClick={go}>{busy ? <Loader2 size={13} className="spin" /> : <><Wand2 size={13} /> Make clips</>}</button>
+          <button className="btn-primary btn-sm" disabled={busy || (!url.trim() && !assetId)} onClick={go}>{busy ? <Loader2 size={13} className="spin" /> : <><Wand2 size={13} /> Make clips</>}</button>
         </div>
       </div>
 
@@ -1805,6 +1809,27 @@ function ClipStudio({ jobs, accounts, configured, onCreate, onUpload, onDelete, 
           )}
         </div>
       ))}
+
+      <AnimatePresence>
+        {showLib && (
+          <motion.div className="overlay" onClick={() => setShowLib(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <motion.div className="card modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.97 }} transition={spring}>
+              <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+                <span style={{ fontWeight: 700, fontSize: 15 }}>Clip from your Library</span>
+                <button className="x-close" onClick={() => setShowLib(false)}><LX size={18} /></button>
+              </div>
+              <div className="lib-grid">
+                {libVideos.map(a => (
+                  <button key={a.id} className="lib-thumb" style={{ aspectRatio: '4/5' }} onClick={() => { setAssetId(a.id); setFileName(a.filename || 'video'); setUrl(''); setShowLib(false) }}>
+                    {a.thumb_url ? <img src={a.thumb_url} alt="" /> : <div className="lib-noimg"><Play size={20} /></div>}
+                    <span className="lib-badge"><Play size={11} /></span>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   )
 }
@@ -2849,7 +2874,7 @@ function AccountPage({ me, session, accountTab, setAccountTab, authed, banner, p
 
 // ── Media Library — upload content, organize into albums, see how Cadence
 //    reads each asset so it can reuse it tastefully in slideshows & clips. ─────
-function AssetCard({ a, selected, onToggle, onOpen }) {
+function AssetCard({ a, selected, onToggle, onOpen, onFavorite }) {
   const an = a.analysis || {}
   const busy = ['uploading', 'analyzing', 'processing'].includes(a.status)
   const thumb = a.type === 'video' ? a.thumb_url : (a.url || a.thumb_url)
@@ -2862,32 +2887,58 @@ function AssetCard({ a, selected, onToggle, onOpen }) {
         {a.status === 'failed' && <span className="lib-status bad">failed</span>}
         {a.status === 'ready' && (an.mood || an.subject) && <span className="lib-tags">{[an.subject, an.mood].filter(Boolean).join(' · ')}</span>}
       </button>
+      {onFavorite && <button className={'lib-fav' + (a.is_favorite ? ' on' : '')} title={a.is_favorite ? 'Unfavorite' : 'Favorite'} onClick={() => onFavorite(a.id, !a.is_favorite)}><Star size={12} fill={a.is_favorite ? 'currentColor' : 'none'} /></button>}
       <button className={'lib-check' + (selected ? ' on' : '')} onClick={() => onToggle(a.id)}>{selected && <LCheck size={11} strokeWidth={4} />}</button>
     </div>
   )
 }
 
-function MediaLibrary({ assets, albums, onUpload, onCreateAlbum, onDeleteAlbum, onMove, onDelete }) {
-  const [album, setAlbum] = useState('all')
+const SMART_VIEWS = [
+  ['all', 'All media', a => true],
+  ['favorites', 'Favorites', a => a.is_favorite],
+  ['recent', 'Recently used', a => !!a.last_used_at],
+  ['none', 'Unfiled', a => !a.album_id],
+  ['portraits', 'Portraits', a => a.analysis?.orientation === 'portrait'],
+  ['textfriendly', 'Text-friendly', a => (a.analysis?.text_overlay_score || 0) >= 0.6],
+  ['broll', 'B-roll (no speech)', a => a.type === 'video' && a.analysis?.has_speech === false],
+]
+function MediaLibrary({ assets, albums, onUpload, onCreateAlbum, onDeleteAlbum, onMove, onDelete, onFavorite, onUseIn }) {
+  const [view, setView] = useState('all') // smart-view key OR album id
   const [sel, setSel] = useState(new Set())
   const [creating, setCreating] = useState(false); const [name, setName] = useState('')
   const [detail, setDetail] = useState(null)
-  const shown = assets.filter(a => album === 'all' ? true : album === 'none' ? !a.album_id : a.album_id === album)
-  const targetAlbum = (album !== 'all' && album !== 'none') ? album : null
+  const [q, setQ] = useState(''); const [facet, setFacet] = useState({ type: '', orientation: '', subject: '', mood: '' }); const [sort, setSort] = useState('new')
+  const tok = s => String(s || '').toLowerCase()
+  const isAlbum = albums.some(al => al.id === view)
+  const smartFn = (SMART_VIEWS.find(v => v[0] === view) || SMART_VIEWS[0])[2]
+
+  let shown = assets.filter(a => isAlbum ? a.album_id === view : smartFn(a))
+  if (facet.type) shown = shown.filter(a => a.type === facet.type)
+  if (facet.orientation) shown = shown.filter(a => a.analysis?.orientation === facet.orientation)
+  if (facet.subject) shown = shown.filter(a => a.analysis?.subject === facet.subject)
+  if (facet.mood) shown = shown.filter(a => a.analysis?.mood === facet.mood)
+  if (q.trim()) { const n = tok(q); shown = shown.filter(a => tok(a.filename).includes(n) || tok(a.analysis?.scene).includes(n) || (a.analysis?.labels || []).some(l => tok(l).includes(n))) }
+  shown = [...shown].sort((x, y) => sort === 'quality' ? ((y.analysis?.quality || 0) - (x.analysis?.quality || 0)) : sort === 'used' ? (new Date(y.last_used_at || 0) - new Date(x.last_used_at || 0)) : (new Date(y.created_at) - new Date(x.created_at)))
+
+  const subjects = [...new Set(assets.map(a => a.analysis?.subject).filter(Boolean))].sort()
+  const moods = [...new Set(assets.map(a => a.analysis?.mood).filter(Boolean))].sort()
+  const targetAlbum = isAlbum ? view : null
   const toggleSel = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   function onPick(e) {[...(e.target.files || [])].forEach(f => onUpload(f, targetAlbum)); e.target.value = '' }
   async function create() { if (!name.trim()) return; if (await onCreateAlbum(name.trim())) { setName(''); setCreating(false) } }
   const analyzing = assets.filter(a => ['analyzing', 'processing', 'uploading'].includes(a.status)).length
+  const Facet = ({ k, v, label }) => <button type="button" className={'lib-facet' + (facet[k] === v ? ' on' : '')} onClick={() => setFacet(f => ({ ...f, [k]: f[k] === v ? '' : v }))}>{label}</button>
 
   return (
     <div className="lib">
       <div className="lib-side">
-        <button className={'lib-album' + (album === 'all' ? ' on' : '')} onClick={() => setAlbum('all')}>All media <span>{assets.length}</span></button>
-        <button className={'lib-album' + (album === 'none' ? ' on' : '')} onClick={() => setAlbum('none')}>Unfiled <span>{assets.filter(a => !a.album_id).length}</span></button>
+        {SMART_VIEWS.map(([k, l, fn]) => (
+          <button key={k} className={'lib-album' + (view === k ? ' on' : '')} onClick={() => setView(k)}>{l} <span>{assets.filter(fn).length}</span></button>
+        ))}
         <div className="lib-side-h">Albums</div>
         {albums.map(al => (
           <div key={al.id} className="lib-album-row">
-            <button className={'lib-album' + (album === al.id ? ' on' : '')} onClick={() => setAlbum(al.id)}>{al.name} <span>{al.count}</span></button>
+            <button className={'lib-album' + (view === al.id ? ' on' : '')} onClick={() => setView(al.id)}>{al.name} <span>{al.count}</span></button>
             <button className="lib-album-del" title="Delete album" onClick={() => onDeleteAlbum(al.id)}><Trash2 size={11} /></button>
           </div>
         ))}
@@ -2901,9 +2952,22 @@ function MediaLibrary({ assets, albums, onUpload, onCreateAlbum, onDeleteAlbum, 
 
       <div className="lib-main">
         <div className="lib-top">
-          <div className="muted tiny" style={{ flex: 1, minWidth: 0 }}>Upload your photos & clips — Cadence analyzes each one so it can weave them tastefully into your slideshows & clips.{analyzing ? ` · ${analyzing} analyzing…` : ''}</div>
+          <div className="muted tiny" style={{ flex: 1, minWidth: 0 }}>Upload your photos & clips — Cadence reads each one so it can weave them tastefully into your reels & carousels.{analyzing ? ` · ${analyzing} analyzing…` : ''}</div>
           <label className="btn-primary btn-sm row" style={{ gap: 6, cursor: 'pointer' }}><Upload size={14} /> Upload<input type="file" multiple accept="image/*,video/*" hidden onChange={onPick} /></label>
         </div>
+
+        {assets.length > 0 && (
+          <div className="lib-filters">
+            <div className="lib-search"><LSearch size={13} /><input placeholder="Search your media…" value={q} onChange={e => setQ(e.target.value)} /></div>
+            <Facet k="type" v="image" label="Photos" /><Facet k="type" v="video" label="Videos" />
+            <Facet k="orientation" v="portrait" label="Portrait" /><Facet k="orientation" v="landscape" label="Landscape" />
+            {subjects.slice(0, 5).map(s => <Facet key={s} k="subject" v={s} label={s} />)}
+            {moods.slice(0, 4).map(m => <Facet key={m} k="mood" v={m} label={m} />)}
+            <select className="field lib-sort" value={sort} onChange={e => setSort(e.target.value)}>
+              <option value="new">Newest</option><option value="quality">Best quality</option><option value="used">Recently used</option>
+            </select>
+          </div>
+        )}
 
         {sel.size > 0 && (
           <div className="lib-bulk">
@@ -2925,7 +2989,7 @@ function MediaLibrary({ assets, albums, onUpload, onCreateAlbum, onDeleteAlbum, 
             <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>Upload images and videos. Cadence reads each one — subject, mood, how well text sits on it — and pulls the right ones into your carousels and clips. Assign albums to campaigns to control what each one draws from.</div>
           </div>
         ) : (
-          <div className="lib-grid">{shown.map(a => <AssetCard key={a.id} a={a} selected={sel.has(a.id)} onToggle={toggleSel} onOpen={setDetail} />)}</div>
+          <div className="lib-grid">{shown.map(a => <AssetCard key={a.id} a={a} selected={sel.has(a.id)} onToggle={toggleSel} onOpen={setDetail} onFavorite={onFavorite} />)}</div>
         )}
       </div>
 
@@ -2954,8 +3018,10 @@ function MediaLibrary({ assets, albums, onUpload, onCreateAlbum, onDeleteAlbum, 
                 </div>
                 {Array.isArray(an.palette) && an.palette.length > 0 && <div className="row" style={{ gap: 4, marginTop: 10 }}>{an.palette.map((c, i) => <span key={i} style={{ width: 22, height: 22, borderRadius: 5, background: c, border: '1px solid var(--line)' }} title={c} />)}</div>}
               </>)}
-              <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-                <button className="mini danger" onClick={() => { onDelete(detail.id); setDetail(null) }}><Trash2 size={12} /> Delete</button>
+              <div className="row" style={{ gap: 8, marginTop: 14 }}>
+                {onFavorite && <button className={'mini' + (detail.is_favorite ? ' on' : '')} onClick={() => { onFavorite(detail.id, !detail.is_favorite); setDetail(d => ({ ...d, is_favorite: !d.is_favorite })) }}><Star size={12} fill={detail.is_favorite ? 'currentColor' : 'none'} /> {detail.is_favorite ? 'Favorited' : 'Favorite'}</button>}
+                {onUseIn && detail.status === 'ready' && <button className="btn-primary btn-sm" onClick={() => { onUseIn(detail); setDetail(null) }}><Wand2 size={12} /> Use in {detail.type === 'video' ? 'a clip' : 'a carousel'}</button>}
+                <button className="mini danger" style={{ marginLeft: 'auto' }} onClick={() => { onDelete(detail.id); setDetail(null) }}><Trash2 size={12} /> Delete</button>
               </div>
             </motion.div>
           </motion.div>
@@ -2995,6 +3061,7 @@ function App({ session }) {
   const [feederAgents, setFeederAgents] = useState([])
   const [agentCampaigns, setAgentCampaigns] = useState([])
   const [mediaAssets, setMediaAssets] = useState([]); const [mediaAlbums, setMediaAlbums] = useState([])
+  const [studioMode, setStudioMode] = useState('carousel'); const [studioPlatform, setStudioPlatform] = useState('instagram')
   const [chatList, setChatList] = useState([]); const [historyOpen, setHistoryOpen] = useState(false)
   const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
   const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
@@ -3410,6 +3477,10 @@ function App({ session }) {
   async function deleteAlbum(id) { if (!await askConfirm({ title: 'Delete album?', body: 'The media inside is kept — just un-filed.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/media', { method: 'DELETE', body: JSON.stringify({ albumId: id }) }); loadMedia() }
   async function moveAssets(ids, albumId) { await authed('/api/media', { method: 'PATCH', body: JSON.stringify({ ids, album_id: albumId }) }); loadMedia() }
   async function deleteAsset(id) { await authed('/api/media', { method: 'DELETE', body: JSON.stringify({ id }) }); loadMedia() }
+  async function favoriteAsset(id, favorite) {
+    setMediaAssets(list => list.map(a => a.id === id ? { ...a, is_favorite: favorite } : a)) // optimistic
+    await authed('/api/media', { method: 'PATCH', body: JSON.stringify({ id, favorite }) }); loadMedia()
+  }
 
   async function addLinkedIn(profileUrl, isMentor) {
     const r = await authed('/api/linkedin', { method: 'POST', body: JSON.stringify({ profileUrl, maxPosts: 50, isMentor }) })
@@ -3544,10 +3615,10 @@ function App({ session }) {
         <section className={'pane left' + (['x', 'linkedin', 'instagram', 'tiktok'].includes(tab) ? ` plat-${tab}` : '')}>
           <div className="left-head">
             <div className="seg">
-              {['queue', 'x', 'linkedin', 'instagram', 'tiktok', 'campaigns', 'library'].map(t => (
+              {['queue', 'studio', 'x', 'linkedin', 'instagram', 'tiktok', 'campaigns'].map(t => (
                 <button key={t} onClick={() => setTab(t)} className={'seg-btn' + (tab === t ? ' on' : '')}>
                   {tab === t && <motion.span layoutId="seg-pill" className="seg-pill" transition={spring} />}
-                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok', campaigns: 'Campaigns', library: 'Library' })[t]}</span>
+                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', studio: 'Studio', x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok', campaigns: 'Campaigns' })[t]}</span>
                 </button>
               ))}
             </div>
@@ -3736,24 +3807,13 @@ function App({ session }) {
                   )}
                   {!socialConfigured && <div className="notice" style={{ margin: '0 0 10px' }}>Connect Zernio to post — previews work now.</div>}
 
-                  <div className="seg" style={{ marginBottom: 12 }}>
-                    {[['carousels', 'Carousels'], ['clips', plat === 'instagram' ? 'Reels' : 'Clips']].map(([k, l]) => (
-                      <button key={k} className={'seg-btn' + (igMode === k ? ' on' : '')} onClick={() => setIgMode(k)}>
-                        {igMode === k && <motion.span layoutId="ig-pill" className="seg-pill" transition={spring} />}
-                        <span style={{ position: 'relative', zIndex: 1 }}>{l}</span>
-                      </button>
-                    ))}
-                  </div>
-                  {igMode === 'carousels' && (
-                    <SlideshowStudio hideAccounts platformFocus={plat} accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows} albums={mediaAlbums} authed={authed}
-                      onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} onRefresh={loadSlideshows} />
-                  )}
-                  {igMode === 'clips' && (
-                    <ClipStudio platformFocus={plat} jobs={clipJobs} accounts={socialAccounts} configured={socialConfigured}
-                      onCreate={createClipJob} onUpload={uploadClipFile} onDelete={deleteClipJob} onPost={postClip} />
-                  )}
+                  {/* Create lives in the unified Studio now — this tab is the
+                      platform dashboard (auto-reply, niche engage, campaigns). */}
+                  <button className="btn-primary row" style={{ gap: 8, width: '100%', justifyContent: 'center', margin: '2px 0 6px' }} onClick={() => { setStudioPlatform(plat); setStudioMode('carousel'); setTab('studio') }}>
+                    <Wand2 size={15} /> Make {plat === 'instagram' ? 'Reels & carousels' : 'clips & carousels'} in Studio
+                  </button>
 
-                  <div style={{ marginTop: 16 }}>
+                  <div style={{ marginTop: 14 }}>
                     <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={engSettings.some(s => s.platform === plat && s.enabled)} />}>
                       <AutoReply platforms={[plat]} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
                     </Section>
@@ -3842,9 +3902,30 @@ function App({ session }) {
                   onSpawn={spawnAgent} onPatchAgent={patchAgent} onRunAgent={runAgent} onOpenAgent={setAgentProfileId} />
               </>)}
 
-              {tab === 'library' && (
-                <MediaLibrary assets={mediaAssets} albums={mediaAlbums}
-                  onUpload={uploadMedia} onCreateAlbum={createAlbum} onDeleteAlbum={deleteAlbum} onMove={moveAssets} onDelete={deleteAsset} />
+              {/* STUDIO — one place to make Reels/Clips + Carousels, fed by your
+                  Library. Left rail = what to make + platform; canvas = the maker. */}
+              {tab === 'studio' && (
+                <div className="studio">
+                  <div className="studio-rail">
+                    <div className="studio-plat">
+                      {[['instagram', 'Instagram', IGGlyph], ['tiktok', 'TikTok', TTGlyph]].map(([k, l, G]) => (
+                        <button key={k} className={'studio-plat-btn' + (studioPlatform === k ? ' on' : '')} onClick={() => setStudioPlatform(k)}><G size={13} /> {l}</button>
+                      ))}
+                    </div>
+                    <div className="studio-verbs">
+                      {[['carousel', studioPlatform === 'tiktok' ? 'Photo carousel' : 'Carousel', LImage, 'AI slides + your photos'], ['clip', studioPlatform === 'tiktok' ? 'Clip' : 'Reel / Clip', Film, 'cut from a video'], ['library', 'Library', FolderOpen, 'your media + albums']].map(([k, l, Ic, d]) => (
+                        <button key={k} className={'studio-verb' + (studioMode === k ? ' on' : '')} onClick={() => setStudioMode(k)}>
+                          <Ic size={17} /><span className="studio-verb-txt"><span className="studio-verb-l">{l}</span><span className="studio-verb-d">{d}</span></span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="studio-canvas">
+                    {studioMode === 'carousel' && <SlideshowStudio hideAccounts platformFocus={studioPlatform} accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows} albums={mediaAlbums} authed={authed} onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} onRefresh={loadSlideshows} />}
+                    {studioMode === 'clip' && <ClipStudio platformFocus={studioPlatform} jobs={clipJobs} accounts={socialAccounts} configured={socialConfigured} library={mediaAssets} onCreate={createClipJob} onUpload={uploadClipFile} onDelete={deleteClipJob} onPost={postClip} />}
+                    {studioMode === 'library' && <MediaLibrary assets={mediaAssets} albums={mediaAlbums} onUpload={uploadMedia} onCreateAlbum={createAlbum} onDeleteAlbum={deleteAlbum} onMove={moveAssets} onDelete={deleteAsset} onFavorite={favoriteAsset} onUseIn={(a) => setStudioMode(a.type === 'video' ? 'clip' : 'carousel')} />}
+                  </div>
+                </div>
               )}
 
             </motion.div>
@@ -4503,7 +4584,7 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .lib-thumb { position: relative; width: 100%; aspect-ratio: 4/5; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #0001; cursor: pointer; padding: 0; display: block; }
 .lib-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .lib-noimg { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--faint); }
-.lib-badge { position: absolute; top: 7px; left: 7px; background: rgba(8,9,13,.6); color: #fff; border-radius: 6px; padding: 3px 5px; display: flex; }
+.lib-badge { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(8,9,13,.55); color: #fff; border-radius: 999px; padding: 7px; display: flex; }
 .lib-status { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.55); color: var(--ink); font-size: 11.5px; font-weight: 600; }
 .lib-status.bad { background: rgba(179,55,47,.12); color: #B3372F; }
 .lib-tags { position: absolute; bottom: 0; left: 0; right: 0; padding: 5px 7px; background: linear-gradient(transparent, rgba(8,9,13,.7)); color: #fff; font-size: 10.5px; font-weight: 600; }
@@ -4511,6 +4592,38 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .lib-check.on { background: var(--accent); border-color: var(--accent); }
 .lib-chip { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 600; }
 .lib-chip.subtle { background: var(--line); color: var(--muted); font-weight: 500; }
+.lib-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.lib-search { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--faint); background: var(--card); }
+.lib-search input { border: none; background: none; outline: none; font-size: 12.5px; color: var(--ink); width: 150px; }
+.lib-facet { font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); cursor: pointer; text-transform: capitalize; }
+.lib-facet:hover { border-color: var(--accent); }
+.lib-facet.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.lib-sort { width: auto; padding: 6px 10px; font-size: 12.5px; margin-left: auto; }
+.lib-fav { position: absolute; top: 7px; left: 7px; width: 22px; height: 22px; border-radius: 6px; border: none; background: rgba(8,9,13,.45); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity .15s; }
+.lib-cell:hover .lib-fav, .lib-fav.on { opacity: 1; }
+.lib-fav.on { color: #FFD24A; }
+.studio { display: flex; gap: 16px; align-items: flex-start; }
+.studio-rail { width: 196px; flex: none; display: flex; flex-direction: column; gap: 12px; position: sticky; top: 0; }
+.studio-plat { display: flex; gap: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+.studio-plat-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 4px; border-radius: 8px; border: none; background: none; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); }
+.studio-plat-btn.on { background: var(--accent); color: #fff; }
+.studio-verbs { display: flex; flex-direction: column; gap: 6px; }
+.studio-verb { display: flex; align-items: center; gap: 11px; padding: 12px 13px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); cursor: pointer; text-align: left; color: var(--ink); transition: border-color .15s, background .15s; }
+.studio-verb:hover { border-color: var(--accent); }
+.studio-verb.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.studio-verb-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.studio-verb-l { font-size: 13.5px; font-weight: 700; }
+.studio-verb-d { font-size: 11px; opacity: .72; }
+.studio-canvas { flex: 1; min-width: 0; }
+@media (max-width: 720px) {
+  .studio { flex-direction: column; }
+  .studio-rail { width: 100%; position: static; }
+  .studio-verbs { flex-direction: row; }
+  .studio-verb { flex: 1; }
+  .studio-verb-d { display: none; }
+  .lib { flex-direction: column; }
+  .lib-side { width: 100%; flex-direction: row; flex-wrap: wrap; }
+}
 .ss-thumb { width: 46px; height: 58px; border-radius: 6px; object-fit: cover; flex: none; border: 1px solid var(--line); }
 /* collapsible sections + clip studio */
 .sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }

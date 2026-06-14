@@ -104,6 +104,11 @@ export async function PATCH(req) {
     await admin.from('media_albums').update(patch).eq('id', b.albumId).eq('user_id', user.id)
     return Response.json({ ok: true })
   }
+  // Favorite toggle.
+  if (b.id && typeof b.favorite === 'boolean') {
+    await admin.from('media_assets').update({ is_favorite: b.favorite }).eq('id', b.id).eq('user_id', user.id)
+    return Response.json({ ok: true })
+  }
   const ids = Array.isArray(b.ids) ? b.ids : (b.id ? [b.id] : [])
   if (!ids.length) return Response.json({ error: 'id required' }, { status: 400 })
   await admin.from('media_assets').update({ album_id: b.album_id || null }).in('id', ids).eq('user_id', user.id)

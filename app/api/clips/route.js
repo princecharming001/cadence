@@ -38,12 +38,20 @@ export async function POST(req) {
     } catch (e) { return Response.json({ error: e.message }, { status: 500 }) }
   }
 
-  const source_url = String(b.source_url || '').trim()
-  if (!/^https?:\/\//.test(source_url)) return Response.json({ error: 'Paste a direct video link or upload a file.' }, { status: 400 })
+  // Source can be a pasted/uploaded URL OR a video already in the user's Library.
+  let source_url = String(b.source_url || '').trim()
+  let source_name = b.source_name || null
+  let source_asset_id = null
+  if (b.source_asset_id) {
+    const { data: asset } = await admin.from('media_assets').select('id, url, filename, type').eq('id', b.source_asset_id).eq('user_id', user.id).single()
+    if (!asset || asset.type !== 'video' || !asset.url) return Response.json({ error: 'That library video is not available.' }, { status: 400 })
+    source_url = asset.url; source_name = source_name || asset.filename; source_asset_id = asset.id
+  }
+  if (!/^https?:\/\//.test(source_url)) return Response.json({ error: 'Paste a direct video link, upload a file, or pick one from your Library.' }, { status: 400 })
   const format = CLIP_FORMATS.some(f => f.key === b.format) ? b.format : 'vertical'
   const edit_formats = (Array.isArray(b.edit_formats) ? b.edit_formats : []).filter(e => EDIT_FORMATS.some(f => f.key === e))
   const row = {
-    user_id: user.id, source_url, source_name: b.source_name || null,
+    user_id: user.id, source_url, source_name, source_asset_id,
     format, captions: b.captions !== false,
     target_len: ['short', 'medium'].includes(b.target_len) ? b.target_len : 'short',
     max_clips: Math.min(Math.max(Number(b.max_clips) || 3, 1), 5),
