@@ -8,7 +8,7 @@ import {
   Check as LCheck, X as LX, RefreshCw, Sparkles, Send, Plus,
   Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, Image as LImage,
   ThumbsUp, ThumbsDown, Upload, Play, MessageCircle, Star, Loader2, Film, FolderOpen, Search as LSearch,
-  Paperclip, Captions, Video as LVideo,
+  Paperclip, Captions, Video as LVideo, LayoutGrid as LGrid,
   ArrowLeft, CreditCard, Users, User as LUser, Bot, History as LHistory,
   Calendar as LCalendar, List as LList,
 } from 'lucide-react'
@@ -822,7 +822,7 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
     }
     setBusy(false)
     const names = accts.filter(a => picked.has(a.id)).map(a => '@' + a.username).join(', ')
-    const label = mode === 'draft' ? 'Saved to Slideshows'
+    const label = mode === 'draft' ? 'Saved to Projects'
       : mode === 'schedule' ? `Scheduled · ${fmt(new Date(when).toISOString())}`
       : `Posted to ${names}`
     finish(mode === 'draft' ? 'saved' : mode === 'schedule' ? 'scheduled' : 'posted', label)
@@ -3281,6 +3281,95 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, authe
   )
 }
 
+// ── Projects — one home for everything you've created: carousels, clips, and
+//    generated videos/edits. Unifies the slideshows + clip_jobs + video_jobs
+//    tables into a single gallery with preview, status, and post/delete. ───────
+function Projects({ slideshows = [], clipJobs = [], videoJobs = [], socialAccounts = [], onDeleteSlideshow, onDeleteClip, onDeleteVideo, onPostClip, onPostVideo, onGoCreate }) {
+  const [filter, setFilter] = useState('all')      // all | carousel | clip | video
+  const [postOpen, setPostOpen] = useState(null)   // item key whose account-picker is open
+  const igtt = socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform))
+
+  const items = []
+  for (const s of slideshows) {
+    items.push({ key: 'ss' + s.id, kind: 'carousel', badge: 'Carousel', when: s.created_at || s.scheduled_for, status: s.status || 'draft', title: s.title || s.topic || 'Carousel', thumb: s.image_urls?.[0], meta: `${s.image_urls?.length || 0} slides`, del: () => onDeleteSlideshow(s.id) })
+  }
+  for (const j of clipJobs) {
+    if (j.status === 'done' && Array.isArray(j.clips) && j.clips.length) {
+      j.clips.forEach((c, i) => items.push({ key: 'cl' + j.id + '_' + i, kind: 'clip', badge: 'Clip', when: j.created_at, status: 'ready', title: c.title || j.source_name || 'Clip', video: c.url, meta: c.end != null && c.start != null ? `${Math.round(c.end - c.start)}s` : '', post: ids => onPostClip(j.id, i, ids), del: () => onDeleteClip(j.id) }))
+    } else {
+      items.push({ key: 'cl' + j.id, kind: 'clip', badge: 'Clip', when: j.created_at, status: j.status, title: j.source_name || 'Clip', detail: j.status_detail, error: j.error, del: () => onDeleteClip(j.id) })
+    }
+  }
+  for (const v of videoJobs) {
+    const badge = v.mode === 'ugc' ? 'Avatar' : v.mode === 'edit' ? 'Edit' : 'AI video'
+    items.push({ key: 'vd' + v.id, kind: 'video', badge, when: v.created_at, status: v.status === 'done' ? 'ready' : v.status, title: v.prompt || v.script || badge, video: v.video_url, thumb: v.thumb_url, detail: v.status_detail === 'Ready' ? '' : v.status_detail, error: v.error, post: ids => onPostVideo(v.id, ids), del: () => onDeleteVideo(v.id) })
+  }
+  items.sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0))
+  const shown = filter === 'all' ? items : items.filter(it => it.kind === filter)
+  const counts = { all: items.length, carousel: items.filter(i => i.kind === 'carousel').length, clip: items.filter(i => i.kind === 'clip').length, video: items.filter(i => i.kind === 'video').length }
+
+  return (
+    <div className="proj">
+      <div className="proj-filters">
+        {[['all', 'All'], ['carousel', 'Carousels'], ['clip', 'Clips'], ['video', 'Videos']].map(([k, l]) => (
+          <button key={k} className={'sc-chip' + (filter === k ? ' on' : '')} onClick={() => setFilter(k)}>{l}{counts[k] ? ` · ${counts[k]}` : ''}</button>
+        ))}
+      </div>
+      {shown.length === 0 ? (
+        <div className="proj-empty">
+          <div className="wordmark" style={{ fontSize: 18, marginBottom: 6 }}>Nothing here yet</div>
+          <div className="muted" style={{ fontSize: 13, marginBottom: 14 }}>Everything you make in the Studio — carousels, clips, AI videos, edits — lands here.</div>
+          <button className="btn-primary btn-sm" onClick={onGoCreate}><Sparkles size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />Make something</button>
+        </div>
+      ) : (
+        <div className="proj-grid">
+          {shown.map(it => {
+            const ready = it.status === 'ready' || it.status === 'done'
+            const pending = it.status === 'queued' || it.status === 'processing' || it.status === 'rendering'
+            return (
+              <div className="proj-card" key={it.key}>
+                <div className="proj-media">
+                  {it.video && ready ? <video src={it.video} controls preload="metadata" poster={it.thumb || undefined} />
+                    : it.thumb ? <img src={it.thumb} alt="" />
+                      : <div className={'proj-ph' + (pending ? ' wait' : '')}>{pending ? <Loader2 size={20} className="spin" /> : it.kind === 'carousel' ? <LImage size={22} /> : it.kind === 'clip' ? <Film size={22} /> : <LVideo size={22} />}</div>}
+                  <span className="proj-badge">{it.badge}</span>
+                </div>
+                <div className="proj-body">
+                  <div className="proj-title" title={it.title}>{it.title}</div>
+                  <div className="proj-meta">
+                    <span className={'proj-status' + (ready ? ' ok' : it.status === 'failed' ? ' bad' : '')}>{it.status}</span>
+                    {it.meta ? <span className="muted tiny">{it.meta}</span> : null}
+                    {it.when ? <span className="muted tiny">{fmt(it.when)}</span> : null}
+                  </div>
+                  {pending && it.detail && <div className="muted tiny" style={{ marginTop: 4 }}>{it.detail}</div>}
+                  {it.status === 'failed' && it.error && <div className="muted tiny" style={{ marginTop: 4, color: '#B3372F' }}>{it.error}</div>}
+                  {it.status === 'needs_provider' && <div className="muted tiny" style={{ marginTop: 4 }}>Generated video isn’t switched on.</div>}
+                  {ready && it.post && (
+                    postOpen === it.key ? (
+                      <div className="proj-post">
+                        {igtt.length === 0 && <span className="muted tiny">Connect Instagram or TikTok to post.</span>}
+                        {igtt.map(a => (
+                          <button key={a.id} className="chip" style={{ fontSize: 11 }} onClick={() => { it.post([a.id]); setPostOpen(null) }}>
+                            <span className="status-dot" style={{ background: platformDot(a.platform) }} />@{a.username}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null
+                  )}
+                </div>
+                <div className="proj-actions">
+                  {ready && it.post && igtt.length > 0 && <button className="mini" onClick={() => setPostOpen(o => o === it.key ? null : it.key)}><Upload size={11} /> Post</button>}
+                  <button className="mini danger" onClick={it.del}><Trash2 size={12} /></button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MediaLibrary({ assets, albums, onUpload, onCreateAlbum, onDeleteAlbum, onMove, onDelete, onFavorite, onUseIn }) {
   const [view, setView] = useState('all') // smart-view key OR album id
   const [sel, setSel] = useState(new Set())
@@ -3428,6 +3517,7 @@ function App({ session }) {
   const [brandCampaigns, setBrandCampaigns] = useState([])
   const [inspoX, setInspoX] = useState([]); const [suggesting, setSuggesting] = useState('')
   const [clipJobs, setClipJobs] = useState([]); const [igMode, setIgMode] = useState('carousels')
+  const [videoJobs, setVideoJobs] = useState([])
   const [me, setMe] = useState(null)
   const [messages, setMessages] = useState([]); const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false); const [banner, setBanner] = useState('')
@@ -3482,6 +3572,7 @@ function App({ session }) {
   const loadBrand = useCallback(async () => { const r = await authed('/api/brand-campaigns'); const d = await r.json(); setBrandCampaigns(d.campaigns || []) }, [authed])
   const loadInspoX = useCallback(async () => { const r = await authed('/api/inspiration?platform=x'); const d = await r.json(); setInspoX(d.accounts || []) }, [authed])
   const loadClips = useCallback(async () => { const r = await authed('/api/clips'); const d = await r.json(); setClipJobs(d.jobs || []) }, [authed])
+  const loadVideos = useCallback(async () => { const r = await authed('/api/video'); const d = await r.json(); setVideoJobs(d.jobs || []) }, [authed])
   // In-flight guard: rapid tab toggles must not stack concurrent paid X reads.
   const xStatsBusy = useRef(false)
   const loadXStats = useCallback(async () => {
@@ -3496,7 +3587,7 @@ function App({ session }) {
   const loadAutopilot = useCallback(async () => { try { const r = await authed('/api/autopilot'); const d = await r.json(); setAutopilot(d.autopilot || []) } catch {} }, [authed])
   const loadMedia = useCallback(async () => { try { const r = await authed('/api/media'); const d = await r.json(); setMediaAssets(d.assets || []); setMediaAlbums(d.albums || []) } catch {} }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps(); loadTrends(); loadAutopilot(); loadMedia() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps, loadTrends, loadAutopilot, loadMedia])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadVideos(); loadAgents(); loadAgentCamps(); loadTrends(); loadAutopilot(); loadMedia() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadVideos, loadAgents, loadAgentCamps, loadTrends, loadAutopilot, loadMedia])
 
   // ── Coordinated state sync ──────────────────────────────────────────────────
   // Every view derives from a shared set of lists. Mutations used to hand-pick
@@ -3507,8 +3598,8 @@ function App({ session }) {
   // on a 20s poll, and whenever the tab regains focus — so the whole app stays
   // consistent no matter where (or what) changed it.
   const refreshLive = useCallback(() => {
-    loadQueue(); loadAutopilot(); loadAgents(); loadAgentCamps(); loadSlideshows(); loadSocialEng(); loadEngagement(); loadClips(); loadBrand(); loadMedia()
-  }, [loadQueue, loadAutopilot, loadAgents, loadAgentCamps, loadSlideshows, loadSocialEng, loadEngagement, loadClips, loadBrand, loadMedia])
+    loadQueue(); loadAutopilot(); loadAgents(); loadAgentCamps(); loadSlideshows(); loadSocialEng(); loadEngagement(); loadClips(); loadVideos(); loadBrand(); loadMedia()
+  }, [loadQueue, loadAutopilot, loadAgents, loadAgentCamps, loadSlideshows, loadSocialEng, loadEngagement, loadClips, loadVideos, loadBrand, loadMedia])
   useEffect(() => {
     const sync = () => { if (document.visibilityState === 'visible') refreshLive() }
     const id = setInterval(sync, 20000)            // background-change safety net
@@ -3802,6 +3893,12 @@ function App({ session }) {
     const r = await authed('/api/clips', { method: 'POST', body: JSON.stringify({ action: 'post', job_id, clip_index, account_ids }) }); const d = await r.json()
     setBanner(d.error || 'Clip posted')
   }
+  async function deleteVideo(id) { if (!await askConfirm({ title: 'Delete video?', confirmLabel: 'Delete', danger: true })) return; await authed('/api/video', { method: 'DELETE', body: JSON.stringify({ id }) }); loadVideos() }
+  async function postVideo(job_id, account_ids, caption) {
+    setBanner('Posting video…')
+    const r = await authed('/api/video', { method: 'POST', body: JSON.stringify({ action: 'post', job_id, account_ids, caption }) }); const d = await r.json()
+    setBanner(d.error || 'Video posted')
+  }
   async function deleteSlideshow(id) { if (!await askConfirm({ title: 'Delete slideshow?', confirmLabel: 'Delete', danger: true })) return; await authed('/api/slideshow', { method: 'DELETE', body: JSON.stringify({ id }) }); loadSlideshows() }
   async function rescheduleSlideshow(id, whenIso) {
     const r = await authed('/api/slideshow', { method: 'PATCH', body: JSON.stringify({ id, scheduled_for: whenIso }) })
@@ -4002,7 +4099,7 @@ function App({ session }) {
         {/* Side menu (Opus-Clip style): create-first, channels demoted below. */}
         <nav className="side">
           <div className="side-group">
-            {[['studio', 'Create', Sparkles], ['queue', 'Queue', LList], ['campaigns', 'Campaigns', Bot], ['library', 'Library', FolderOpen]].map(([t, l, Ic]) => (
+            {[['studio', 'Create', Sparkles], ['projects', 'Projects', LGrid], ['queue', 'Queue', LList], ['campaigns', 'Campaigns', Bot], ['library', 'Library', FolderOpen]].map(([t, l, Ic]) => (
               <button key={t} onClick={() => setTab(t)} className={'side-btn' + (tab === t ? ' on' : '')}>
                 <Ic size={16} /><span>{l}</span>
               </button>
@@ -4021,7 +4118,7 @@ function App({ session }) {
 
         <section className={'work' + (['x', 'linkedin', 'instagram', 'tiktok'].includes(tab) ? ` plat-${tab}` : '')}>
           <div className="work-head">
-            <span className="work-title">{({ studio: 'Studio', queue: 'Queue', campaigns: 'Campaigns', library: 'Library', x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok' })[tab]}</span>
+            <span className="work-title">{({ studio: 'Studio', projects: 'Projects', queue: 'Queue', campaigns: 'Campaigns', library: 'Library', x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok' })[tab]}</span>
             {tab === 'studio' && (
               <div className="row" style={{ gap: 6, position: 'relative' }}>
                 <button className="mini" onClick={() => { if (!historyOpen) loadChats(); setHistoryOpen(o => !o) }} title="Previous chats"><LHistory size={12} /> History</button>
@@ -4330,6 +4427,11 @@ function App({ session }) {
                 <StudioComposer library={mediaAssets} messages={messages} busy={loading} onSend={send} onResolve={resolveProposal}
                   authed={authed} socialAccounts={socialAccounts} connected={connected} xConns={xConns} hasPhotos={hasPhotos}
                   refreshLive={refreshLive} defaultHour={defaultHour} scope={chatScope} onToggleScope={toggleScope} />
+              )}
+              {tab === 'projects' && (
+                <Projects slideshows={slideshows} clipJobs={clipJobs} videoJobs={videoJobs} socialAccounts={socialAccounts}
+                  onDeleteSlideshow={deleteSlideshow} onDeleteClip={deleteClipJob} onDeleteVideo={deleteVideo}
+                  onPostClip={postClip} onPostVideo={postVideo} onGoCreate={() => setTab('studio')} />
               )}
               {tab === 'library' && (
                 <MediaLibrary assets={mediaAssets} albums={mediaAlbums} onUpload={uploadMedia} onCreateAlbum={createAlbum} onDeleteAlbum={deleteAlbum} onMove={moveAssets} onDelete={deleteAsset} onFavorite={favoriteAsset} onUseIn={() => setTab('studio')} />
@@ -5045,6 +5147,24 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .mp-rendering { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 30px 16px; background: var(--bg2); border-radius: 12px; font-size: 13.5px; color: var(--body); }
 .mp-rendering .muted { max-width: 320px; }
 .mp-coming { padding: 16px; background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 12px; font-size: 13px; line-height: 1.5; color: var(--accent-text); }
+/* Projects gallery */
+.proj-filters { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 14px; }
+.proj-empty { text-align: center; padding: 8vh 16px; }
+.proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.proj-card { border: 1px solid var(--line); border-radius: 13px; overflow: hidden; background: var(--surface); display: flex; flex-direction: column; }
+.proj-media { position: relative; aspect-ratio: 4/5; background: var(--bg2); overflow: hidden; }
+.proj-media video, .proj-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.proj-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--faint); }
+.proj-ph.wait { color: var(--accent); }
+.proj-badge { position: absolute; top: 8px; left: 8px; font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: rgba(8,9,13,.55); color: #fff; backdrop-filter: blur(4px); }
+.proj-body { padding: 9px 11px 4px; flex: 1; }
+.proj-title { font-size: 12.5px; font-weight: 600; color: var(--ink); line-height: 1.35; max-height: 2.7em; overflow: hidden; }
+.proj-meta { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 5px; }
+.proj-status { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; background: var(--bg2); color: var(--muted); }
+.proj-status.ok { background: #E7F3EC; color: #2E7D46; }
+.proj-status.bad { background: #FBEAEA; color: #B3372F; }
+.proj-post { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.proj-actions { display: flex; justify-content: flex-end; gap: 6px; padding: 6px 9px 9px; }
 .ss-thumb { width: 46px; height: 58px; border-radius: 6px; object-fit: cover; flex: none; border: 1px solid var(--line); }
 /* collapsible sections + clip studio */
 .sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }
