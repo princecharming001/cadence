@@ -723,6 +723,11 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
   const isVideo = !!proposal.video
   const deck = proposal.slideshow || {}
   const vid = proposal.video || {}
+  // A generated-video proposal renders asynchronously: it starts as a job that
+  // we poll until it lands (or shows a graceful "not switched on" state).
+  const isGenerated = isVideo && vid.kind === 'generated'
+  const [gen, setGen] = useState(() => ({ status: isGenerated ? (vid.status || 'rendering') : 'done', video_url: vid.url || null, detail: '', error: '' }))
+  const videoUrl = isGenerated ? gen.video_url : vid.url
   // Live working copy: editing slide text re-renders images, so the structured
   // slides AND their image URLs both change before we publish.
   const [deckSlides, setDeckSlides] = useState(Array.isArray(deck.slides) ? deck.slides : [])
@@ -754,12 +759,37 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
     return () => { on = false }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll a generated-video job until it lands / is gated off / fails.
+  useEffect(() => {
+    if (!isGenerated || gen.status !== 'rendering') return
+    let on = true, timer, tries = 0
+    const tick = async () => {
+      try {
+        const r = await authed(`/api/video?id=${vid.job_id}`)
+        const j = (await r.json()).job
+        if (on && j) {
+          if (j.status === 'done' && j.video_url) { setGen({ status: 'done', video_url: j.video_url, detail: '', error: '' }); return }
+          if (j.status === 'needs_provider') { setGen({ status: 'needs_provider', video_url: null, detail: j.status_detail || '', error: '' }); return }
+          if (j.status === 'failed') { setGen({ status: 'failed', video_url: null, detail: '', error: j.error || 'Render failed.' }); return }
+          if (j.status_detail) setGen(g => g.detail === j.status_detail ? g : { ...g, detail: j.status_detail })
+        }
+      } catch { /* keep polling */ }
+      if (on && ++tries < 150) timer = setTimeout(tick, 5000)
+    }
+    timer = setTimeout(tick, 3500)
+    return () => { on = false; clearTimeout(timer) }
+  }, [isGenerated, gen.status, vid.job_id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   async function publish(mode) { // 'now' | 'schedule' | 'draft'
     setErr(''); setBusy(true)
     const ids = [...picked]
     if (mode !== 'draft' && !ids.length) { setBusy(false); setErr('Pick at least one account to post to.'); return }
     let r, d
-    if (isVideo) {
+    if (isGenerated) {
+      r = await authed('/api/video', { method: 'POST', body: JSON.stringify({ action: 'post', job_id: vid.job_id, account_ids: ids, caption, scheduled_for: mode === 'schedule' ? new Date(when).toISOString() : undefined }) })
+      d = await r.json()
+      if (!r.ok || d.error) { setBusy(false); setErr(d.error || 'Could not post the video.'); return }
+    } else if (isVideo) {
       r = await authed('/api/clips', { method: 'POST', body: JSON.stringify({ action: 'post', job_id: vid.job_id, clip_index: vid.clip_index, account_ids: ids, caption, scheduled_for: mode === 'schedule' ? new Date(when).toISOString() : undefined }) })
       d = await r.json()
       if (!r.ok || d.error) { setBusy(false); setErr(d.error || 'Could not post the clip.'); return }
@@ -779,14 +809,41 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
     onResolved && onResolved()
   }
   if (done) return <div className={'dp-done ' + (done === 'posted' ? 'posted' : done === 'discarded' ? 'discarded' : 'scheduled')}>{doneLabel || done}</div>
+
+  // Generated video that hasn't landed yet — rendering, gated off, or failed.
+  const genName = vid.mode === 'ugc' ? 'UGC video' : vid.mode === 'edit' ? 'Your edit' : 'Generated video'
+  if (isGenerated && gen.status !== 'done') {
+    const coming = {
+      needs_credits: 'The video generator is out of credits right now. In the meantime, I can stitch an edit from your own media.',
+      needs_avatar: 'A UGC video needs a photo of the spokesperson — attach one from your Library and ask again.',
+      needs_tts: 'Voiceover isn\'t configured yet. I can make an AI video or an edit from your media instead.',
+    }[gen.detail] || 'Generated video isn\'t switched on yet — but I can make a carousel, or an edit stitched from your own media.'
+    return (
+      <motion.div className="card dp mp-gen" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
+        <div className="dp-head"><span>{genName}</span></div>
+        {gen.status === 'rendering' && (
+          <div className="mp-rendering">
+            <span className="dots"><i /><i /><i /></span>
+            <span>Rendering your video…{gen.detail ? ` ${gen.detail}` : ''}</span>
+            <span className="muted tiny">This takes a few minutes — it'll appear here when it's ready.</span>
+          </div>
+        )}
+        {gen.status === 'needs_provider' && <div className="mp-coming">{coming}</div>}
+        {gen.status === 'failed' && <div className="notice" style={{ color: '#B3372F' }}>{gen.error}</div>}
+        <div className="dp-actions">
+          <button className="icon-btn x" title="Dismiss" onClick={() => finish('discarded', 'Dismissed')}><Ex /></button>
+        </div>
+      </motion.div>
+    )
+  }
   return (
     <motion.div className="card dp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
       <div className="dp-head">
-        <span>{isVideo ? 'Clip preview' : `Carousel${total > 1 ? ` ${index + 1} of ${total}` : ''} · ${imgUrls.length} slides`}</span>
+        <span>{isGenerated ? genName : isVideo ? 'Clip preview' : `Carousel${total > 1 ? ` ${index + 1} of ${total}` : ''} · ${imgUrls.length} slides`}</span>
         {!isVideo && deck.style && <span className="muted tiny">{deck.format} · {deck.style} · tap a slide to edit</span>}
       </div>
       {isVideo
-        ? <video className="mp-video" src={vid.url} controls playsInline preload="metadata" poster={vid.thumb || undefined} />
+        ? <video className="mp-video" src={videoUrl} controls playsInline preload="metadata" poster={vid.thumb || undefined} />
         : <SlideEditor slides={deckSlides} imageUrls={imgUrls} style={deck.style} format={deck.format} handle={deck.handle} authed={authed}
             onChange={(s, u) => { setDeckSlides(s); setImgUrls(u) }} />}
       <textarea className="field dp-text" rows={3} placeholder="Caption…" value={caption} onChange={e => setCaption(e.target.value)} />
@@ -4971,6 +5028,10 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .cp .cp-l:first-of-type { margin-top: 4px; }
 .cp-seg { margin-top: 10px; }
 .cp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+/* generated-video card states */
+.mp-rendering { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 30px 16px; background: var(--bg2); border-radius: 12px; font-size: 13.5px; color: var(--body); }
+.mp-rendering .muted { max-width: 320px; }
+.mp-coming { padding: 16px; background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 12px; font-size: 13px; line-height: 1.5; color: var(--accent-text); }
 .ss-thumb { width: 46px; height: 58px; border-radius: 6px; object-fit: cover; flex: none; border: 1px solid var(--line); }
 /* collapsible sections + clip studio */
 .sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }

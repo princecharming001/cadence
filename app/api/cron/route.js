@@ -85,6 +85,7 @@ export async function GET(req) {
   const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
   after(async () => {
     await fetch(`${base}/api/clips/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
+    await fetch(`${base}/api/video/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {}) // render queued generated-video jobs (backstop)
     await fetch(`${base}/api/media/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {}) // analyze queued library videos
     await refreshPostMetrics().catch(() => {}) // pull engagement back onto published posts
     // Intrinsic daily trend detection: harvest a few stale users' niches so

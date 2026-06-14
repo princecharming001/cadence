@@ -356,6 +356,24 @@ const tools = [
       required: ['product'],
     },
   },
+  {
+    name: 'generate_video',
+    description: "Generate a brand-NEW short video (not cut from a source — that's make_clip). mode 'ai_video' = a cinematic text→video (or animate an attached Library image); mode 'ugc' = a talking spokesperson/avatar reads a script; mode 'edit' = a montage stitched from the user's Library media + any external/stock clips. Async (renders in minutes) and shows up as an inline video card — say it's rendering, never claim it's ready. If generated video isn't switched on, the card shows a graceful 'coming soon' state, so you may call this confidently.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', enum: ['ai_video', 'ugc', 'edit'] },
+        prompt: { type: 'string', description: 'What the video shows / its motion + scene (ai_video, edit).' },
+        script: { type: 'string', description: 'The spoken script (ugc) — draft it yourself from their brief.' },
+        image_url: { type: 'string', description: 'Optional Library image to animate (ai_video) or the avatar still (ugc).' },
+        source_asset_ids: { type: 'array', items: { type: 'string' }, description: 'edit mode: Library asset ids to stitch.' },
+        external_urls: { type: 'array', items: { type: 'string' }, description: 'edit mode: pasted external/stock clip links.' },
+        aspect: { type: 'string', enum: ['vertical', 'square', 'wide'] },
+        duration_sec: { type: 'integer', description: '2-15 (default 6).' },
+      },
+      required: ['mode'],
+    },
+  },
 ]
 
 // ── Tool executor — every query is scoped to the authenticated user ─────────────
@@ -896,8 +914,8 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
       if (studio.format === 'carousel') L.push('OVERRIDE: they chose CAROUSEL — use generate_slideshow.')
       else if (studio.format === 'clip') L.push('OVERRIDE: they chose CLIP — use make_clip.')
       else if (studio.format === 'video') L.push('OVERRIDE: they chose generated VIDEO — use generate_video. Pick the mode from their words: ai_video by default; ugc if they want a spokesperson/avatar reading a script; edit if Library media is attached and they want a montage/edit.')
-      if (vids.length) L.push(`Attached video(s) from their Library: ${vids.map(v => `"${v.filename}" → ${v.url}`).join(' ; ')}. For a CLIP, set make_clip source_url to one${studio.captions === false ? ' (captions off)' : ''}. For an EDIT, pass them as source_asset_ids.`)
-      if (imgs.length) L.push(`Attached photo(s) from their Library: ${imgs.map(v => `"${v.filename}" → ${v.url}`).join(' ; ')}. Feature them in a carousel, animate one as ai_video (image_url), or include them in an edit (source_asset_ids).`)
+      if (vids.length) L.push(`Attached video(s) from their Library: ${vids.map(v => `"${v.filename}" [id ${v.id}] → ${v.url}`).join(' ; ')}. For a CLIP, set make_clip source_url to one${studio.captions === false ? ' (captions off)' : ''}. For an EDIT, pass their ids as generate_video source_asset_ids.`)
+      if (imgs.length) L.push(`Attached photo(s) from their Library: ${imgs.map(v => `"${v.filename}" [id ${v.id}] → ${v.url}`).join(' ; ')}. Feature them in a carousel, animate one as ai_video (pass image_url), or include them in an edit (pass their ids as source_asset_ids).`)
       return L.join('\n- ')
     })() : ''
     const systemBlocks = [
@@ -1022,6 +1040,36 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
               camp.brief = composeBrief({ pitch: camp.pitch, audience: camp.audience, key_points: camp.key_points, avoid: draft.avoid })
               proposals.push({ campaign: camp })
               result = { ok: true, note: 'Campaign brief proposed inline — the user reviews/edits and taps Launch. Do NOT create it yourself; confirm in one short sentence and stop.' }
+            }
+          } else if (block.name === 'generate_video') {
+            // Queue a generated-video job and show an inline card that polls until
+            // the render lands (or shows a graceful 'coming soon' if AI video is
+            // gated off). Mirrors make_clip's fire-and-forget worker kick.
+            const mode = ['ai_video', 'ugc', 'edit'].includes(block.input.mode) ? block.input.mode : 'ai_video'
+            const row = {
+              user_id: user.id, mode,
+              prompt: String(block.input.prompt || '').slice(0, 800) || null,
+              script: String(block.input.script || '').slice(0, 2000) || null,
+              image_url: /^https?:\/\//.test(String(block.input.image_url || '')) ? String(block.input.image_url).slice(0, 600) : null,
+              aspect: ['vertical', 'square', 'wide'].includes(block.input.aspect) ? block.input.aspect : 'vertical',
+              duration_sec: Math.min(Math.max(Number(block.input.duration_sec) || 6, 2), 15),
+              source_asset_ids: (Array.isArray(block.input.source_asset_ids) ? block.input.source_asset_ids : []).slice(0, 8),
+              external_urls: (Array.isArray(block.input.external_urls) ? block.input.external_urls : []).filter(u => /^https?:\/\//.test(String(u))).slice(0, 8),
+              status: 'queued',
+            }
+            if (mode === 'edit' && !row.source_asset_ids.length && !row.external_urls.length) {
+              result = { error: 'Edit mode needs media — pass source_asset_ids (attached Library media) and/or external_urls.' }
+            } else if (mode !== 'edit' && !row.prompt && !row.script && !row.image_url) {
+              result = { error: 'Need a subject — pass a prompt (ai_video) or a script (ugc).' }
+            } else {
+              const { data: job, error } = await admin.from('video_jobs').insert(row).select('id').single()
+              if (error) { result = { error: error.message } }
+              else {
+                const base = process.env.NEXT_PUBLIC_APP_URL || ''
+                if (base) fetch(`${base}/api/video/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
+                proposals.push({ video: { job_id: job.id, kind: 'generated', mode, status: 'rendering', caption: '' } })
+                result = { ok: true, job_id: job.id, note: 'Video render started — it appears inline when ready (or shows a coming-soon state if generated video is not enabled). Tell the user it is rendering; do NOT claim it is ready.' }
+              }
             }
           } else {
             result = await executeTool(block.name, block.input, user.id)
