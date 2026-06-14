@@ -35,6 +35,7 @@ export async function POST(req) {
     const out = await generateSlideshow({
       topic, format, style,
       slides: body.slides, persona, handle: body.handle, userId,
+      albumIds: Array.isArray(body.album_ids) ? body.album_ids : undefined,
     })
     return Response.json(out)
   } catch (e) {

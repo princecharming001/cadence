@@ -1005,10 +1005,11 @@ const PLATFORMS = [
 ]
 function platformDot(p) { return ({ x: '#15171A', instagram: '#E1306C', tiktok: '#00b8b0', linkedin: '#0A66C2', facebook: '#1877F2' }[p] || '#888') }
 
-function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, onGenerate, onSave, onDelete, onRefresh, hideAccounts, platformFocus, authed }) {
+function SlideshowStudio({ accounts, configured, slideshows, albums = [], onConnect, onSync, onGenerate, onSave, onDelete, onRefresh, hideAccounts, platformFocus, authed }) {
   const [topic, setTopic] = useState('')
   const [format, setFormat] = useState('listicle'); const [style, setStyle] = useState('bold')
   const [count, setCount] = useState(6)
+  const [albumId, setAlbumId] = useState('') // '' = AI/typographic backgrounds; else pull photos from this album
   const [busy, setBusy] = useState(false); const [deck, setDeck] = useState(null) // {slides,caption,image_urls,style,format}
   const [pickedAccts, setPickedAccts] = useState([]); const [when, setWhen] = useState('')
   // Inline edit / schedule of a SAVED draft deck (status==='draft' only).
@@ -1026,7 +1027,7 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
   async function gen() {
     if (!topic.trim()) return
     setBusy(true); setDeck(null)
-    const d = await onGenerate({ topic: topic.trim(), format, style, slides: Number(count) })
+    const d = await onGenerate({ topic: topic.trim(), format, style, slides: Number(count), album_ids: albumId ? [albumId] : undefined })
     setBusy(false)
     if (d.error) return
     setDeck({ ...d, topic: topic.trim() })
@@ -1099,6 +1100,14 @@ function SlideshowStudio({ accounts, configured, slideshows, onConnect, onSync, 
             </button>
           ))}
         </div>
+        {albums.length > 0 && (<>
+          <label className="ob-label">Backgrounds</label>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <button type="button" className={'chip' + (!albumId ? ' on' : '')} onClick={() => setAlbumId('')}>Style default</button>
+            {albums.map(al => <button key={al.id} type="button" className={'chip' + (albumId === al.id ? ' on' : '')} title="Pull matching photos from this album" onClick={() => setAlbumId(al.id)}><LImage size={11} /> {al.name}</button>)}
+          </div>
+          {albumId ? <div className="muted tiny" style={{ marginTop: 6 }}>Slides will use your own photos from this album, matched to each topic.</div> : null}
+        </>)}
         <div className="row" style={{ gap: 10, marginTop: 14, justifyContent: 'space-between' }}>
           <div className="row" style={{ gap: 5 }}>
             {[4, 5, 6, 8].map(n => <button key={n} type="button" className={'chip' + (Number(count) === n ? ' on' : '')} onClick={() => setCount(n)}>{n}</button>)}
@@ -1507,7 +1516,7 @@ function RepliesFeed({ posts, platform = 'x', source }) {
 const CADENCES = [[12, '2× a day'], [24, 'Daily'], [72, 'Every 3 days'], [168, 'Weekly']]
 const cadenceLabel = hrs => (CADENCES.find(([h]) => h === Number(hrs)) || [])[1] || `every ${hrs}h`
 
-function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, connectHint, onSave, onPatch, onDelete, onRun }) {
+function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, connectHint, albums = [], onSave, onPatch, onDelete, onRun }) {
   const [open, setOpen] = useState(false)
   const [topic, setTopic] = useState('')
   const [hours, setHours] = useState(24)
@@ -1516,6 +1525,7 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, con
   // need source videos to cut from + an edit style.
   const [types, setTypes] = useState(['carousel'])
   const [clipSrc, setClipSrc] = useState(''); const [clipEdit, setClipEdit] = useState('captions')
+  const [albumId, setAlbumId] = useState('') // pull library media for this campaign
   const single = targets.length === 1
   const wantCarousel = !supportsCarousel || types.includes('carousel')
   const wantClip = supportsCarousel && types.includes('clip')
@@ -1524,7 +1534,7 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, con
   function toggleType(k) { setTypes(ts => ts.includes(k) ? (ts.length > 1 ? ts.filter(x => x !== k) : ts) : [...ts, k]) }
   const chosen = single ? targets : targets.filter(t => picked.includes(t.id))
   const needTopic = wantCarousel // clips caption themselves from the transcript
-  const valid = chosen.length && types.length && (!needTopic || topic.trim()) && (!wantClip || clipUrls.length)
+  const valid = chosen.length && types.length && (!needTopic || topic.trim()) && (!wantClip || clipUrls.length || albumId)
   async function submit() {
     if (!valid) return
     setBusy(true)
@@ -1539,6 +1549,7 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, con
       payload.content_types = types
       payload.carousel_style = 'bold'; payload.carousel_format = 'listicle'
       if (wantClip) { payload.clip_sources = clipUrls; payload.clip_edit = clipEdit }
+      if (albumId) payload.album_ids = [albumId]
     }
     const ok = await onSave(payload)
     setBusy(false)
@@ -1585,6 +1596,13 @@ function PlatformCampaign({ campaigns, targets, supportsCarousel, canCreate, con
             <label className="ob-label">Post to</label>
             <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
               {targets.map(t => <button type="button" key={t.id} className={'chip' + (picked.includes(t.id) ? ' on' : '')} onClick={() => setPicked(p => p.includes(t.id) ? p.filter(x => x !== t.id) : [...p, t.id])}><span className="status-dot" style={{ background: platformDot(t.platform) }} />{t.label}</button>)}
+            </div>
+          </>)}
+          {supportsCarousel && albums.length > 0 && (<>
+            <label className="ob-label">Pull media from <span className="muted tiny" style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>· your library album for {wantClip && !wantCarousel ? 'clip footage' : 'photos' + (wantClip ? ' & clip footage' : '')}</span></label>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" className={'chip' + (!albumId ? ' on' : '')} onClick={() => setAlbumId('')}>{wantClip && !wantCarousel ? 'Pasted links' : 'AI-generated'}</button>
+              {albums.map(al => <button key={al.id} type="button" className={'chip' + (albumId === al.id ? ' on' : '')} onClick={() => setAlbumId(al.id)}><LImage size={11} /> {al.name}</button>)}
             </div>
           </>)}
           <label className="ob-label">How often</label>
@@ -2829,6 +2847,124 @@ function AccountPage({ me, session, accountTab, setAccountTab, authed, banner, p
   )
 }
 
+// ── Media Library — upload content, organize into albums, see how Cadence
+//    reads each asset so it can reuse it tastefully in slideshows & clips. ─────
+function AssetCard({ a, selected, onToggle, onOpen }) {
+  const an = a.analysis || {}
+  const busy = ['uploading', 'analyzing', 'processing'].includes(a.status)
+  const thumb = a.type === 'video' ? a.thumb_url : (a.url || a.thumb_url)
+  return (
+    <div className={'lib-cell' + (selected ? ' sel' : '')}>
+      <button className="lib-thumb" onClick={() => onOpen(a)} title={an.scene || a.filename}>
+        {thumb ? <img src={thumb} alt="" /> : <div className="lib-noimg">{a.type === 'video' ? <Play size={20} /> : <LImage size={20} />}</div>}
+        {a.type === 'video' && <span className="lib-badge"><Play size={11} /></span>}
+        {busy && <span className="lib-status"><Loader2 size={15} className="spin" /> analyzing</span>}
+        {a.status === 'failed' && <span className="lib-status bad">failed</span>}
+        {a.status === 'ready' && (an.mood || an.subject) && <span className="lib-tags">{[an.subject, an.mood].filter(Boolean).join(' · ')}</span>}
+      </button>
+      <button className={'lib-check' + (selected ? ' on' : '')} onClick={() => onToggle(a.id)}>{selected && <LCheck size={11} strokeWidth={4} />}</button>
+    </div>
+  )
+}
+
+function MediaLibrary({ assets, albums, onUpload, onCreateAlbum, onDeleteAlbum, onMove, onDelete }) {
+  const [album, setAlbum] = useState('all')
+  const [sel, setSel] = useState(new Set())
+  const [creating, setCreating] = useState(false); const [name, setName] = useState('')
+  const [detail, setDetail] = useState(null)
+  const shown = assets.filter(a => album === 'all' ? true : album === 'none' ? !a.album_id : a.album_id === album)
+  const targetAlbum = (album !== 'all' && album !== 'none') ? album : null
+  const toggleSel = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  function onPick(e) {[...(e.target.files || [])].forEach(f => onUpload(f, targetAlbum)); e.target.value = '' }
+  async function create() { if (!name.trim()) return; if (await onCreateAlbum(name.trim())) { setName(''); setCreating(false) } }
+  const analyzing = assets.filter(a => ['analyzing', 'processing', 'uploading'].includes(a.status)).length
+
+  return (
+    <div className="lib">
+      <div className="lib-side">
+        <button className={'lib-album' + (album === 'all' ? ' on' : '')} onClick={() => setAlbum('all')}>All media <span>{assets.length}</span></button>
+        <button className={'lib-album' + (album === 'none' ? ' on' : '')} onClick={() => setAlbum('none')}>Unfiled <span>{assets.filter(a => !a.album_id).length}</span></button>
+        <div className="lib-side-h">Albums</div>
+        {albums.map(al => (
+          <div key={al.id} className="lib-album-row">
+            <button className={'lib-album' + (album === al.id ? ' on' : '')} onClick={() => setAlbum(al.id)}>{al.name} <span>{al.count}</span></button>
+            <button className="lib-album-del" title="Delete album" onClick={() => onDeleteAlbum(al.id)}><Trash2 size={11} /></button>
+          </div>
+        ))}
+        {creating ? (
+          <div className="row" style={{ gap: 6, marginTop: 6 }}>
+            <input className="field" autoFocus placeholder="Album name" value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && create()} style={{ fontSize: 12.5, padding: '6px 9px' }} />
+            <button className="btn-primary btn-sm" onClick={create}>Add</button>
+          </div>
+        ) : <button className="lib-newalbum" onClick={() => setCreating(true)}><Plus size={12} /> New album</button>}
+      </div>
+
+      <div className="lib-main">
+        <div className="lib-top">
+          <div className="muted tiny" style={{ flex: 1, minWidth: 0 }}>Upload your photos & clips — Cadence analyzes each one so it can weave them tastefully into your slideshows & clips.{analyzing ? ` · ${analyzing} analyzing…` : ''}</div>
+          <label className="btn-primary btn-sm row" style={{ gap: 6, cursor: 'pointer' }}><Upload size={14} /> Upload<input type="file" multiple accept="image/*,video/*" hidden onChange={onPick} /></label>
+        </div>
+
+        {sel.size > 0 && (
+          <div className="lib-bulk">
+            <span>{sel.size} selected</span>
+            <select className="field" style={{ width: 'auto', padding: '5px 9px', fontSize: 12.5 }} value="" onChange={e => { const v = e.target.value; if (!v) return; onMove([...sel], v === '__none' ? null : v); setSel(new Set()) }}>
+              <option value="">Move to…</option>
+              <option value="__none">Unfiled</option>
+              {albums.map(al => <option key={al.id} value={al.id}>{al.name}</option>)}
+            </select>
+            <button className="mini danger" onClick={() => { [...sel].forEach(onDelete); setSel(new Set()) }}><Trash2 size={12} /> Delete</button>
+            <button className="mini" onClick={() => setSel(new Set())}>Clear</button>
+          </div>
+        )}
+
+        {shown.length === 0 ? (
+          <div className="brain-empty card" style={{ display: 'block', marginTop: 12 }}>
+            <div className="empty-icon"><LImage size={24} /></div>
+            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Nothing here yet</div>
+            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>Upload images and videos. Cadence reads each one — subject, mood, how well text sits on it — and pulls the right ones into your carousels and clips. Assign albums to campaigns to control what each one draws from.</div>
+          </div>
+        ) : (
+          <div className="lib-grid">{shown.map(a => <AssetCard key={a.id} a={a} selected={sel.has(a.id)} onToggle={toggleSel} onOpen={setDetail} />)}</div>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {detail && (() => { const an = detail.analysis || {}; return (
+          <motion.div className="overlay" onClick={() => setDetail(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <motion.div className="card modal" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.97 }} transition={spring}>
+              <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+                <span style={{ fontWeight: 700, fontSize: 15 }}>{detail.filename || (detail.type === 'video' ? 'Video' : 'Image')}</span>
+                <button className="x-close" onClick={() => setDetail(null)}><LX size={18} /></button>
+              </div>
+              {detail.type === 'video'
+                ? <video src={detail.url} poster={detail.thumb_url || undefined} controls playsInline className="mp-video" />
+                : <img src={detail.url} alt="" style={{ width: '100%', borderRadius: 10, maxHeight: 360, objectFit: 'contain', background: '#0001' }} />}
+              {detail.status !== 'ready' ? (
+                <div className="muted tiny" style={{ marginTop: 10 }}>{detail.status === 'failed' ? `Analysis failed: ${detail.error || ''}` : 'Analyzing…'}</div>
+              ) : (<>
+                {an.scene && <div style={{ marginTop: 10, fontSize: 13.5, lineHeight: 1.5 }}>{an.scene}</div>}
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+                  {an.subject && <span className="lib-chip">{an.subject}</span>}
+                  {an.mood && <span className="lib-chip">{an.mood}</span>}
+                  {an.orientation && <span className="lib-chip">{an.orientation}</span>}
+                  {an.quality != null && <span className="lib-chip">quality {Math.round(an.quality * 100)}%</span>}
+                  {an.text_overlay_score != null && <span className="lib-chip">text-friendly {Math.round(an.text_overlay_score * 100)}%</span>}
+                  {(an.labels || []).slice(0, 8).map((l, i) => <span key={i} className="lib-chip subtle">{l}</span>)}
+                </div>
+                {Array.isArray(an.palette) && an.palette.length > 0 && <div className="row" style={{ gap: 4, marginTop: 10 }}>{an.palette.map((c, i) => <span key={i} style={{ width: 22, height: 22, borderRadius: 5, background: c, border: '1px solid var(--line)' }} title={c} />)}</div>}
+              </>)}
+              <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+                <button className="mini danger" onClick={() => { onDelete(detail.id); setDetail(null) }}><Trash2 size={12} /> Delete</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )})()}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 function App({ session }) {
   const token = session.access_token
@@ -2858,6 +2994,7 @@ function App({ session }) {
   const [chatScope, setChatScope] = useState([]) // [] = all platforms
   const [feederAgents, setFeederAgents] = useState([])
   const [agentCampaigns, setAgentCampaigns] = useState([])
+  const [mediaAssets, setMediaAssets] = useState([]); const [mediaAlbums, setMediaAlbums] = useState([])
   const [chatList, setChatList] = useState([]); const [historyOpen, setHistoryOpen] = useState(false)
   const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
   const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
@@ -2912,8 +3049,9 @@ function App({ session }) {
   const loadAgentCamps = useCallback(async () => { const r = await authed('/api/agent-campaigns?metrics=1'); const d = await r.json(); setAgentCampaigns(d.campaigns || []) }, [authed])
   const loadTrends = useCallback(async () => { try { const r = await authed('/api/trends'); const d = await r.json(); setTrends(d.formats || []) } catch {} }, [authed])
   const loadAutopilot = useCallback(async () => { try { const r = await authed('/api/autopilot'); const d = await r.json(); setAutopilot(d.autopilot || []) } catch {} }, [authed])
+  const loadMedia = useCallback(async () => { try { const r = await authed('/api/media'); const d = await r.json(); setMediaAssets(d.assets || []); setMediaAlbums(d.albums || []) } catch {} }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps(); loadTrends(); loadAutopilot() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps, loadTrends, loadAutopilot])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadAgents(); loadAgentCamps(); loadTrends(); loadAutopilot(); loadMedia() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadAgents, loadAgentCamps, loadTrends, loadAutopilot, loadMedia])
 
   // ── Coordinated state sync ──────────────────────────────────────────────────
   // Every view derives from a shared set of lists. Mutations used to hand-pick
@@ -2924,8 +3062,8 @@ function App({ session }) {
   // on a 20s poll, and whenever the tab regains focus — so the whole app stays
   // consistent no matter where (or what) changed it.
   const refreshLive = useCallback(() => {
-    loadQueue(); loadAutopilot(); loadAgents(); loadAgentCamps(); loadSlideshows(); loadSocialEng(); loadEngagement(); loadClips(); loadBrand()
-  }, [loadQueue, loadAutopilot, loadAgents, loadAgentCamps, loadSlideshows, loadSocialEng, loadEngagement, loadClips, loadBrand])
+    loadQueue(); loadAutopilot(); loadAgents(); loadAgentCamps(); loadSlideshows(); loadSocialEng(); loadEngagement(); loadClips(); loadBrand(); loadMedia()
+  }, [loadQueue, loadAutopilot, loadAgents, loadAgentCamps, loadSlideshows, loadSocialEng, loadEngagement, loadClips, loadBrand, loadMedia])
   useEffect(() => {
     const sync = () => { if (document.visibilityState === 'visible') refreshLive() }
     const id = setInterval(sync, 20000)            // background-change safety net
@@ -3247,6 +3385,32 @@ function App({ session }) {
   }
   async function deletePhoto(id) { await authed('/api/photos', { method: 'DELETE', body: JSON.stringify({ id }) }); loadPhotos() }
 
+  // ── Media library: signed direct-to-storage upload → analyze ────────────────
+  function imageDims(file) {
+    return new Promise((resolve) => {
+      const img = new window.Image(); const url = URL.createObjectURL(file)
+      img.onload = () => { resolve({ w: img.naturalWidth, h: img.naturalHeight }); URL.revokeObjectURL(url) }
+      img.onerror = () => resolve({}); img.src = url
+    })
+  }
+  async function uploadMedia(file, albumId) {
+    if (!file) return
+    if (file.size > 200 * 1024 * 1024) { setBanner('Files up to 200MB.'); return }
+    let width, height
+    if (file.type.startsWith('image')) { const d = await imageDims(file); width = d.w; height = d.h }
+    const r = await authed('/api/media', { method: 'POST', body: JSON.stringify({ action: 'sign', filename: file.name, mime: file.type, size: file.size, album_id: albumId || null, width, height }) })
+    const d = await r.json()
+    if (d.error) { setBanner(d.error); return }
+    const { error } = await supabase.storage.from('media').uploadToSignedUrl(d.upload.path, d.upload.token, file)
+    if (error) { setBanner('Upload failed — ' + error.message); return }
+    await authed('/api/media', { method: 'POST', body: JSON.stringify({ action: 'uploaded', id: d.asset.id, width, height }) })
+    loadMedia()
+  }
+  async function createAlbum(name) { const r = await authed('/api/media', { method: 'POST', body: JSON.stringify({ action: 'album', name }) }); const d = await r.json(); if (d.error) setBanner(d.error); else loadMedia(); return !d.error }
+  async function deleteAlbum(id) { if (!await askConfirm({ title: 'Delete album?', body: 'The media inside is kept — just un-filed.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/media', { method: 'DELETE', body: JSON.stringify({ albumId: id }) }); loadMedia() }
+  async function moveAssets(ids, albumId) { await authed('/api/media', { method: 'PATCH', body: JSON.stringify({ ids, album_id: albumId }) }); loadMedia() }
+  async function deleteAsset(id) { await authed('/api/media', { method: 'DELETE', body: JSON.stringify({ id }) }); loadMedia() }
+
   async function addLinkedIn(profileUrl, isMentor) {
     const r = await authed('/api/linkedin', { method: 'POST', body: JSON.stringify({ profileUrl, maxPosts: 50, isMentor }) })
     const d = await r.json()
@@ -3380,10 +3544,10 @@ function App({ session }) {
         <section className={'pane left' + (['x', 'linkedin', 'instagram', 'tiktok'].includes(tab) ? ` plat-${tab}` : '')}>
           <div className="left-head">
             <div className="seg">
-              {['queue', 'x', 'linkedin', 'instagram', 'tiktok', 'campaigns'].map(t => (
+              {['queue', 'x', 'linkedin', 'instagram', 'tiktok', 'campaigns', 'library'].map(t => (
                 <button key={t} onClick={() => setTab(t)} className={'seg-btn' + (tab === t ? ' on' : '')}>
                   {tab === t && <motion.span layoutId="seg-pill" className="seg-pill" transition={spring} />}
-                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok', campaigns: 'Campaigns' })[t]}</span>
+                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok', campaigns: 'Campaigns', library: 'Library' })[t]}</span>
                 </button>
               ))}
             </div>
@@ -3581,7 +3745,7 @@ function App({ session }) {
                     ))}
                   </div>
                   {igMode === 'carousels' && (
-                    <SlideshowStudio hideAccounts platformFocus={plat} accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows} authed={authed}
+                    <SlideshowStudio hideAccounts platformFocus={plat} accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows} albums={mediaAlbums} authed={authed}
                       onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} onRefresh={loadSlideshows} />
                   )}
                   {igMode === 'clips' && (
@@ -3597,7 +3761,7 @@ function App({ session }) {
                       <EngageStub platform={platLabel} />
                     </Section>
                     <Section title="Campaign" hint="auto-post carousels & clips on a schedule" badge={<OnBadge on={campsTouching([plat]).some(c => c.active)} />}>
-                      <PlatformCampaign campaigns={campsFor([plat])} targets={platCampTargets} supportsCarousel canCreate={platCampTargets.length > 0} connectHint={`Connect ${platLabel} first (accounts, bottom-right).`} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
+                      <PlatformCampaign campaigns={campsFor([plat])} targets={platCampTargets} supportsCarousel albums={mediaAlbums} canCreate={platCampTargets.length > 0} connectHint={`Connect ${platLabel} first (accounts, bottom-right).`} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
                       <CrossCampHint plats={[plat]} />
                     </Section>
                     {/* "What's working now" panel removed per user — the niche
@@ -3677,6 +3841,11 @@ function App({ session }) {
                   onAssign={assignAgents} onUnassign={unassignAgent}
                   onSpawn={spawnAgent} onPatchAgent={patchAgent} onRunAgent={runAgent} onOpenAgent={setAgentProfileId} />
               </>)}
+
+              {tab === 'library' && (
+                <MediaLibrary assets={mediaAssets} albums={mediaAlbums}
+                  onUpload={uploadMedia} onCreateAlbum={createAlbum} onDeleteAlbum={deleteAlbum} onMove={moveAssets} onDelete={deleteAsset} />
+              )}
 
             </motion.div>
           </div>
@@ -4314,6 +4483,34 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .se-count.over { color: #B3372F; }
 .se-x { display: flex; padding: 4px; border: none; background: none; color: var(--faint); cursor: pointer; border-radius: 6px; }
 .se-x:hover { background: var(--line); color: var(--ink); }
+.lib { display: flex; gap: 16px; align-items: flex-start; }
+.lib-side { width: 180px; flex: none; display: flex; flex-direction: column; gap: 3px; }
+.lib-side-h { font-size: 11px; font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: .5px; margin: 12px 4px 4px; }
+.lib-album { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 9px; border: none; background: none; cursor: pointer; font-size: 13px; color: var(--ink); }
+.lib-album:hover { background: var(--line); }
+.lib-album.on { background: var(--accent); color: #fff; }
+.lib-album span { font-size: 11.5px; opacity: .7; }
+.lib-album-row { display: flex; align-items: center; }
+.lib-album-row .lib-album { flex: 1; }
+.lib-album-del { border: none; background: none; color: var(--faint); cursor: pointer; padding: 4px; opacity: 0; }
+.lib-album-row:hover .lib-album-del { opacity: 1; }
+.lib-newalbum { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 9px; border: 1px dashed var(--line); background: none; cursor: pointer; font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+.lib-main { flex: 1; min-width: 0; }
+.lib-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.lib-bulk { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; font-size: 12.5px; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.lib-cell { position: relative; }
+.lib-thumb { position: relative; width: 100%; aspect-ratio: 4/5; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #0001; cursor: pointer; padding: 0; display: block; }
+.lib-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.lib-noimg { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--faint); }
+.lib-badge { position: absolute; top: 7px; left: 7px; background: rgba(8,9,13,.6); color: #fff; border-radius: 6px; padding: 3px 5px; display: flex; }
+.lib-status { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(255,255,255,.55); color: var(--ink); font-size: 11.5px; font-weight: 600; }
+.lib-status.bad { background: rgba(179,55,47,.12); color: #B3372F; }
+.lib-tags { position: absolute; bottom: 0; left: 0; right: 0; padding: 5px 7px; background: linear-gradient(transparent, rgba(8,9,13,.7)); color: #fff; font-size: 10.5px; font-weight: 600; }
+.lib-check { position: absolute; top: 7px; right: 7px; width: 19px; height: 19px; border-radius: 5px; border: 1.5px solid #fff; background: rgba(8,9,13,.4); display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; }
+.lib-check.on { background: var(--accent); border-color: var(--accent); }
+.lib-chip { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 600; }
+.lib-chip.subtle { background: var(--line); color: var(--muted); font-weight: 500; }
 .ss-thumb { width: 46px; height: 58px; border-radius: 6px; object-fit: cover; flex: none; border: 1px solid var(--line); }
 /* collapsible sections + clip studio */
 .sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }

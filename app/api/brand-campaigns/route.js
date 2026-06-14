@@ -34,9 +34,10 @@ export async function POST(req) {
   if (needsTopic && !b.topic?.trim()) return Response.json({ error: 'Add a topic for the carousels/posts to promote.' }, { status: 400 })
   if (contentTypes.includes('clip') && !clipSources.length) return Response.json({ error: 'Add at least one source video link to clip from.' }, { status: 400 })
   if (!targets.length) return Response.json({ error: 'Pick at least one account to post to.' }, { status: 400 })
+  const albumIds = (Array.isArray(b.album_ids) ? b.album_ids : []).filter(x => typeof x === 'string').slice(0, 10)
   const row = {
     user_id: user.id, name: b.name.trim(), topic: (b.topic || b.name).trim(), targets,
-    content_types: contentTypes, clip_sources: clipSources, clip_edit: b.clip_edit || 'captions',
+    content_types: contentTypes, clip_sources: clipSources, clip_edit: b.clip_edit || 'captions', album_ids: albumIds,
     carousel_style: b.carousel_style || 'bold', carousel_format: b.carousel_format || 'listicle',
     include_image: !!b.include_image, interval_hours: Number(b.interval_hours) || 24,
     active: b.active !== false, next_run_at: new Date().toISOString(),
@@ -51,7 +52,7 @@ export async function PATCH(req) {
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
   const { id, ...patch } = await req.json().catch(() => ({}))
   const allow = {}
-  for (const k of ['name', 'topic', 'targets', 'content_types', 'clip_sources', 'clip_edit', 'carousel_style', 'carousel_format', 'include_image', 'interval_hours', 'active']) if (k in patch) allow[k] = patch[k]
+  for (const k of ['name', 'topic', 'targets', 'content_types', 'clip_sources', 'clip_edit', 'album_ids', 'carousel_style', 'carousel_format', 'include_image', 'interval_hours', 'active']) if (k in patch) allow[k] = patch[k]
   await admin.from('brand_campaigns').update(allow).eq('id', id).eq('user_id', user.id)
   return Response.json({ ok: true })
 }
