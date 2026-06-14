@@ -3124,6 +3124,7 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, authe
     ['ugc', 'Avatar', MessageCircle],
     ['clip', 'Clip', Film],
     ['edit', 'Edit', Wand2],
+    ['remix', 'Remix', RefreshCw],
   ]
   const PH = {
     auto: 'Describe what to make — a carousel, clip, video, post… or just ask',
@@ -3131,7 +3132,8 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, authe
     ai_video: 'Describe the video to generate…',
     ugc: 'What should the spokesperson say?',
     clip: 'Paste a video link (or attach one in Assets) to clip',
-    edit: 'Describe the edit — attach the clips/photos in Assets',
+    edit: 'Describe the edit — attach clips, paste a TikTok/Reel link, or give a topic for stock',
+    remix: 'Paste a viral TikTok/Reel/Short link to remix into your own',
   }[format]
   // A required input is missing for the picked type — nudge before they send.
   const need = format === 'ugc' && !hasImg ? 'Attach a photo of your spokesperson (Assets) for a talking-avatar video.'

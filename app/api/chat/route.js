@@ -760,7 +760,7 @@ export async function POST(req) {
         .filter(a => a && typeof a.url === 'string')
         .map(a => ({ id: String(a.id || ''), type: a.type === 'video' ? 'video' : 'image', url: a.url.slice(0, 600), filename: String(a.filename || '').slice(0, 120) }))
       studio = {
-        format: ['carousel', 'clip', 'video', 'ai_video', 'ugc', 'edit', 'auto'].includes(rawStudio.format) ? rawStudio.format : 'auto',
+        format: ['carousel', 'clip', 'video', 'ai_video', 'ugc', 'edit', 'remix', 'auto'].includes(rawStudio.format) ? rawStudio.format : 'auto',
         captions: rawStudio.captions !== false,
         attachments: atts,
       }
@@ -901,9 +901,11 @@ STEP 1 — CREATE TYPE (from their words + any attached Library media). Types:
 - CLIP → make_clip. For ONE source video the user wants trimmed/cut down/captioned/reframed into short clips. Essential: a SOURCE VIDEO (a link in the message OR an attached Library video). Length/edit-style default; never ask.
 - AI_VIDEO (text/image→video from scratch) → generate_video mode:'ai_video'. Essential: a SUBJECT. If a Library image is attached and they want it animated, pass image_url. Length is provider-set — never ask it.
 - UGC / AVATAR (a spokesperson reads a script) → generate_video mode:'ugc'. Essential: (1) a SPOKESPERSON PHOTO — an attached Library image of the person/face, passed as image_url; AND (2) a SCRIPT or PRODUCT/MESSAGE (draft the script yourself). The photo is REQUIRED — Higgsfield Speak lip-syncs a real image. If NO image is attached, do NOT call generate_video — ask the user (one short line) to attach a photo of the spokesperson via the Assets button, then generate.
-- EDIT / MONTAGE → generate_video mode:'edit'. A montage from the user's Library media AND/OR STOCK B-ROLL. Sources: source_asset_ids (attached media), external_urls (pasted links), and stock_query (2-5 keywords → cached stock clips). For ANY topical edit ("make an edit about morning routines", "a hype montage about coffee"), set stock_query from the topic so it works even with zero clips of their own. Only ask for media if it's specifically an edit OF the user's own footage and none is attached.
+- EDIT / MONTAGE → generate_video mode:'edit'. A montage from the user's Library media, STOCK B-ROLL, and/or clips pulled from SOCIAL LINKS. Sources: source_asset_ids (attached media), external_urls (pasted links — INCLUDING TikTok/Reel/Short/X links; Cadence downloads the actual clip), and stock_query (2-5 keywords → cached stock clips). For ANY topical edit, set stock_query from the topic so it works even with zero clips of their own.
+- REMIX → take a viral video's HOOK + FORMAT and make the user's OWN version (transformative — never repost the original). Flow: call learn_trend with the pasted link to extract the format (it returns the hook, render_style, and a recipe), THEN immediately make the user's version applying that hook + recipe to THEIR topic/niche — a clip (make_clip with that render_style on their own footage/stock), a carousel (generate_slideshow in that structure), or an ai_video. If they gave no link, ask for one or offer find_trends to discover a trending format to remix.
 - TEXT (post/tweet/thread) is NOT a create type → propose_post / propose_thread; draft immediately, never ask the topic.
-(Disambiguation: ONE source video to shorten/caption = CLIP; MULTIPLE pieces to combine = EDIT.)
+(Disambiguation: ONE source video to shorten/caption = CLIP; MULTIPLE pieces to combine = EDIT; copy someone's FORMAT onto your own content = REMIX.)
+SOURCING FROM SOCIAL: to find content worth remixing, call find_trends (scrapes the user's niche on TikTok/IG) then offer to remix the strongest format. You may use a social clip as B-ROLL in an edit (external_urls), but NEVER repost someone's clip as-is — remix = their hook/format on the user's own content.
 
 STEP 2 — GATHER EVERY ESSENTIAL INPUT *BEFORE* GENERATING. Never start a render that's missing a required input and let it fail — check first, ask once, then make it. This is the ONLY time you may ask:
 - UGC with NO attached spokesperson photo → ask: "Attach a photo of your spokesperson (tap Assets) and I'll make the talking video." Do NOT generate.
@@ -927,7 +929,8 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
         clip: 'a CLIP/REEL from ONE source video — call make_clip; do NOT call generate_slideshow / generate_video / propose_post',
         ai_video: 'a GENERATED AI VIDEO — call generate_video mode:\'ai_video\'; do NOT call make_clip / generate_slideshow / propose_post',
         ugc: `a UGC/AVATAR video — call generate_video mode:'ugc'. It needs a spokesperson photo. ${imgs.length ? `One IS attached ("${imgs[0].filename}") — pass its url (${imgs[0].url}) as image_url and generate; do NOT ask for a photo.` : 'NONE is attached — ask them to attach a photo (Assets) FIRST, do not generate.'} do NOT call other tools`,
-        edit: `an EDIT/MONTAGE — call generate_video mode:'edit'. ${(vids.length || imgs.length) ? 'Media IS attached — pass it as source_asset_ids and generate (one source is fine).' : 'NO media attached — set stock_query to 2-5 keywords from their topic to pull stock B-roll, and generate. Only ask for their own clips if they explicitly want an edit of THEIR footage.'} do NOT call other tools`,
+        edit: `an EDIT/MONTAGE — call generate_video mode:'edit'. ${(vids.length || imgs.length) ? 'Media IS attached — pass it as source_asset_ids and generate (one source is fine).' : 'NO media attached — set stock_query to 2-5 keywords from their topic to pull stock B-roll, and generate. A pasted social link goes in external_urls.'} do NOT call other tools`,
+        remix: `a REMIX — call learn_trend with the pasted social link to extract its hook + format + recipe, THEN make the user's OWN version applying that format to their topic/niche (a clip with the returned render_style, a carousel in that structure, or an ai_video). Never repost the original. If no link is in the message, ask them to paste the viral link they want to remix (or offer find_trends to discover one).`,
         video: 'a GENERATED VIDEO — call generate_video; pick the mode (ai_video / ugc / edit) from their words. do NOT call other tools',
       }[studio.format]
       if (FMT) L.unshift(`HARD OVERRIDE — the user explicitly selected this create-type, so you MUST make ${FMT}. This wins over reading their message as a plain post. Gather every required input first (see STEP 2): if one is missing, ask ONE short question; otherwise make it now.`)
