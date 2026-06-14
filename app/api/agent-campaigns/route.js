@@ -146,12 +146,26 @@ export async function POST(req) {
   if (!patch.name || !patch.product) return Response.json({ error: 'Give the campaign a name and what to promote.' }, { status: 400 })
   const row = { user_id: user.id, intensity: 'subtle', status: 'active', active: true, ...patch }
   row.slug = slugify(body.slug || row.name)
-  const { data, error } = await admin.from('agent_campaigns').insert(row).select().single()
+  let { data, error } = await admin.from('agent_campaigns').insert(row).select().single()
   if (error) {
-    if (/duplicate|unique/i.test(error.message)) { row.slug = `${row.slug}-${Date.now().toString(36).slice(-4)}`; const retry = await admin.from('agent_campaigns').insert(row).select().single(); if (retry.data) return Response.json({ campaign: retry.data }) }
-    return Response.json({ error: error.message }, { status: 500 })
+    if (/duplicate|unique/i.test(error.message)) { row.slug = `${row.slug}-${Date.now().toString(36).slice(-4)}`; const retry = await admin.from('agent_campaigns').insert(row).select().single(); data = retry.data; error = retry.error }
+    if (error) return Response.json({ error: error.message }, { status: 500 })
   }
-  return Response.json({ campaign: data })
+  // Auto-assign agents so the campaign actually runs (a campaign with no agents
+  // is inert). Mirrors create_feeder_campaign: every agent on a matching platform
+  // joins (many-to-many); no platforms set = all agents. assign_all defaults true.
+  let agentsAssigned = 0
+  if (body.assign_all !== false) {
+    const { data: agents } = await admin.from('feeder_agents').select('id, platform').eq('user_id', user.id)
+    const plats = Array.isArray(row.platforms) ? row.platforms : []
+    const targets = (agents || []).filter(a => !plats.length || plats.includes(a.platform))
+    for (const a of targets) {
+      await admin.from('agent_campaign_assignments').upsert({ user_id: user.id, feeder_agent_id: a.id, campaign_id: data.id }, { onConflict: 'feeder_agent_id,campaign_id', ignoreDuplicates: true })
+      await admin.from('feeder_agents').update({ campaign_id: data.id }).eq('id', a.id) // deprecated mirror
+    }
+    agentsAssigned = targets.length
+  }
+  return Response.json({ campaign: data, agents_assigned: agentsAssigned })
 }
 
 // PATCH { id, ...fields } → update / pause / resume / end

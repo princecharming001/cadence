@@ -442,7 +442,7 @@ function DraftProposal({ proposal, authed, connected, canPostLinkedIn, onResolve
   const [doneLabel, setDoneLabel] = useState(proposal.resolved_label || '')
   const [rating, setRating] = useState(null); const [err, setErr] = useState('')
   const countdown = useCountdown(when)
-  function finish(result, label) { setDone(result); setDoneLabel(label); onOutcome && onOutcome(result, label) }
+  function finish(result, label) { if (done) return; setDone(result); setDoneLabel(label); onOutcome && onOutcome(result, label) }
 
   useEffect(() => { if (!connId && xConns[0]?.id) setConnId(xConns[0].id) }, [xConns, connId])
 
@@ -628,7 +628,18 @@ function QuestionProposal({ proposal, onPick }) {
   const [otherOpen, setOtherOpen] = useState(false)
   const [otherText, setOtherText] = useState('')
   const locked = pickedIdx >= 0
-  function pick(idx, val) { if (locked || !val) return; setPickedIdx(idx); onPick(val) }
+  function pick(idx, val) { if (locked || proposal.resolved || !val) return; setPickedIdx(idx); onPick(val) }
+  // Persisted (history-reloaded) answered card: show the chosen answer, no longer interactive.
+  if (proposal.resolved) return (
+    <div className="card qp qp-answered">
+      {q.header && <div className="qp-eyebrow">{q.header}</div>}
+      <div className="qp-q">{q.prompt}</div>
+      <div className="qp-opt on" style={{ cursor: 'default' }}>
+        <span className="qp-key"><LCheck size={12} strokeWidth={3} /></span>
+        <span className="qp-opt-txt"><span className="qp-opt-l">{proposal.resolved_label || 'Answered'}</span></span>
+      </div>
+    </div>
+  )
   return (
     <motion.div className="card qp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
       {q.header && <div className="qp-eyebrow">{q.header}</div>}
@@ -677,20 +688,25 @@ function CampaignProposal({ proposal, authed, onResolved, onOutcome }) {
   const [done, setDone] = useState(proposal.resolved || null)
   const [doneLabel, setDoneLabel] = useState(proposal.resolved_label || '')
   const togglePlat = k => setPlatforms(p => p.includes(k) ? p.filter(x => x !== k) : [...p, k])
-  function finish(result, label) { setDone(result); setDoneLabel(label); onOutcome && onOutcome(result, label) }
+  function finish(result, label) { if (done) return; setDone(result); setDoneLabel(label); onOutcome && onOutcome(result, label) }
   async function launch() {
+    if (busy || done) return
+    if (!platforms.length) { setErr('Pick at least one platform for the agents to promote on.'); return }
     setErr(''); setBusy(true)
     const brief = composeBriefClient({ pitch, audience, keyPoints, avoid: '' })
     const body = {
       name: (c.product || 'Campaign').slice(0, 42), product: c.product, link: c.link || undefined, brief,
       pitch, audience, key_points: keyPoints.split('\n').map(s => s.trim()).filter(Boolean),
-      intensity, objective, platforms, link_strategy: linkStrategy, cta: c.cta || undefined, status: 'active',
+      intensity, objective, platforms, link_strategy: linkStrategy, cta: c.cta || undefined,
+      dont_say: Array.isArray(c.dont_say) ? c.dont_say : undefined, status: 'active',
     }
     const r = await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify(body) })
     const d = await r.json().catch(() => ({}))
     setBusy(false)
     if (!r.ok || d.error) { setErr(d.error || 'Could not launch the campaign.'); return }
-    finish('launched', 'Campaign launched'); onResolved && onResolved()
+    const n = d.agents_assigned || 0
+    finish('launched', n ? `Launched · ${n} agent${n > 1 ? 's' : ''} on it` : 'Launched — add agents on the Campaigns tab')
+    onResolved && onResolved()
   }
   if (done) return <div className={'dp-done ' + (done === 'discarded' ? 'discarded' : 'posted')}>{doneLabel || done}</div>
   return (
@@ -708,8 +724,8 @@ function CampaignProposal({ proposal, authed, onResolved, onOutcome }) {
       <div className="cp-seg"><span className="cp-l">Links</span><div className="cp-chips">{LINK_STRAT_OPTS.map(([k, l]) => <button key={k} type="button" className={'chip' + (linkStrategy === k ? ' on' : '')} onClick={() => setLinkStrategy(k)}>{l}</button>)}</div></div>
       {err && <div className="notice" style={{ color: '#B3372F', marginTop: 8 }}>{err}</div>}
       <div className="dp-actions">
-        <button className="icon-btn x" title="Discard" onClick={() => finish('discarded', 'Discarded')}><Ex /></button>
-        <motion.button className="btn-primary btn-sm" whileTap={{ scale: 0.96 }} disabled={busy} onClick={launch}>{busy ? <span className="dots"><i /><i /><i /></span> : 'Launch campaign'}</motion.button>
+        <button className="icon-btn x" title="Discard" disabled={busy} onClick={() => finish('discarded', 'Discarded')}><Ex /></button>
+        <motion.button className="btn-primary btn-sm" whileTap={{ scale: 0.96 }} disabled={busy || !platforms.length} onClick={launch}>{busy ? <span className="dots"><i /><i /><i /></span> : 'Launch campaign'}</motion.button>
       </div>
     </motion.div>
   )
@@ -744,7 +760,7 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
   const [done, setDone] = useState(proposal.resolved || null)
   const [doneLabel, setDoneLabel] = useState(proposal.resolved_label || '')
   const countdown = useCountdown(when)
-  function finish(result, label) { setDone(result); setDoneLabel(label); onOutcome && onOutcome(result, label) }
+  function finish(result, label) { if (done) return; setDone(result); setDoneLabel(label); onOutcome && onOutcome(result, label) }
   function toggleAcct(id) { setPicked(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n }) }
 
   useEffect(() => {
@@ -767,14 +783,18 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
       try {
         const r = await authed(`/api/video?id=${vid.job_id}`)
         const j = (await r.json()).job
-        if (on && j) {
-          if (j.status === 'done' && j.video_url) { setGen({ status: 'done', video_url: j.video_url, detail: '', error: '' }); return }
-          if (j.status === 'needs_provider') { setGen({ status: 'needs_provider', video_url: null, detail: j.status_detail || '', error: '' }); return }
-          if (j.status === 'failed') { setGen({ status: 'failed', video_url: null, detail: '', error: j.error || 'Render failed.' }); return }
-          if (j.status_detail) setGen(g => g.detail === j.status_detail ? g : { ...g, detail: j.status_detail })
+        if (on) {
+          if (j === null) { setGen({ status: 'failed', video_url: null, detail: '', error: 'This video is no longer available.' }); return }
+          if (j) {
+            if (j.status === 'done' && j.video_url) { setGen({ status: 'done', video_url: j.video_url, detail: '', error: '' }); return }
+            if (j.status === 'needs_provider') { setGen({ status: 'needs_provider', video_url: null, detail: j.status_detail || '', error: '' }); return }
+            if (j.status === 'failed') { setGen({ status: 'failed', video_url: null, detail: '', error: j.error || 'Render failed.' }); return }
+            if (j.status_detail) setGen(g => g.detail === j.status_detail ? g : { ...g, detail: j.status_detail })
+          }
         }
       } catch { /* keep polling */ }
       if (on && ++tries < 150) timer = setTimeout(tick, 5000)
+      else if (on) setGen(g => g.status === 'rendering' ? { ...g, status: 'failed', error: 'Still rendering — it\'ll land in your Library shortly.' } : g)
     }
     timer = setTimeout(tick, 3500)
     return () => { on = false; clearTimeout(timer) }
@@ -818,6 +838,12 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
       needs_avatar: 'A UGC video needs a photo of the spokesperson — attach one from your Library and ask again.',
       needs_tts: 'Voiceover isn\'t configured yet. I can make an AI video or an edit from your media instead.',
     }[gen.detail] || 'Generated video isn\'t switched on yet — but I can make a carousel, or an edit stitched from your own media.'
+    const prettyErr = {
+      nsfw: 'That prompt got flagged — try rephrasing it.',
+      provider_failed: 'The render didn\'t finish — want me to try again?',
+      timeout: 'The render didn\'t finish — want me to try again?',
+      canceled: 'The render was canceled.',
+    }[gen.error] || gen.error || 'Render failed.'
     return (
       <motion.div className="card dp mp-gen" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
         <div className="dp-head"><span>{genName}</span></div>
@@ -829,7 +855,7 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
           </div>
         )}
         {gen.status === 'needs_provider' && <div className="mp-coming">{coming}</div>}
-        {gen.status === 'failed' && <div className="notice" style={{ color: '#B3372F' }}>{gen.error}</div>}
+        {gen.status === 'failed' && <div className="notice" style={{ color: '#B3372F' }}>{prettyErr}</div>}
         <div className="dp-actions">
           <button className="icon-btn x" title="Dismiss" onClick={() => finish('discarded', 'Dismissed')}><Ex /></button>
         </div>
@@ -855,7 +881,7 @@ function MediaProposal({ proposal, authed, socialAccounts = [], onResolved, onOu
             </button>
           ))}
         </div>
-      ) : <div className="muted tiny" style={{ marginTop: 8 }}>Connect {isVideo ? 'Instagram or TikTok' : 'Instagram, TikTok, or LinkedIn'} to post — saving as a draft for now.</div>}
+      ) : <div className="muted tiny" style={{ marginTop: 8 }}>{isVideo ? `Connect Instagram or TikTok to post this ${isGenerated ? 'video' : 'clip'} — it's saved in your Library.` : 'Connect Instagram, TikTok, or LinkedIn to post — saving as a draft for now.'}</div>}
       <div className="row" style={{ justifyContent: 'space-between', marginTop: 10, gap: 8 }}>
         <div className="row" style={{ gap: 8, minWidth: 0 }}>
           <input type="datetime-local" className="field dt" value={when} onChange={e => { whenTouched.current = true; setSmartSlot(false); setWhen(e.target.value) }} />
@@ -4374,7 +4400,7 @@ function App({ session }) {
                     <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
                       <div className={'bubble ' + m.role}>{m.content}</div>
                       {props.map((p, j) => p.question
-                        ? <QuestionProposal key={j} proposal={p} onPick={(v) => send(v)} />
+                        ? <QuestionProposal key={j} proposal={p} onPick={(v) => { resolveProposal(i, j, 'answered', v); send(v) }} />
                         : p.campaign
                         ? <CampaignProposal key={j} proposal={p} authed={authed} onResolved={refreshLive} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} />
                         : (p.slideshow || p.video)

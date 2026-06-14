@@ -254,7 +254,7 @@ const tools = [
   },
   {
     name: 'create_feeder_campaign',
-    description: 'Create a feeder-agent campaign — a promotion MISSION the agents weave into their own posting in their own voices. Goes live immediately and (by default) every unassigned agent joins it. Use when the user says "launch a feeder campaign", "have my agents promote X", etc.',
+    description: 'Create a feeder-agent campaign IMMEDIATELY with no review card (goes live, every agent joins). PREFER propose_campaign for normal requests — it shows an editable consent card the user launches themselves. Use this only when the user explicitly says to skip review ("just create it", "don\'t show me a card") or is iterating on an already-agreed campaign.',
     input_schema: {
       type: 'object',
       properties: {
@@ -320,7 +320,7 @@ const tools = [
   },
   {
     name: 'clarify',
-    description: "Ask the user ONE structured multiple-choice question as an inline card — ONLY when a creative direction genuinely forks (which of 2-3 distinct angles, short vs long) or an ESSENTIAL slot is missing (a from-scratch video/carousel has no subject; a clip/edit has no source). NEVER use it to ask the topic of a TEXT post — for that, pick the strongest angle and draft. Tapping an option becomes the user's reply and continues the chat, so do NOT proceed until they answer. Use at most ONCE per request; never chain two.",
+    description: "Ask the user ONE structured multiple-choice question as an inline card — ONLY when a creative direction genuinely forks (which of 2-3 distinct creative angles) or an ESSENTIAL slot is missing (a from-scratch video/carousel has no subject; a clip/edit has no source). Length/style/format are NEVER a reason to ask — default them silently. NEVER use it to ask the topic of a TEXT post — for that, pick the strongest angle and draft. Tapping an option becomes the user's reply and continues the chat, so do NOT proceed until they answer. Use at most ONCE per request; never chain two.",
     input_schema: {
       type: 'object',
       properties: {
@@ -368,8 +368,8 @@ const tools = [
         image_url: { type: 'string', description: 'Optional Library image to animate (ai_video) or the avatar still (ugc).' },
         source_asset_ids: { type: 'array', items: { type: 'string' }, description: 'edit mode: Library asset ids to stitch.' },
         external_urls: { type: 'array', items: { type: 'string' }, description: 'edit mode: pasted external/stock clip links.' },
-        aspect: { type: 'string', enum: ['vertical', 'square', 'wide'] },
-        duration_sec: { type: 'integer', description: '2-15 (default 6).' },
+        aspect: { type: 'string', enum: ['vertical', 'square', 'wide'], description: 'Honored for edit montages; ai_video/ugc render vertical.' },
+        duration_sec: { type: 'integer', description: 'ugc snaps to 5/10/15s; ai_video length is provider-set. Default 6.' },
       },
       required: ['mode'],
     },
@@ -775,7 +775,12 @@ export async function POST(req) {
 // The agent turn, extracted so it can be driven from tests and other server
 // code. `messages` is the already-validated user/assistant list; `scope` is the
 // platform focus (array) or null.
-export async function runChatTurn({ user, messages: safeMessages, scope, studio = null }) {
+// `probe` (an array) is a TEST seam: when supplied, the create/action tools are
+// recorded ({ tool, input }) and answered with a synthetic ok instead of running
+// — so the agent's DECISION (which tool, what args, whether it clarifies) can be
+// evaluated with zero side effects/cost. It is never passed in production.
+const PROBE_READONLY = new Set(['list_queue', 'list_linkedin_posts', 'get_overview', 'list_agents'])
+export async function runChatTurn({ user, messages: safeMessages, scope, studio = null, probe = null }) {
   try {
     const now = new Date().toLocaleString('en-US', {
       timeZone: 'America/Los_Angeles', dateStyle: 'full', timeStyle: 'short',
@@ -883,37 +888,43 @@ ${scopeBlock}${liVoiceBlock}${trendBlocks}${feedbackBlock(fb)}`
     // When invoked from the Studio composer, bias toward MAKING the thing and
     // wire up any attached Library assets so the agent builds from real media.
     const studioBlock = studio ? (() => {
-      const vids = studio.attachments.filter(a => a.type === 'video')
-      const imgs = studio.attachments.filter(a => a.type === 'image')
+      const atts = Array.isArray(studio.attachments) ? studio.attachments : []
+      const vids = atts.filter(a => a.type === 'video')
+      const imgs = atts.filter(a => a.type === 'image')
       const L = [`
 
 STUDIO MODE — the user is in the create Studio, an agent composer. Turn one short description into a FINISHED thing shown inline (a carousel, a clip, a generated video, a UGC/avatar video, an edit/montage, a post, a thread). DEFAULT to MAKING it. You may ask AT MOST ONE short question, and ONLY via the clarify tool, and ONLY when an ESSENTIAL slot is missing or a creative direction genuinely forks. If every essential slot is filled and a confident default exists, do NOT ask — pick sane defaults for everything non-essential, state the assumption in one line, and make it.
 
 STEP 1 — CREATE TYPE (from their words + any attached Library media). Types:
 - CAROUSEL → generate_slideshow. Essential: a TOPIC. Format/style/slide-count ALWAYS default; never ask.
-- CLIP → make_clip. Essential: a SOURCE VIDEO (a link in the message OR an attached Library video). Length/edit-style default; never ask.
-- AI_VIDEO (text/image→video from scratch) → generate_video mode:'ai_video'. Essential: a SUBJECT. If a Library image is attached and they want it animated, pass image_url. Optional one follow-up: LENGTH (short ~6s vs longer ~15s).
+- CLIP → make_clip. For ONE source video the user wants trimmed/cut down/captioned/reframed into short clips. Essential: a SOURCE VIDEO (a link in the message OR an attached Library video). Length/edit-style default; never ask.
+- AI_VIDEO (text/image→video from scratch) → generate_video mode:'ai_video'. Essential: a SUBJECT. If a Library image is attached and they want it animated, pass image_url. Length is provider-set — never ask it.
 - UGC / AVATAR (a spokesperson reads a script) → generate_video mode:'ugc'. Essential: a SCRIPT or PRODUCT/MESSAGE — draft the script yourself from their brief (avatar/voice default).
-- EDIT / MONTAGE ("edit of me with my media + external media") → generate_video mode:'edit'. Use when Library media is attached and they say edit/montage/stitch/"make something from these". Pass source_asset_ids (attached media) + external_urls (pasted external clips). Essential: at least one piece of media (satisfied by attachments).
+- EDIT / MONTAGE → generate_video mode:'edit'. Use when stitching MULTIPLE pieces into one montage (edit/montage/stitch/"make something from these"). Sources can be attached Library media, pasted external/stock links, or both — pass source_asset_ids and/or external_urls. Essential: at least one media source from EITHER.
 - TEXT (post/tweet/thread) is NOT a create type → propose_post / propose_thread; draft immediately, never ask the topic.
+(Disambiguation: ONE source video to shorten/caption = CLIP; MULTIPLE pieces to combine = EDIT.)
 
 STEP 2 — ESSENTIAL-SLOT CHECK (the only time you may clarify):
-- AI_VIDEO/UGC with NO subject ("make me a video") → clarify "What should the video be about?" with 2-3 tappable angle directions + Something else…
+- AI_VIDEO/UGC with NO subject AND nothing inferable from their niche/voice/recent posts → clarify "What should the video be about?" with 2-3 tappable angle directions + Something else… But if a strong subject IS inferable (it usually is), pick it, say the assumption in one line, and make it — only a bare "make me a video" with nothing to go on warrants the card.
 - CAROUSEL with no topic and nothing to infer → clarify "What's the carousel about?"
 - CLIP/EDIT with no source and none attached → clarify "Drop the video link (or pick one from your Library) and I'll cut it."
 - EVERY other case (slot present, or confidently inferable from their voice/niche/recent posts/attached media) → DO NOT ASK. Make it.
 
-STEP 3 — ONE QUESTION MAX. After they answer the essential question, do NOT batch the rest. At most ONE more lightweight follow-up, only if it changes the OUTPUT materially (e.g. video length). Length, style, format, slide count, edit style, captions are NEVER essential — default them silently.
+STEP 3 — ONE QUESTION TOTAL. Across a single create request you may show AT MOST ONE blocking clarify card. If you already used it for the essential slot (subject/source), do NOT also ask length/style/angle — default everything else silently and surface alternatives only in the non-blocking STEP 4 menu. Length, style, format, slide count, edit style, captions are NEVER essential.
 
 STEP 4 — DIRECTIONS, NOT INTERROGATION. Once the essential slot is filled, make your single best version, then in ONE short line offer up to three named directions the user can tap to regenerate ("Made a punchy one. Different angle? 1) slow-mo majestic 2) fast-cut hype 3) cute/funny"). The artifact leads; the menu follows, never blocks. Use the clarify card for a genuine fork BEFORE making; use this one-line menu AFTER a confident first draft.
 
 GRACEFUL FALLBACK — generated video may be gated. generate_video returns an inline card that renders async; if generated video isn't enabled, the card itself shows a "coming soon — here's the nearest thing" state. So call generate_video confidently; do NOT pre-apologize.
 
 NON-NEGOTIABLES: never publish (everything renders inline for the user to pick accounts and post/schedule themselves); one create tool call per request; after acting, confirm in one or two sentences; never claim an async render (clip/video) is ready — say it's processing.`]
-      // studio.format is a STRONG override on STEP 1.
-      if (studio.format === 'carousel') L.push('OVERRIDE: they chose CAROUSEL — use generate_slideshow.')
-      else if (studio.format === 'clip') L.push('OVERRIDE: they chose CLIP — use make_clip.')
-      else if (studio.format === 'video') L.push('OVERRIDE: they chose generated VIDEO — use generate_video. Pick the mode from their words: ai_video by default; ugc if they want a spokesperson/avatar reading a script; edit if Library media is attached and they want a montage/edit.')
+      // studio.format is a HARD override on STEP 1 — the user picked a create-type
+      // chip, so it wins over any read of their message as a text post.
+      if (studio.format && studio.format !== 'auto') {
+        const o = studio.format === 'carousel' ? 'a CAROUSEL — call generate_slideshow; do NOT call make_clip or generate_video or propose_post'
+          : studio.format === 'clip' ? 'a CLIP/REEL from a source video — call make_clip; do NOT call generate_slideshow or generate_video or propose_post'
+          : 'a GENERATED VIDEO — call generate_video; do NOT call make_clip, generate_slideshow, or propose_post. Pick the mode: ugc for a talking spokesperson/avatar; edit when stitching attached/external media into a montage; otherwise ai_video'
+        L.unshift(`HARD OVERRIDE — the user explicitly selected the ${studio.format.toUpperCase()} create-type chip, so you MUST make ${o}. This wins over reading their message as a plain post. If an essential slot is missing (e.g. no subject), use clarify; otherwise make it now.`)
+      }
       if (vids.length) L.push(`Attached video(s) from their Library: ${vids.map(v => `"${v.filename}" [id ${v.id}] → ${v.url}`).join(' ; ')}. For a CLIP, set make_clip source_url to one${studio.captions === false ? ' (captions off)' : ''}. For an EDIT, pass their ids as generate_video source_asset_ids.`)
       if (imgs.length) L.push(`Attached photo(s) from their Library: ${imgs.map(v => `"${v.filename}" [id ${v.id}] → ${v.url}`).join(' ; ')}. Feature them in a carousel, animate one as ai_video (pass image_url), or include them in an edit (pass their ids as source_asset_ids).`)
       return L.join('\n- ')
@@ -938,6 +949,11 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
         for (const block of response.content) {
           if (block.type !== 'tool_use') continue
           let result
+          if (probe && !PROBE_READONLY.has(block.name)) {
+            probe.push({ tool: block.name, input: block.input })
+            toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ ok: true, note: 'Done (probe).' }) })
+            continue
+          }
           if (block.name === 'propose_thread') {
             const parts = (Array.isArray(block.input.posts) ? block.input.posts : [])
               .map(t => String(t || '').trim()).filter(Boolean).slice(0, 8)
@@ -990,7 +1006,7 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
               const row = {
                 user_id: user.id, source_url: src, source_name: block.input.source_name || null,
                 format: ['vertical', 'square', 'wide'].includes(block.input.format) ? block.input.format : 'vertical',
-                captions: block.input.captions !== false,
+                captions: studio ? studio.captions !== false : block.input.captions !== false,
                 target_len: ['short', 'medium'].includes(block.input.target_len) ? block.input.target_len : 'short',
                 max_clips: Math.min(Math.max(Number(block.input.max_clips) || 3, 1), 5),
                 edit_formats: (Array.isArray(block.input.edit_formats) ? block.input.edit_formats : []).slice(0, 4),
@@ -1013,6 +1029,7 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
               .map(o => ({ label: String(o.label || o.value || '').slice(0, 80), value: String(o.value || o.label || '').slice(0, 200), description: o.description ? String(o.description).slice(0, 120) : undefined }))
               .filter(o => o.label)
             if (opts.length < 2) { result = { error: 'clarify needs 2-4 options.' } }
+            else if (proposals.some(p => p.question)) { result = { error: 'You already asked one question this turn — only ONE clarify card is allowed. Wait for the answer.' } }
             else {
               proposals.push({ question: { prompt: String(block.input.question || '').slice(0, 300), header: String(block.input.header || '').slice(0, 24), options: opts, allow_other: block.input.allow_other !== false } })
               result = { ok: true, note: 'Question card shown inline. The user will tap an option (or type) and you will see their choice as their NEXT message — STOP here and wait; do not call more tools or answer further in this turn.' }
@@ -1036,6 +1053,7 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
                 key_points: (Array.isArray(block.input.key_points) && block.input.key_points.length ? block.input.key_points : (draft.key_points || [])).map(s => String(s).slice(0, 120)).slice(0, 6),
                 cta: block.input.cta || '',
                 link_strategy: ['never', 'occasional', 'cta_only', 'every_promo'].includes(block.input.link_strategy) ? block.input.link_strategy : 'occasional',
+                dont_say: draft.avoid ? [String(draft.avoid).slice(0, 120)] : [],
               }
               camp.brief = composeBrief({ pitch: camp.pitch, audience: camp.audience, key_points: camp.key_points, avoid: draft.avoid })
               proposals.push({ campaign: camp })
