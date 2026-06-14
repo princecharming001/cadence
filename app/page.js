@@ -3105,7 +3105,9 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, authe
   const picks = usable.filter(a => pickType === 'all' || a.type === pickType)
   const isOn = a => attach.some(x => x.id === a.id)
   const toggleAttach = a => setAttach(p => isOn(a) ? p.filter(x => x.id !== a.id) : [...p, { id: a.id, type: a.type, url: a.url, filename: a.filename, thumb_url: a.thumb_url }])
-  const hasVideo = attach.some(a => a.type === 'video') || format === 'clip'
+  const isVid = ['clip', 'ai_video', 'ugc', 'edit'].includes(format) || attach.some(a => a.type === 'video')
+  const hasImg = attach.some(a => a.type === 'image')
+  const hasMedia = attach.length > 0
 
   function go(text) {
     const t = (text ?? input).trim(); if (!t || busy) return
@@ -3113,27 +3115,40 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, authe
     onSend(t, { format, captions, attachments: attach })
   }
 
-  // Quick-start chips (always visible above the input). [label, prefix, format, Icon].
-  // A prefix ending in a space sets the input + focuses; otherwise it sends now.
-  const QUICK = [
-    ['Carousel', 'Make a carousel — 5 slides about ', 'carousel', LImage],
-    ['AI video', 'Make a short AI video about ', 'video', LVideo],
-    ['Talking avatar', 'Make a UGC talking-avatar video that says ', 'video', MessageCircle],
-    ['Clip a video', 'Cut a Reel/clip from my video', 'clip', Film],
-    ['Edit my clips', 'Stitch my Library clips into a montage', 'video', Wand2],
-    ['Write a post', 'Write a post about ', 'auto', Pencil],
+  // ONE create-type selector (replaces the old format chipset + quick bar).
+  // Picking a type sets the studio format hint; the agent routes accordingly.
+  const TYPES = [
+    ['auto', 'Auto', Sparkles],
+    ['carousel', 'Carousel', LImage],
+    ['ai_video', 'AI video', LVideo],
+    ['ugc', 'Avatar', MessageCircle],
+    ['clip', 'Clip', Film],
+    ['edit', 'Edit', Wand2],
   ]
+  const PH = {
+    auto: 'Describe what to make — a carousel, clip, video, post… or just ask',
+    carousel: "What's the carousel about?",
+    ai_video: 'Describe the video to generate…',
+    ugc: 'What should the spokesperson say?',
+    clip: 'Paste a video link (or attach one in Assets) to clip',
+    edit: 'Describe the edit — attach the clips/photos in Assets',
+  }[format]
+  // A required input is missing for the picked type — nudge before they send.
+  const need = format === 'ugc' && !hasImg ? 'Attach a photo of your spokesperson (Assets) for a talking-avatar video.'
+    : format === 'edit' && !hasMedia ? 'Attach the clips/photos to stitch (Assets), or paste links in your message.'
+    : null
   const FOCUS = [['all', 'All'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']]
-  const useQuick = ([, prefix, fmt]) => { if (fmt) setFormat(fmt); if (/ $/.test(prefix)) { setInput(prefix); taRef.current?.focus() } else go(prefix) }
+  const selType = (k) => { setFormat(k); taRef.current?.focus() }
 
   // Shared composer block (used in the empty hero and pinned under a thread).
   const composer = (
     <div className="sc-composer">
-      <div className="sc-quickbar">
-        {QUICK.map(q => {
-          const Ic = q[3]
-          return <button key={q[0]} type="button" className="sc-quick-chip" onClick={() => useQuick(q)}>{Ic && <Ic size={13} />}{q[0]}</button>
-        })}
+      <div className="sc-types">
+        {TYPES.map(([k, l, Ic]) => (
+          <button key={k} type="button" className={'sc-type' + (format === k ? ' on' : '')} onClick={() => selType(k)}>
+            <Ic size={13} />{l}
+          </button>
+        ))}
       </div>
       {attach.length > 0 && (
         <div className="sc-attach-row">
@@ -3149,17 +3164,13 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, authe
       <textarea ref={taRef} className="sc-input" rows={messages.length ? 1 : 2}
         value={input} onChange={e => setInput(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } }}
-        placeholder="Describe what to make — a carousel, a clip, a video, a post… or just ask" />
+        placeholder={PH} />
+      {need && <button type="button" className="sc-need" onClick={() => setPickOpen(true)}><Paperclip size={12} /> {need}</button>}
       <div className="sc-opts">
-        <div className="sc-chipset">
-          {[['auto', 'Auto'], ['carousel', 'Carousel'], ['clip', 'Clip'], ['video', 'Video']].map(([k, l]) => (
-            <button key={k} className={'sc-chip seg-pill-chip' + (format === k ? ' on' : '')} onClick={() => setFormat(k)}>{l}</button>
-          ))}
-        </div>
         <button className={'sc-chip' + (attach.length ? ' on' : '')} onClick={() => setPickOpen(true)}>
           <Paperclip size={13} /> Assets{attach.length ? ` · ${attach.length}` : ''}
         </button>
-        {hasVideo && (
+        {isVid && (
           <button className={'sc-chip' + (captions ? ' on' : '')} onClick={() => setCaptions(c => !c)}>
             <Captions size={13} /> Captions{captions ? '' : ' off'}
           </button>
@@ -4986,9 +4997,16 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .sc-quick-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--body); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px; cursor: pointer; font-family: inherit; transition: .15s; white-space: nowrap; flex: none; }
 .sc-quick-chip:hover { border-color: var(--accent); color: var(--accent-text); }
 .sc-quick-chip svg { color: var(--accent); }
-/* persistent quick-start bar above the composer input */
-.sc-quickbar { display: flex; gap: 7px; overflow-x: auto; padding: 2px 2px 10px; margin: 0 -2px; scrollbar-width: none; }
-.sc-quickbar::-webkit-scrollbar { display: none; }
+/* single create-type selector above the composer input */
+.sc-types { display: flex; gap: 6px; overflow-x: auto; padding: 1px 2px 10px; margin: 0 -2px; scrollbar-width: none; }
+.sc-types::-webkit-scrollbar { display: none; }
+.sc-type { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--surface); border: 1px solid var(--line2); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-family: inherit; transition: .15s; white-space: nowrap; }
+.sc-type svg { color: var(--faint); transition: color .15s; }
+.sc-type:hover { border-color: var(--line-hover); color: var(--body); }
+.sc-type.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+.sc-type.on svg { color: var(--accent); }
+.sc-need { display: inline-flex; align-items: center; gap: 6px; margin: 6px 2px 0; padding: 7px 11px; border-radius: 9px; border: 1px dashed var(--accent-line); background: var(--accent-soft); color: var(--accent-text); font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; text-align: left; }
+.sc-need:hover { border-style: solid; }
 .sc-thread { display: flex; flex-direction: column; gap: 14px; padding: 6px 2px 16px; flex: 1; }
 .sc-pick { width: 560px; }
 .sc-pick-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }

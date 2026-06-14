@@ -759,7 +759,7 @@ export async function POST(req) {
         .filter(a => a && typeof a.url === 'string')
         .map(a => ({ id: String(a.id || ''), type: a.type === 'video' ? 'video' : 'image', url: a.url.slice(0, 600), filename: String(a.filename || '').slice(0, 120) }))
       studio = {
-        format: ['carousel', 'clip', 'video', 'auto'].includes(rawStudio.format) ? rawStudio.format : 'auto',
+        format: ['carousel', 'clip', 'video', 'ai_video', 'ugc', 'edit', 'auto'].includes(rawStudio.format) ? rawStudio.format : 'auto',
         captions: rawStudio.captions !== false,
         attachments: atts,
       }
@@ -899,16 +899,18 @@ STEP 1 — CREATE TYPE (from their words + any attached Library media). Types:
 - CAROUSEL → generate_slideshow. Essential: a TOPIC. Format/style/slide-count ALWAYS default; never ask.
 - CLIP → make_clip. For ONE source video the user wants trimmed/cut down/captioned/reframed into short clips. Essential: a SOURCE VIDEO (a link in the message OR an attached Library video). Length/edit-style default; never ask.
 - AI_VIDEO (text/image→video from scratch) → generate_video mode:'ai_video'. Essential: a SUBJECT. If a Library image is attached and they want it animated, pass image_url. Length is provider-set — never ask it.
-- UGC / AVATAR (a spokesperson reads a script) → generate_video mode:'ugc'. Essential: a SCRIPT or PRODUCT/MESSAGE — draft the script yourself from their brief (avatar/voice default).
-- EDIT / MONTAGE → generate_video mode:'edit'. Use when stitching MULTIPLE pieces into one montage (edit/montage/stitch/"make something from these"). Sources can be attached Library media, pasted external/stock links, or both — pass source_asset_ids and/or external_urls. Essential: at least one media source from EITHER.
+- UGC / AVATAR (a spokesperson reads a script) → generate_video mode:'ugc'. Essential: (1) a SPOKESPERSON PHOTO — an attached Library image of the person/face, passed as image_url; AND (2) a SCRIPT or PRODUCT/MESSAGE (draft the script yourself). The photo is REQUIRED — Higgsfield Speak lip-syncs a real image. If NO image is attached, do NOT call generate_video — ask the user (one short line) to attach a photo of the spokesperson via the Assets button, then generate.
+- EDIT / MONTAGE → generate_video mode:'edit'. Use when stitching MULTIPLE pieces into one montage (edit/montage/stitch/"make something from these"). Sources can be attached Library media, pasted external/stock links, or both — pass source_asset_ids and/or external_urls. REQUIRED: at least one media source. If none attached and no links given, do NOT call generate_video — ask them to attach clips/photos (Assets) or paste links first.
 - TEXT (post/tweet/thread) is NOT a create type → propose_post / propose_thread; draft immediately, never ask the topic.
 (Disambiguation: ONE source video to shorten/caption = CLIP; MULTIPLE pieces to combine = EDIT.)
 
-STEP 2 — ESSENTIAL-SLOT CHECK (the only time you may clarify):
-- AI_VIDEO/UGC with NO subject AND nothing inferable from their niche/voice/recent posts → clarify "What should the video be about?" with 2-3 tappable angle directions + Something else… But if a strong subject IS inferable (it usually is), pick it, say the assumption in one line, and make it — only a bare "make me a video" with nothing to go on warrants the card.
+STEP 2 — GATHER EVERY ESSENTIAL INPUT *BEFORE* GENERATING. Never start a render that's missing a required input and let it fail — check first, ask once, then make it. This is the ONLY time you may ask:
+- UGC with NO attached spokesperson photo → ask: "Attach a photo of your spokesperson (tap Assets) and I'll make the talking video." Do NOT generate.
+- EDIT with NO attached media and NO links → ask them to attach clips/photos or paste links. Do NOT generate.
+- AI_VIDEO/UGC with NO subject/script AND nothing inferable from their niche/voice/recent posts → clarify "What should the video be about?" with 2-3 tappable angle directions + Something else… But if a strong subject IS inferable (it usually is), pick it, say the assumption in one line, and make it — only a bare "make me a video" with nothing to go on warrants the card.
 - CAROUSEL with no topic and nothing to infer → clarify "What's the carousel about?"
-- CLIP/EDIT with no source and none attached → clarify "Drop the video link (or pick one from your Library) and I'll cut it."
-- EVERY other case (slot present, or confidently inferable from their voice/niche/recent posts/attached media) → DO NOT ASK. Make it.
+- CLIP with no source video and none attached → clarify "Drop the video link (or pick one from your Library) and I'll cut it."
+- EVERY other case (every required input present, or confidently inferable) → DO NOT ASK. Make it.
 
 STEP 3 — ONE QUESTION TOTAL. Across a single create request you may show AT MOST ONE blocking clarify card. If you already used it for the essential slot (subject/source), do NOT also ask length/style/angle — default everything else silently and surface alternatives only in the non-blocking STEP 4 menu. Length, style, format, slide count, edit style, captions are NEVER essential.
 
@@ -919,14 +921,17 @@ GRACEFUL FALLBACK — generated video may be gated. generate_video returns an in
 NON-NEGOTIABLES: never publish (everything renders inline for the user to pick accounts and post/schedule themselves); one create tool call per request; after acting, confirm in one or two sentences; never claim an async render (clip/video) is ready — say it's processing.`]
       // studio.format is a HARD override on STEP 1 — the user picked a create-type
       // chip, so it wins over any read of their message as a text post.
-      if (studio.format && studio.format !== 'auto') {
-        const o = studio.format === 'carousel' ? 'a CAROUSEL — call generate_slideshow; do NOT call make_clip or generate_video or propose_post'
-          : studio.format === 'clip' ? 'a CLIP/REEL from a source video — call make_clip; do NOT call generate_slideshow or generate_video or propose_post'
-          : 'a GENERATED VIDEO — call generate_video; do NOT call make_clip, generate_slideshow, or propose_post. Pick the mode: ugc for a talking spokesperson/avatar; edit when stitching attached/external media into a montage; otherwise ai_video'
-        L.unshift(`HARD OVERRIDE — the user explicitly selected the ${studio.format.toUpperCase()} create-type chip, so you MUST make ${o}. This wins over reading their message as a plain post. If an essential slot is missing (e.g. no subject), use clarify; otherwise make it now.`)
-      }
+      const FMT = {
+        carousel: 'a CAROUSEL — call generate_slideshow; do NOT call make_clip / generate_video / propose_post',
+        clip: 'a CLIP/REEL from ONE source video — call make_clip; do NOT call generate_slideshow / generate_video / propose_post',
+        ai_video: 'a GENERATED AI VIDEO — call generate_video mode:\'ai_video\'; do NOT call make_clip / generate_slideshow / propose_post',
+        ugc: `a UGC/AVATAR video — call generate_video mode:'ugc'. It needs a spokesperson photo. ${imgs.length ? `One IS attached ("${imgs[0].filename}") — pass its url (${imgs[0].url}) as image_url and generate; do NOT ask for a photo.` : 'NONE is attached — ask them to attach a photo (Assets) FIRST, do not generate.'} do NOT call other tools`,
+        edit: `an EDIT/MONTAGE — call generate_video mode:'edit' with the attached media as source_asset_ids and/or external_urls (one source is fine — it gets reframed). ${(vids.length || imgs.length) ? 'Media IS attached — use it and generate.' : 'NO media attached and no links — ask them to attach clips FIRST, do not generate.'} do NOT call other tools`,
+        video: 'a GENERATED VIDEO — call generate_video; pick the mode (ai_video / ugc / edit) from their words. do NOT call other tools',
+      }[studio.format]
+      if (FMT) L.unshift(`HARD OVERRIDE — the user explicitly selected this create-type, so you MUST make ${FMT}. This wins over reading their message as a plain post. Gather every required input first (see STEP 2): if one is missing, ask ONE short question; otherwise make it now.`)
       if (vids.length) L.push(`Attached video(s) from their Library: ${vids.map(v => `"${v.filename}" [id ${v.id}] → ${v.url}`).join(' ; ')}. For a CLIP, set make_clip source_url to one${studio.captions === false ? ' (captions off)' : ''}. For an EDIT, pass their ids as generate_video source_asset_ids.`)
-      if (imgs.length) L.push(`Attached photo(s) from their Library: ${imgs.map(v => `"${v.filename}" [id ${v.id}] → ${v.url}`).join(' ; ')}. Feature them in a carousel, animate one as ai_video (pass image_url), or include them in an edit (pass their ids as source_asset_ids).`)
+      if (imgs.length) L.push(`Attached photo(s) from their Library: ${imgs.map(v => `"${v.filename}" [id ${v.id}] → ${v.url}`).join(' ; ')}. THIS COUNTS as the spokesperson photo for UGC — for mode:'ugc' pass the first one's url as image_url (do NOT ask for a photo, you already have one). Also usable: feature in a carousel, animate as ai_video (image_url), or include in an edit (source_asset_ids).`)
       return L.join('\n- ')
     })() : ''
     const systemBlocks = [
@@ -1076,7 +1081,9 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
               status: 'queued',
             }
             if (mode === 'edit' && !row.source_asset_ids.length && !row.external_urls.length) {
-              result = { error: 'Edit mode needs media — pass source_asset_ids (attached Library media) and/or external_urls.' }
+              result = { error: 'Edit mode needs media — DO NOT retry. Ask the user to attach clips/photos (Assets) or paste links, then call generate_video with source_asset_ids/external_urls.' }
+            } else if (mode === 'ugc' && !row.image_url) {
+              result = { error: 'UGC needs a spokesperson photo — DO NOT retry without one. Ask the user (one short line) to attach a photo of the spokesperson via the Assets button, then call generate_video mode:ugc with image_url set to that photo.' }
             } else if (mode !== 'edit' && !row.prompt && !row.script && !row.image_url) {
               result = { error: 'Need a subject — pass a prompt (ai_video) or a script (ugc).' }
             } else {
