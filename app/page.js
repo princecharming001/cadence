@@ -3113,18 +3113,28 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, authe
     onSend(t, { format, captions, attachments: attach })
   }
 
+  // Quick-start chips (always visible above the input). [label, prefix, format, Icon].
+  // A prefix ending in a space sets the input + focuses; otherwise it sends now.
   const QUICK = [
-    ['5-slide carousel', 'Make a carousel — 5 slides about ', 'carousel'],
-    ['Reel from a video', 'Cut a Reel from my video', 'clip'],
-    ['AI video', 'Make a short AI video about ', 'video'],
-    ['Hook + 3 tips', 'Make a carousel with a strong hook and 3 tips about ', 'carousel'],
-    ['Write a post', 'Write a post about '],
+    ['Carousel', 'Make a carousel — 5 slides about ', 'carousel', LImage],
+    ['AI video', 'Make a short AI video about ', 'video', LVideo],
+    ['Talking avatar', 'Make a UGC talking-avatar video that says ', 'video', MessageCircle],
+    ['Clip a video', 'Cut a Reel/clip from my video', 'clip', Film],
+    ['Edit my clips', 'Stitch my Library clips into a montage', 'video', Wand2],
+    ['Write a post', 'Write a post about ', 'auto', Pencil],
   ]
   const FOCUS = [['all', 'All'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']]
+  const useQuick = ([, prefix, fmt]) => { if (fmt) setFormat(fmt); if (/ $/.test(prefix)) { setInput(prefix); taRef.current?.focus() } else go(prefix) }
 
   // Shared composer block (used in the empty hero and pinned under a thread).
   const composer = (
     <div className="sc-composer">
+      <div className="sc-quickbar">
+        {QUICK.map(q => {
+          const Ic = q[3]
+          return <button key={q[0]} type="button" className="sc-quick-chip" onClick={() => useQuick(q)}>{Ic && <Ic size={13} />}{q[0]}</button>
+        })}
+      </div>
       {attach.length > 0 && (
         <div className="sc-attach-row">
           {attach.map(a => (
@@ -3182,11 +3192,6 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, authe
           <h2 className="sc-title">What do you want to make?</h2>
           <p className="sc-sub">Describe a carousel, a clip, an ad — anything. Cadence builds it and drops the result right here. Attach your own media to feature it.</p>
           {composer}
-          <div className="sc-quick">
-            {QUICK.map(([label, prefix, fmt]) => (
-              <button key={label} className="sc-quick-chip" onClick={() => { if (fmt) setFormat(fmt); if (/ $/.test(prefix)) { setInput(prefix); taRef.current?.focus() } else go(prefix) }}>{label}</button>
-            ))}
-          </div>
         </div>
       ) : (
         <>
@@ -4978,8 +4983,12 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .sc-attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sc-attach button { background: none; border: none; cursor: pointer; color: var(--faint); display: flex; padding: 1px; } .sc-attach button:hover { color: var(--ink); }
 .sc-quick { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px; }
-.sc-quick-chip { font-size: 12.5px; font-weight: 600; color: var(--body); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; cursor: pointer; font-family: inherit; transition: .15s; }
+.sc-quick-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--body); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px; cursor: pointer; font-family: inherit; transition: .15s; white-space: nowrap; flex: none; }
 .sc-quick-chip:hover { border-color: var(--accent); color: var(--accent-text); }
+.sc-quick-chip svg { color: var(--accent); }
+/* persistent quick-start bar above the composer input */
+.sc-quickbar { display: flex; gap: 7px; overflow-x: auto; padding: 2px 2px 10px; margin: 0 -2px; scrollbar-width: none; }
+.sc-quickbar::-webkit-scrollbar { display: none; }
 .sc-thread { display: flex; flex-direction: column; gap: 14px; padding: 6px 2px 16px; flex: 1; }
 .sc-pick { width: 560px; }
 .sc-pick-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
