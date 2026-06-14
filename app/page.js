@@ -3089,15 +3089,16 @@ const SMART_VIEWS = [
 // a format, and the same Cadence agent builds it and drops the result inline.
 // It's a thin shell over /api/chat (with a `studio` context) so everything the
 // chat agent can do, the Studio can do — just create-first and structured.
-function StudioComposer({ platform, library = [], messages, busy, onSend, onResolve, authed, socialAccounts, connected, xConns, hasPhotos, refreshLive, defaultHour }) {
+function StudioComposer({ library = [], messages, busy, onSend, onResolve, authed, socialAccounts, connected, xConns, hasPhotos, refreshLive, defaultHour, scope = [], onToggleScope, inputRef }) {
   const [input, setInput] = useState('')
-  const [format, setFormat] = useState('auto')   // auto | carousel | clip
+  const [format, setFormat] = useState('auto')   // auto | carousel | clip | video
   const [captions, setCaptions] = useState(true)
   const [attach, setAttach] = useState([])        // [{id,type,url,filename,thumb_url}]
   const [pickOpen, setPickOpen] = useState(false)
   const [pickType, setPickType] = useState('all') // all | video | image
   const endRef = useRef(null)
-  const taRef = useRef(null)
+  const fallbackTa = useRef(null)
+  const taRef = inputRef || fallbackTa
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, busy])
 
   const usable = library.filter(a => a.url && (a.type === 'image' ? a.status !== 'failed' : a.status === 'ready'))
@@ -3112,9 +3113,14 @@ function StudioComposer({ platform, library = [], messages, busy, onSend, onReso
     onSend(t, { format, captions, attachments: attach })
   }
 
-  const QUICK = platform === 'tiktok'
-    ? [['Photo carousel', 'Make a TikTok photo carousel — 6 punchy slides about '], ['Clip my video', 'Cut a vertical clip from my video', 'clip'], ['Hook + 3 tips', 'Write a scroll-stopping hook and 3 quick tips about '], ['Trend remix', 'Remix a trending TikTok format for my niche about ']]
-    : [['5-slide carousel', 'Make an Instagram carousel — 5 slides about ', 'carousel'], ['Reel from video', 'Cut a Reel from my video', 'clip'], ['Hook + 3 tips', 'Make a carousel with a strong hook and 3 tips about ', 'carousel'], ['Repurpose top post', 'Repurpose my best post into a carousel']]
+  const QUICK = [
+    ['5-slide carousel', 'Make a carousel — 5 slides about ', 'carousel'],
+    ['Reel from a video', 'Cut a Reel from my video', 'clip'],
+    ['AI video', 'Make a short AI video about ', 'video'],
+    ['Hook + 3 tips', 'Make a carousel with a strong hook and 3 tips about ', 'carousel'],
+    ['Write a post', 'Write a post about '],
+  ]
+  const FOCUS = [['all', 'All'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']]
 
   // Shared composer block (used in the empty hero and pinned under a thread).
   const composer = (
@@ -3133,7 +3139,7 @@ function StudioComposer({ platform, library = [], messages, busy, onSend, onReso
       <textarea ref={taRef} className="sc-input" rows={messages.length ? 1 : 2}
         value={input} onChange={e => setInput(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } }}
-        placeholder={`Describe a ${platform === 'tiktok' ? 'clip, photo carousel' : 'Reel, carousel'} — or anything else to make…`} />
+        placeholder="Describe what to make — a carousel, a clip, a video, a post… or just ask" />
       <div className="sc-opts">
         <div className="sc-chipset">
           {[['auto', 'Auto'], ['carousel', 'Carousel'], ['clip', 'Clip'], ['video', 'Video']].map(([k, l]) => (
@@ -3151,6 +3157,20 @@ function StudioComposer({ platform, library = [], messages, busy, onSend, onReso
         <span style={{ flex: 1 }} />
         <motion.button className="sc-send" onClick={() => go()} disabled={busy || !input.trim()} whileTap={{ scale: 0.92 }}><Send size={16} /></motion.button>
       </div>
+      {onToggleScope && (
+        <div className="sc-focus">
+          <span className="muted tiny" style={{ flex: 'none' }}>Post to</span>
+          {FOCUS.map(([k, l]) => {
+            const on = k === 'all' ? scope.length === 0 : scope.includes(k)
+            return (
+              <button key={k} className={'sc-focus-chip' + (on ? ' on' : '')} onClick={() => onToggleScope(k)}>
+                {k !== 'all' && <span className="status-dot" style={{ background: platformDot(k), width: 6, height: 6 }} />}{l}
+                {on && k !== 'all' && <LCheck size={10} strokeWidth={3} />}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 
@@ -3377,7 +3397,7 @@ function App({ session }) {
   const token = session.access_token
   const authed = useCallback((path, opts = {}) => fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(opts.headers || {}) } }), [token])
 
-  const [tab, setTab] = useState('queue')
+  const [tab, setTab] = useState('studio')
   const [posts, setPosts] = useState([]); const [xConns, setXConns] = useState([])
   const [liSelf, setLiSelf] = useState([]); const [liMentors, setLiMentors] = useState([]); const [liPosts, setLiPosts] = useState([])
   const [photos, setPhotos] = useState([])
@@ -3402,10 +3422,6 @@ function App({ session }) {
   const [feederAgents, setFeederAgents] = useState([])
   const [agentCampaigns, setAgentCampaigns] = useState([])
   const [mediaAssets, setMediaAssets] = useState([]); const [mediaAlbums, setMediaAlbums] = useState([])
-  const [studioMode, setStudioMode] = useState('create'); const [studioPlatform, setStudioPlatform] = useState('instagram')
-  // The Studio agent thread — a separate, ephemeral working surface (not saved to
-  // chat history). Drives /api/chat with a `studio` context so it creates first.
-  const [studioMsgs, setStudioMsgs] = useState([]); const [studioBusy, setStudioBusy] = useState(false)
   const [chatList, setChatList] = useState([]); const [historyOpen, setHistoryOpen] = useState(false)
   const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
   const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
@@ -3922,39 +3938,27 @@ function App({ session }) {
     })
   }
 
-  async function send(text) {
+  // The one chat = the Studio. `opts` (from the Studio composer) carries the
+  // create context — a format hint + attached Library media — so the agent makes
+  // the thing and shows it inline. Plain text messages just pass opts-less.
+  async function send(text, opts = null) {
     const t = (text ?? input).trim(); if (!t || loading) return
     setInput(''); const next = [...messages, { role: 'user', content: t }]; setMessages(next); setLoading(true)
     try {
-      // Model sees the recent window; the full conversation still saves to history.
-      const res = await authed('/api/chat', { method: 'POST', body: JSON.stringify({ messages: next.slice(-40), platforms: chatScope }) })
+      const body = { messages: next.slice(-40), platforms: chatScope }
+      // Always pass a (possibly minimal) studio context — the chat IS the Studio.
+      body.studio = {
+        format: opts?.format || 'auto',
+        captions: opts ? opts.captions !== false : true,
+        attachments: (opts?.attachments || []).map(a => ({ id: a.id, type: a.type, url: a.url, filename: a.filename })),
+      }
+      const res = await authed('/api/chat', { method: 'POST', body: JSON.stringify(body) })
       const data = await res.json()
       const proposals = Array.isArray(data.proposals) ? data.proposals : (data.proposal ? [data.proposal] : [])
       const withReply = [...next, { role: 'assistant', content: data.reply, proposals }]
       setMessages(withReply); saveChat(withReply); refreshLive()
     }
     catch (e) { setMessages(p => [...p, { role: 'assistant', content: '⚠️ ' + e.message }]) } finally { setLoading(false) }
-  }
-
-  // The Studio agent: same endpoint, but scoped to the chosen platform and given
-  // a `studio` context (format hint + attached Library media) so it makes the
-  // thing and shows it inline. Kept in its own thread so it never tangles chat.
-  async function studioSend(text, opts = {}) {
-    const t = (text || '').trim(); if (!t || studioBusy) return
-    const next = [...studioMsgs, { role: 'user', content: t }]; setStudioMsgs(next); setStudioBusy(true)
-    try {
-      const res = await authed('/api/chat', { method: 'POST', body: JSON.stringify({
-        messages: next.slice(-40), platforms: [studioPlatform],
-        studio: { format: opts.format || 'auto', captions: opts.captions !== false, attachments: (opts.attachments || []).map(a => ({ id: a.id, type: a.type, url: a.url, filename: a.filename })) },
-      }) })
-      const data = await res.json()
-      const proposals = Array.isArray(data.proposals) ? data.proposals : (data.proposal ? [data.proposal] : [])
-      setStudioMsgs([...next, { role: 'assistant', content: data.reply, proposals }]); refreshLive()
-    }
-    catch (e) { setStudioMsgs(p => [...p, { role: 'assistant', content: '⚠️ ' + e.message }]) } finally { setStudioBusy(false) }
-  }
-  function resolveStudioProposal(mi, pi, resolved, label) {
-    setStudioMsgs(ms => ms.map((m, i) => i !== mi ? m : { ...m, proposals: (m.proposals || (m.proposal ? [m.proposal] : [])).map((p, j) => j !== pi ? p : { ...p, resolved, resolved_label: label }), proposal: undefined }))
   }
 
   const persona = me?.persona; const stats = me?.stats || {}
@@ -3976,17 +3980,52 @@ function App({ session }) {
 
       <AnimatePresence>{banner && <motion.div className="banner" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={spring}>{banner}</motion.div>}</AnimatePresence>
 
-      <div className="cols" ref={colsRef} style={{ '--left-pct': (chatOpen ? leftPct : 100) + '%' }}>
-        <section className={'pane left' + (['x', 'linkedin', 'instagram', 'tiktok'].includes(tab) ? ` plat-${tab}` : '')}>
-          <div className="left-head">
-            <div className="seg">
-              {['queue', 'studio', 'x', 'linkedin', 'instagram', 'tiktok', 'campaigns'].map(t => (
-                <button key={t} onClick={() => setTab(t)} className={'seg-btn' + (tab === t ? ' on' : '')}>
-                  {tab === t && <motion.span layoutId="seg-pill" className="seg-pill" transition={spring} />}
-                  <span style={{ position: 'relative', zIndex: 1 }}>{({ queue: 'Queue', studio: 'Studio', x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok', campaigns: 'Campaigns' })[t]}</span>
-                </button>
-              ))}
-            </div>
+      <div className="shell">
+        {/* Side menu (Opus-Clip style): create-first, channels demoted below. */}
+        <nav className="side">
+          <div className="side-group">
+            {[['studio', 'Create', Sparkles], ['queue', 'Queue', LList], ['campaigns', 'Campaigns', Bot], ['library', 'Library', FolderOpen]].map(([t, l, Ic]) => (
+              <button key={t} onClick={() => setTab(t)} className={'side-btn' + (tab === t ? ' on' : '')}>
+                <Ic size={16} /><span>{l}</span>
+              </button>
+            ))}
+          </div>
+          <div className="side-label">Channels</div>
+          <div className="side-group">
+            {['x', 'linkedin', 'instagram', 'tiktok'].map(t => (
+              <button key={t} onClick={() => setTab(t)} className={'side-btn side-chan' + (tab === t ? ' on' : '')}>
+                <span className="side-glyph">{PLATFORM_GLYPH[t]}</span>
+                <span>{({ x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok' })[t]}</span>
+              </button>
+            ))}
+          </div>
+        </nav>
+
+        <section className={'work' + (['x', 'linkedin', 'instagram', 'tiktok'].includes(tab) ? ` plat-${tab}` : '')}>
+          <div className="work-head">
+            <span className="work-title">{({ studio: 'Studio', queue: 'Queue', campaigns: 'Campaigns', library: 'Library', x: 'X', linkedin: 'LinkedIn', instagram: 'Instagram', tiktok: 'TikTok' })[tab]}</span>
+            {tab === 'studio' && (
+              <div className="row" style={{ gap: 6, position: 'relative' }}>
+                <button className="mini" onClick={() => { if (!historyOpen) loadChats(); setHistoryOpen(o => !o) }} title="Previous chats"><LHistory size={12} /> History</button>
+                <button className="mini" onClick={newChat} title="Start a new chat"><Plus size={12} /> New</button>
+                <AnimatePresence>
+                  {historyOpen && (
+                    <motion.div className="card chat-hist" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.15 }}>
+                      {chatList.length === 0 && <div className="muted tiny" style={{ padding: '10px 12px' }}>No saved chats yet — they save automatically as you talk.</div>}
+                      {chatList.map(c => (
+                        <div key={c.id} className={'hist-row' + (c.id === chatIdRef.current ? ' on' : '')} onClick={() => openChat(c.id)}>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div className="hist-title">{c.title || 'Chat'}</div>
+                            <div className="muted tiny">{fmt(c.updated_at)}</div>
+                          </div>
+                          <button className="hist-del" title="Delete chat" onClick={e => deleteChat(c.id, e)}><Trash2 size={12} /></button>
+                        </div>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
             {tab === 'queue' && <motion.button className="btn-primary btn-sm row" style={{ gap: 5 }} onClick={openNew} whileTap={{ scale: 0.96 }}><Plus size={14} /> New post</motion.button>}
           </div>
 
@@ -4174,7 +4213,7 @@ function App({ session }) {
 
                   {/* Create lives in the unified Studio now — this tab is the
                       platform dashboard (auto-reply, niche engage, campaigns). */}
-                  <button className="btn-primary row" style={{ gap: 8, width: '100%', justifyContent: 'center', margin: '2px 0 6px' }} onClick={() => { setStudioPlatform(plat); setStudioMode('create'); setTab('studio') }}>
+                  <button className="btn-primary row" style={{ gap: 8, width: '100%', justifyContent: 'center', margin: '2px 0 6px' }} onClick={() => { if (!chatScope.includes(plat)) setChatScope([plat]); setTab('studio') }}>
                     <Wand2 size={15} /> Make {plat === 'instagram' ? 'Reels & carousels' : 'clips & carousels'} in Studio
                   </button>
 
@@ -4267,31 +4306,15 @@ function App({ session }) {
                   onSpawn={spawnAgent} onPatchAgent={patchAgent} onRunAgent={runAgent} onOpenAgent={setAgentProfileId} />
               </>)}
 
-              {/* STUDIO — one place to make Reels/Clips + Carousels, fed by your
-                  Library. Left rail = what to make + platform; canvas = the maker. */}
+              {/* STUDIO = the one chat. Describe anything (carousel, clip, video,
+                  post) and it makes it inline; pick where to post on the result. */}
               {tab === 'studio' && (
-                <div className="studio">
-                  <div className="studio-rail">
-                    <div className="studio-plat">
-                      {[['instagram', 'Instagram', IGGlyph], ['tiktok', 'TikTok', TTGlyph]].map(([k, l, G]) => (
-                        <button key={k} className={'studio-plat-btn' + (studioPlatform === k ? ' on' : '')} onClick={() => setStudioPlatform(k)}><G size={13} /> {l}</button>
-                      ))}
-                    </div>
-                    <div className="studio-verbs">
-                      {[['create', 'Create', Sparkles, 'describe it — agent makes it'], ['carousel', studioPlatform === 'tiktok' ? 'Photo carousel' : 'Carousel', LImage, 'AI slides + your photos'], ['clip', studioPlatform === 'tiktok' ? 'Clip' : 'Reel / Clip', Film, 'cut from a video'], ['library', 'Library', FolderOpen, 'your media + albums']].map(([k, l, Ic, d]) => (
-                        <button key={k} className={'studio-verb' + (studioMode === k ? ' on' : '')} onClick={() => setStudioMode(k)}>
-                          <Ic size={17} /><span className="studio-verb-txt"><span className="studio-verb-l">{l}</span><span className="studio-verb-d">{d}</span></span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="studio-canvas">
-                    {studioMode === 'create' && <StudioComposer platform={studioPlatform} library={mediaAssets} messages={studioMsgs} busy={studioBusy} onSend={studioSend} onResolve={resolveStudioProposal} authed={authed} socialAccounts={socialAccounts} connected={connected} xConns={xConns} hasPhotos={hasPhotos} refreshLive={refreshLive} defaultHour={defaultHour} />}
-                    {studioMode === 'carousel' && <SlideshowStudio hideAccounts platformFocus={studioPlatform} accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows} albums={mediaAlbums} authed={authed} onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} onRefresh={loadSlideshows} />}
-                    {studioMode === 'clip' && <ClipStudio platformFocus={studioPlatform} jobs={clipJobs} accounts={socialAccounts} configured={socialConfigured} library={mediaAssets} onCreate={createClipJob} onUpload={uploadClipFile} onDelete={deleteClipJob} onPost={postClip} />}
-                    {studioMode === 'library' && <MediaLibrary assets={mediaAssets} albums={mediaAlbums} onUpload={uploadMedia} onCreateAlbum={createAlbum} onDeleteAlbum={deleteAlbum} onMove={moveAssets} onDelete={deleteAsset} onFavorite={favoriteAsset} onUseIn={(a) => setStudioMode(a.type === 'video' ? 'clip' : 'carousel')} />}
-                  </div>
-                </div>
+                <StudioComposer library={mediaAssets} messages={messages} busy={loading} onSend={send} onResolve={resolveProposal}
+                  authed={authed} socialAccounts={socialAccounts} connected={connected} xConns={xConns} hasPhotos={hasPhotos}
+                  refreshLive={refreshLive} defaultHour={defaultHour} scope={chatScope} onToggleScope={toggleScope} />
+              )}
+              {tab === 'library' && (
+                <MediaLibrary assets={mediaAssets} albums={mediaAlbums} onUpload={uploadMedia} onCreateAlbum={createAlbum} onDeleteAlbum={deleteAlbum} onMove={moveAssets} onDelete={deleteAsset} onFavorite={favoriteAsset} onUseIn={() => setTab('studio')} />
               )}
 
             </motion.div>
@@ -4350,97 +4373,6 @@ function App({ session }) {
             </FloatingAccounts>
           )}
         </section>
-
-        {chatOpen && <>
-        <div className={'split-handle' + (dragging ? ' active' : '')} onMouseDown={startDrag} onTouchStart={startDrag} title="Drag to resize" role="separator" aria-label="Resize panels"><span className="split-grip" /></div>
-
-        {/* chat */}
-        <section className="pane right">
-          <div className="chat-head">
-            <span className="chat-head-label">{messages.length ? (chatList.find(c => c.id === chatIdRef.current)?.title || 'Chat') : 'New chat'}</span>
-            <div className="row" style={{ gap: 6, position: 'relative' }}>
-              <button className="mini" onClick={() => { if (!historyOpen) loadChats(); setHistoryOpen(o => !o) }} title="Previous chats"><LHistory size={12} /> History</button>
-              <button className="mini" onClick={newChat} title="Start a new chat"><Plus size={12} /> New</button>
-              <button className="mini" onClick={() => toggleChat(false)} title="Collapse chat"><LX size={13} /></button>
-              <AnimatePresence>
-                {historyOpen && (
-                  <motion.div className="card chat-hist" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.15 }}>
-                    {chatList.length === 0 && <div className="muted tiny" style={{ padding: '10px 12px' }}>No saved chats yet — they save automatically as you talk.</div>}
-                    {chatList.map(c => (
-                      <div key={c.id} className={'hist-row' + (c.id === chatIdRef.current ? ' on' : '')} onClick={() => openChat(c.id)}>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div className="hist-title">{c.title || 'Chat'}</div>
-                          <div className="muted tiny">{fmt(c.updated_at)}</div>
-                        </div>
-                        <button className="hist-del" title="Delete chat" onClick={e => deleteChat(c.id, e)}><Trash2 size={12} /></button>
-                      </div>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </div>
-          <div className="scroll chat-scroll" onClick={() => historyOpen && setHistoryOpen(false)}>
-            {messages.length === 0 && (
-              <div className="chat-welcome">
-                <div className="wordmark" style={{ fontSize: 19, marginBottom: 4 }}>How can I help?</div>
-                <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>Post, schedule, make carousels, run replies — across X, LinkedIn, Instagram & TikTok. Just ask.</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
-                  {["Write a post about what I'm building this week", 'Turn my last LinkedIn post into a thread', "Make a carousel: 5 lessons from this month"].map(ex => (
-                    <button key={ex} className="preset" style={{ fontSize: 12.5 }} onClick={() => usePreset(ex)}>{ex}</button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <AnimatePresence initial={false}>
-              {messages.map((m, i) => {
-                const props = m.proposals || (m.proposal ? [m.proposal] : [])
-                return (
-                  <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
-                    <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                      <div className={'bubble ' + m.role}>{m.content}</div>
-                      {props.map((p, j) => p.question
-                        ? <QuestionProposal key={j} proposal={p} onPick={(v) => { resolveProposal(i, j, 'answered', v); send(v) }} />
-                        : p.campaign
-                        ? <CampaignProposal key={j} proposal={p} authed={authed} onResolved={refreshLive} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} />
-                        : (p.slideshow || p.video)
-                        ? <MediaProposal key={j} proposal={p} index={j} total={props.length} authed={authed} socialAccounts={socialAccounts} onResolved={refreshLive} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} />
-                        : <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={refreshLive} onOutcome={(resolved, label) => resolveProposal(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
-                      )}
-                    </div>
-                  </motion.div>
-                )
-              })}
-            </AnimatePresence>
-            {loading && <div className="msg assistant"><div className="bubble assistant"><span className="dots"><i/><i/><i/></span></div></div>}
-            <div ref={bottomRef} />
-          </div>
-          <div className="composer-wrap">
-            <div className="chat-scope">
-              <span className="muted tiny" style={{ flex: 'none' }}>Focus:</span>
-              {[['all', 'All'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']].map(([k, l]) => {
-                const on = k === 'all' ? chatScope.length === 0 : chatScope.includes(k)
-                return (
-                  <button key={k} className={'scope-chip' + (on ? ' on' : '')} onClick={() => toggleScope(k)}>
-                    {k !== 'all' && <span className="status-dot" style={{ background: platformDot(k), width: 6, height: 6 }} />}{l}
-                    {on && k !== 'all' && <LCheck size={11} strokeWidth={3} style={{ marginLeft: 1 }} />}
-                  </button>
-                )
-              })}
-            </div>
-            <div className="presets">
-              {PRESETS.map(p => <button key={p} className="preset" onClick={() => usePreset(p)}>{p}</button>)}
-            </div>
-            <div className="composer">
-              <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }} placeholder="Message Cadence…" rows={1} className="field chat-input" />
-              <motion.button onClick={() => send()} disabled={loading || !input.trim()} className="btn-primary send" whileTap={{ scale: 0.92 }}><Send size={17} /></motion.button>
-            </div>
-          </div>
-        </section>
-        </>}
-        {!chatOpen && (
-          <button className="chat-reopen" onClick={() => toggleChat(true)} title="Open Cadence chat"><Sparkles size={15} /> Chat</button>
-        )}
       </div>
 
       {/* brand onboarding — required before Autopilot speaks for you */}
@@ -4705,6 +4637,32 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .left { width: var(--left-pct, 47%); flex: none; }
 .right { flex: 1; min-width: 0; }
+/* Opus-Clip shell: side menu + single work pane */
+.shell { display: flex; flex: 1; overflow: hidden; }
+.side { flex: none; width: 212px; display: flex; flex-direction: column; gap: 2px; padding: 14px 12px; border-right: 1px solid var(--line); overflow-y: auto; background: var(--bg); }
+.side-group { display: flex; flex-direction: column; gap: 2px; }
+.side-label { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); padding: 18px 10px 6px; }
+.side-btn { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: 9px; border: none; background: none; cursor: pointer; font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--body); text-align: left; transition: background .12s, color .12s; }
+.side-btn:hover { background: var(--bg2); }
+.side-btn.on { background: var(--accent-soft); color: var(--accent-text); }
+.side-btn svg { flex: none; }
+.side-chan { font-weight: 500; font-size: 13px; color: var(--muted); }
+.side-glyph { width: 16px; display: inline-flex; align-items: center; justify-content: center; }
+.side-glyph svg { width: 14px; height: 14px; }
+.work { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.work-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 13px 18px 9px; min-height: 30px; position: relative; }
+.work-title { font-size: 15px; font-weight: 800; letter-spacing: -.01em; color: var(--ink); }
+.sc-focus { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 9px 2px 0; margin-top: 9px; border-top: 1px solid var(--line); }
+.sc-focus-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line2); background: var(--surface); color: var(--muted); cursor: pointer; font-family: inherit; }
+.sc-focus-chip:hover { border-color: var(--line-hover); }
+.sc-focus-chip.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+@media (max-width: 760px) {
+  .shell { flex-direction: column; }
+  .side { width: 100%; flex-direction: row; overflow-x: auto; overflow-y: hidden; border-right: none; border-bottom: 1px solid var(--line); padding: 8px 10px; gap: 4px; align-items: center; }
+  .side-group { flex-direction: row; gap: 4px; flex: none; }
+  .side-label { display: none; }
+  .side-btn { padding: 7px 10px; white-space: nowrap; }
+}
 .split-handle { flex: none; width: 9px; margin: 0 -4px; cursor: col-resize; position: relative; z-index: 6; display: flex; align-items: center; justify-content: center; touch-action: none; }
 .split-handle::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; transform: translateX(-50%); background: var(--line); transition: background .15s, width .15s; }
 .split-handle:hover::before, .split-handle.active::before { width: 3px; background: var(--accent); border-radius: 2px; }
