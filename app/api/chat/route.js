@@ -358,7 +358,7 @@ const tools = [
   },
   {
     name: 'generate_video',
-    description: "Generate a brand-NEW short video (not cut from a source — that's make_clip). mode 'ai_video' = a cinematic text→video (or animate an attached Library image); mode 'ugc' = a talking spokesperson/avatar reads a script; mode 'edit' = a montage stitched from the user's Library media + any external/stock clips. Async (renders in minutes) and shows up as an inline video card — say it's rendering, never claim it's ready. If generated video isn't switched on, the card shows a graceful 'coming soon' state, so you may call this confidently.",
+    description: "Generate a brand-NEW short video (not cut from a source — that's make_clip). mode 'ai_video' = a cinematic text→video (or animate an attached Library image); mode 'ugc' = a talking spokesperson/avatar reads a script; mode 'edit' = a montage stitched from the user's Library media AND/OR stock B-roll from the content library. For EDIT, set stock_query to a few keywords (e.g. 'coffee pour cafe morning') and Cadence pulls matching clips from its cached stock library — so an edit works even when the user has NO clips of their own. Async (renders in minutes), shows up as an inline video card — say it's rendering, never claim it's ready.",
     input_schema: {
       type: 'object',
       properties: {
@@ -367,7 +367,8 @@ const tools = [
         script: { type: 'string', description: 'The spoken script (ugc) — draft it yourself from their brief.' },
         image_url: { type: 'string', description: 'Optional Library image to animate (ai_video) or the avatar still (ugc).' },
         source_asset_ids: { type: 'array', items: { type: 'string' }, description: 'edit mode: Library asset ids to stitch.' },
-        external_urls: { type: 'array', items: { type: 'string' }, description: 'edit mode: pasted external/stock clip links.' },
+        external_urls: { type: 'array', items: { type: 'string' }, description: 'edit mode: pasted external clip links.' },
+        stock_query: { type: 'string', description: "edit mode: 2-5 keywords to pull stock B-roll from the content library (cached, no AI cost). Set this for any topical edit — it's how an edit works without the user's own clips." },
         aspect: { type: 'string', enum: ['vertical', 'square', 'wide'], description: 'Honored for edit montages; ai_video/ugc render vertical.' },
         duration_sec: { type: 'integer', description: 'ugc snaps to 5/10/15s; ai_video length is provider-set. Default 6.' },
       },
@@ -900,13 +901,13 @@ STEP 1 — CREATE TYPE (from their words + any attached Library media). Types:
 - CLIP → make_clip. For ONE source video the user wants trimmed/cut down/captioned/reframed into short clips. Essential: a SOURCE VIDEO (a link in the message OR an attached Library video). Length/edit-style default; never ask.
 - AI_VIDEO (text/image→video from scratch) → generate_video mode:'ai_video'. Essential: a SUBJECT. If a Library image is attached and they want it animated, pass image_url. Length is provider-set — never ask it.
 - UGC / AVATAR (a spokesperson reads a script) → generate_video mode:'ugc'. Essential: (1) a SPOKESPERSON PHOTO — an attached Library image of the person/face, passed as image_url; AND (2) a SCRIPT or PRODUCT/MESSAGE (draft the script yourself). The photo is REQUIRED — Higgsfield Speak lip-syncs a real image. If NO image is attached, do NOT call generate_video — ask the user (one short line) to attach a photo of the spokesperson via the Assets button, then generate.
-- EDIT / MONTAGE → generate_video mode:'edit'. Use when stitching MULTIPLE pieces into one montage (edit/montage/stitch/"make something from these"). Sources can be attached Library media, pasted external/stock links, or both — pass source_asset_ids and/or external_urls. REQUIRED: at least one media source. If none attached and no links given, do NOT call generate_video — ask them to attach clips/photos (Assets) or paste links first.
+- EDIT / MONTAGE → generate_video mode:'edit'. A montage from the user's Library media AND/OR STOCK B-ROLL. Sources: source_asset_ids (attached media), external_urls (pasted links), and stock_query (2-5 keywords → cached stock clips). For ANY topical edit ("make an edit about morning routines", "a hype montage about coffee"), set stock_query from the topic so it works even with zero clips of their own. Only ask for media if it's specifically an edit OF the user's own footage and none is attached.
 - TEXT (post/tweet/thread) is NOT a create type → propose_post / propose_thread; draft immediately, never ask the topic.
 (Disambiguation: ONE source video to shorten/caption = CLIP; MULTIPLE pieces to combine = EDIT.)
 
 STEP 2 — GATHER EVERY ESSENTIAL INPUT *BEFORE* GENERATING. Never start a render that's missing a required input and let it fail — check first, ask once, then make it. This is the ONLY time you may ask:
 - UGC with NO attached spokesperson photo → ask: "Attach a photo of your spokesperson (tap Assets) and I'll make the talking video." Do NOT generate.
-- EDIT with NO attached media and NO links → ask them to attach clips/photos or paste links. Do NOT generate.
+- EDIT with NO attached media → if it's a TOPICAL edit, just set stock_query from the topic and generate (stock B-roll). Only ask for media when they clearly mean an edit of THEIR OWN footage and attached none.
 - AI_VIDEO/UGC with NO subject/script AND nothing inferable from their niche/voice/recent posts → clarify "What should the video be about?" with 2-3 tappable angle directions + Something else… But if a strong subject IS inferable (it usually is), pick it, say the assumption in one line, and make it — only a bare "make me a video" with nothing to go on warrants the card.
 - CAROUSEL with no topic and nothing to infer → clarify "What's the carousel about?"
 - CLIP with no source video and none attached → clarify "Drop the video link (or pick one from your Library) and I'll cut it."
@@ -926,7 +927,7 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
         clip: 'a CLIP/REEL from ONE source video — call make_clip; do NOT call generate_slideshow / generate_video / propose_post',
         ai_video: 'a GENERATED AI VIDEO — call generate_video mode:\'ai_video\'; do NOT call make_clip / generate_slideshow / propose_post',
         ugc: `a UGC/AVATAR video — call generate_video mode:'ugc'. It needs a spokesperson photo. ${imgs.length ? `One IS attached ("${imgs[0].filename}") — pass its url (${imgs[0].url}) as image_url and generate; do NOT ask for a photo.` : 'NONE is attached — ask them to attach a photo (Assets) FIRST, do not generate.'} do NOT call other tools`,
-        edit: `an EDIT/MONTAGE — call generate_video mode:'edit' with the attached media as source_asset_ids and/or external_urls (one source is fine — it gets reframed). ${(vids.length || imgs.length) ? 'Media IS attached — use it and generate.' : 'NO media attached and no links — ask them to attach clips FIRST, do not generate.'} do NOT call other tools`,
+        edit: `an EDIT/MONTAGE — call generate_video mode:'edit'. ${(vids.length || imgs.length) ? 'Media IS attached — pass it as source_asset_ids and generate (one source is fine).' : 'NO media attached — set stock_query to 2-5 keywords from their topic to pull stock B-roll, and generate. Only ask for their own clips if they explicitly want an edit of THEIR footage.'} do NOT call other tools`,
         video: 'a GENERATED VIDEO — call generate_video; pick the mode (ai_video / ugc / edit) from their words. do NOT call other tools',
       }[studio.format]
       if (FMT) L.unshift(`HARD OVERRIDE — the user explicitly selected this create-type, so you MUST make ${FMT}. This wins over reading their message as a plain post. Gather every required input first (see STEP 2): if one is missing, ask ONE short question; otherwise make it now.`)
@@ -1078,10 +1079,11 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
               duration_sec: Math.min(Math.max(Number(block.input.duration_sec) || 6, 2), 15),
               source_asset_ids: (Array.isArray(block.input.source_asset_ids) ? block.input.source_asset_ids : []).slice(0, 8),
               external_urls: (Array.isArray(block.input.external_urls) ? block.input.external_urls : []).filter(u => /^https?:\/\//.test(String(u))).slice(0, 8),
+              stock_query: String(block.input.stock_query || '').slice(0, 120).trim() || null,
               status: 'queued',
             }
-            if (mode === 'edit' && !row.source_asset_ids.length && !row.external_urls.length) {
-              result = { error: 'Edit mode needs media — DO NOT retry. Ask the user to attach clips/photos (Assets) or paste links, then call generate_video with source_asset_ids/external_urls.' }
+            if (mode === 'edit' && !row.source_asset_ids.length && !row.external_urls.length && !row.stock_query) {
+              result = { error: 'Edit mode needs media OR a stock_query — DO NOT retry. Either set stock_query to a few keywords (pulls stock B-roll from the library), or ask the user to attach clips/photos.' }
             } else if (mode === 'ugc' && !row.image_url) {
               result = { error: 'UGC needs a spokesperson photo — DO NOT retry without one. Ask the user (one short line) to attach a photo of the spokesperson via the Assets button, then call generate_video mode:ugc with image_url set to that photo.' }
             } else if (mode !== 'edit' && !row.prompt && !row.script && !row.image_url) {

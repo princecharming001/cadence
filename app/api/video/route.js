@@ -57,6 +57,7 @@ export async function POST(req) {
     duration_sec: Math.min(Math.max(Number(b.duration_sec) || 6, 2), 15),
     source_asset_ids: (Array.isArray(b.source_asset_ids) ? b.source_asset_ids : []).slice(0, 8),
     external_urls: (Array.isArray(b.external_urls) ? b.external_urls : []).filter(u => /^https?:\/\//.test(String(u))).slice(0, 8),
+    stock_query: String(b.stock_query || '').slice(0, 120).trim() || null,
     status: 'queued',
   }
   if (mode !== 'edit' && !row.prompt && !row.script && !row.image_url) {
