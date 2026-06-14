@@ -8,6 +8,7 @@ import {
   Check as LCheck, X as LX, RefreshCw, Sparkles, Send, Plus,
   Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, Image as LImage,
   ThumbsUp, ThumbsDown, Upload, Play, MessageCircle, Star, Loader2, Film, FolderOpen, Search as LSearch,
+  Paperclip, Captions, Video as LVideo,
   ArrowLeft, CreditCard, Users, User as LUser, Bot, History as LHistory,
   Calendar as LCalendar, List as LList,
 } from 'lucide-react'
@@ -2902,6 +2903,161 @@ const SMART_VIEWS = [
   ['textfriendly', 'Text-friendly', a => (a.analysis?.text_overlay_score || 0) >= 0.6],
   ['broll', 'B-roll (no speech)', a => a.type === 'video' && a.analysis?.has_speech === false],
 ]
+// STUDIO COMPOSER — the create surface as an agent. Describe what you want
+// (a carousel, a clip, an ad, anything), optionally attach Library media + pick
+// a format, and the same Cadence agent builds it and drops the result inline.
+// It's a thin shell over /api/chat (with a `studio` context) so everything the
+// chat agent can do, the Studio can do — just create-first and structured.
+function StudioComposer({ platform, library = [], messages, busy, onSend, onResolve, authed, socialAccounts, connected, xConns, hasPhotos, refreshLive, defaultHour }) {
+  const [input, setInput] = useState('')
+  const [format, setFormat] = useState('auto')   // auto | carousel | clip
+  const [captions, setCaptions] = useState(true)
+  const [attach, setAttach] = useState([])        // [{id,type,url,filename,thumb_url}]
+  const [pickOpen, setPickOpen] = useState(false)
+  const [pickType, setPickType] = useState('all') // all | video | image
+  const endRef = useRef(null)
+  const taRef = useRef(null)
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, busy])
+
+  const usable = library.filter(a => a.url && (a.type === 'image' ? a.status !== 'failed' : a.status === 'ready'))
+  const picks = usable.filter(a => pickType === 'all' || a.type === pickType)
+  const isOn = a => attach.some(x => x.id === a.id)
+  const toggleAttach = a => setAttach(p => isOn(a) ? p.filter(x => x.id !== a.id) : [...p, { id: a.id, type: a.type, url: a.url, filename: a.filename, thumb_url: a.thumb_url }])
+  const hasVideo = attach.some(a => a.type === 'video') || format === 'clip'
+
+  function go(text) {
+    const t = (text ?? input).trim(); if (!t || busy) return
+    setInput('')
+    onSend(t, { format, captions, attachments: attach })
+  }
+
+  const QUICK = platform === 'tiktok'
+    ? [['Photo carousel', 'Make a TikTok photo carousel — 6 punchy slides about '], ['Clip my video', 'Cut a vertical clip from my video', 'clip'], ['Hook + 3 tips', 'Write a scroll-stopping hook and 3 quick tips about '], ['Trend remix', 'Remix a trending TikTok format for my niche about ']]
+    : [['5-slide carousel', 'Make an Instagram carousel — 5 slides about ', 'carousel'], ['Reel from video', 'Cut a Reel from my video', 'clip'], ['Hook + 3 tips', 'Make a carousel with a strong hook and 3 tips about ', 'carousel'], ['Repurpose top post', 'Repurpose my best post into a carousel']]
+
+  // Shared composer block (used in the empty hero and pinned under a thread).
+  const composer = (
+    <div className="sc-composer">
+      {attach.length > 0 && (
+        <div className="sc-attach-row">
+          {attach.map(a => (
+            <span className="sc-attach" key={a.id} title={a.filename}>
+              {a.type === 'video' ? <LVideo size={12} /> : <img src={a.thumb_url || a.url} alt="" />}
+              <span className="sc-attach-name">{a.filename || (a.type === 'video' ? 'video' : 'image')}</span>
+              <button onClick={() => toggleAttach(a)} aria-label="Remove"><LX size={11} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+      <textarea ref={taRef} className="sc-input" rows={messages.length ? 1 : 2}
+        value={input} onChange={e => setInput(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } }}
+        placeholder={`Describe a ${platform === 'tiktok' ? 'clip, photo carousel' : 'Reel, carousel'} — or anything else to make…`} />
+      <div className="sc-opts">
+        <div className="sc-chipset">
+          {[['auto', 'Auto'], ['carousel', 'Carousel'], ['clip', 'Clip']].map(([k, l]) => (
+            <button key={k} className={'sc-chip seg-pill-chip' + (format === k ? ' on' : '')} onClick={() => setFormat(k)}>{l}</button>
+          ))}
+        </div>
+        <button className={'sc-chip' + (attach.length ? ' on' : '')} onClick={() => setPickOpen(true)}>
+          <Paperclip size={13} /> Assets{attach.length ? ` · ${attach.length}` : ''}
+        </button>
+        {hasVideo && (
+          <button className={'sc-chip' + (captions ? ' on' : '')} onClick={() => setCaptions(c => !c)}>
+            <Captions size={13} /> Captions{captions ? '' : ' off'}
+          </button>
+        )}
+        <span style={{ flex: 1 }} />
+        <motion.button className="sc-send" onClick={() => go()} disabled={busy || !input.trim()} whileTap={{ scale: 0.92 }}><Send size={16} /></motion.button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className={'sc' + (messages.length ? ' has-thread' : '')}>
+      {messages.length === 0 ? (
+        <div className="sc-hero">
+          <div className="sc-badge"><Sparkles size={13} /> Studio agent</div>
+          <h2 className="sc-title">What do you want to make?</h2>
+          <p className="sc-sub">Describe a carousel, a clip, an ad — anything. Cadence builds it and drops the result right here. Attach your own media to feature it.</p>
+          {composer}
+          <div className="sc-quick">
+            {QUICK.map(([label, prefix, fmt]) => (
+              <button key={label} className="sc-quick-chip" onClick={() => { if (fmt) setFormat(fmt); if (/ $/.test(prefix)) { setInput(prefix); taRef.current?.focus() } else go(prefix) }}>{label}</button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="sc-thread">
+            <AnimatePresence initial={false}>
+              {messages.map((m, i) => {
+                const props = m.proposals || (m.proposal ? [m.proposal] : [])
+                return (
+                  <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
+                    <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                      <div className={'bubble ' + m.role}>{m.content}</div>
+                      {props.map((p, j) => (p.slideshow || p.video)
+                        ? <MediaProposal key={j} proposal={p} index={j} total={props.length} authed={authed} socialAccounts={socialAccounts} onResolved={refreshLive} onOutcome={(resolved, label) => onResolve(i, j, resolved, label)} defaultHour={defaultHour} />
+                        : <DraftProposal key={j} proposal={p} index={j} total={props.length} authed={authed} connected={connected} canPostLinkedIn={socialAccounts.some(a => a.platform === 'linkedin')} onResolved={refreshLive} onOutcome={(resolved, label) => onResolve(i, j, resolved, label)} defaultHour={defaultHour} xConns={xConns} hasPhotos={hasPhotos} />
+                      )}
+                    </div>
+                  </motion.div>
+                )
+              })}
+            </AnimatePresence>
+            {busy && <div className="msg assistant"><div className="bubble assistant"><span className="dots"><i /><i /><i /></span></div></div>}
+            <div ref={endRef} />
+          </div>
+          {composer}
+        </>
+      )}
+
+      <AnimatePresence>
+        {pickOpen && (
+          <motion.div className="overlay" style={{ zIndex: 80 }} onClick={() => setPickOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <motion.div className="card modal sc-pick" onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 14, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 14, scale: 0.97 }} transition={spring}>
+              <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
+                <span style={{ fontWeight: 700, fontSize: 15 }}>Attach from Library</span>
+                <button className="x-close" onClick={() => setPickOpen(false)}><LX size={18} /></button>
+              </div>
+              <div className="sc-pick-tabs">
+                {[['all', 'All'], ['video', 'Videos'], ['image', 'Photos']].map(([k, l]) => (
+                  <button key={k} className={'sc-chip' + (pickType === k ? ' on' : '')} onClick={() => setPickType(k)}>{l}</button>
+                ))}
+                <span style={{ flex: 1 }} />
+                <span className="muted tiny">{attach.length} selected</span>
+              </div>
+              {picks.length === 0
+                ? <div className="muted" style={{ padding: '28px 4px', textAlign: 'center', fontSize: 13 }}>Nothing here yet. Upload media in the Library tab first.</div>
+                : (
+                  <div className="lib-grid sc-pick-grid">
+                    {picks.map(a => (
+                      <button key={a.id} className={'lib-cell' + (isOn(a) ? ' sel' : '')} onClick={() => toggleAttach(a)}>
+                        <div className="lib-thumb">
+                          {a.type === 'video'
+                            ? (a.thumb_url ? <img src={a.thumb_url} alt="" /> : <div className="lib-vid-fallback"><Film size={20} /></div>)
+                            : <img src={a.url} alt="" />}
+                          {a.type === 'video' && <span className="lib-badge"><Play size={9} /></span>}
+                          {isOn(a) && <span className="lib-check on"><LCheck size={12} strokeWidth={3} /></span>}
+                        </div>
+                        <span className="lib-name">{a.filename}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14, gap: 8 }}>
+                <button className="btn-ghost btn-sm" onClick={() => setAttach([])}>Clear</button>
+                <button className="btn-primary btn-sm" onClick={() => setPickOpen(false)}>Done</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 function MediaLibrary({ assets, albums, onUpload, onCreateAlbum, onDeleteAlbum, onMove, onDelete, onFavorite, onUseIn }) {
   const [view, setView] = useState('all') // smart-view key OR album id
   const [sel, setSel] = useState(new Set())
@@ -3061,7 +3217,10 @@ function App({ session }) {
   const [feederAgents, setFeederAgents] = useState([])
   const [agentCampaigns, setAgentCampaigns] = useState([])
   const [mediaAssets, setMediaAssets] = useState([]); const [mediaAlbums, setMediaAlbums] = useState([])
-  const [studioMode, setStudioMode] = useState('carousel'); const [studioPlatform, setStudioPlatform] = useState('instagram')
+  const [studioMode, setStudioMode] = useState('create'); const [studioPlatform, setStudioPlatform] = useState('instagram')
+  // The Studio agent thread — a separate, ephemeral working surface (not saved to
+  // chat history). Drives /api/chat with a `studio` context so it creates first.
+  const [studioMsgs, setStudioMsgs] = useState([]); const [studioBusy, setStudioBusy] = useState(false)
   const [chatList, setChatList] = useState([]); const [historyOpen, setHistoryOpen] = useState(false)
   const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
   const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
@@ -3592,6 +3751,27 @@ function App({ session }) {
     catch (e) { setMessages(p => [...p, { role: 'assistant', content: '⚠️ ' + e.message }]) } finally { setLoading(false) }
   }
 
+  // The Studio agent: same endpoint, but scoped to the chosen platform and given
+  // a `studio` context (format hint + attached Library media) so it makes the
+  // thing and shows it inline. Kept in its own thread so it never tangles chat.
+  async function studioSend(text, opts = {}) {
+    const t = (text || '').trim(); if (!t || studioBusy) return
+    const next = [...studioMsgs, { role: 'user', content: t }]; setStudioMsgs(next); setStudioBusy(true)
+    try {
+      const res = await authed('/api/chat', { method: 'POST', body: JSON.stringify({
+        messages: next.slice(-40), platforms: [studioPlatform],
+        studio: { format: opts.format || 'auto', captions: opts.captions !== false, attachments: (opts.attachments || []).map(a => ({ id: a.id, type: a.type, url: a.url, filename: a.filename })) },
+      }) })
+      const data = await res.json()
+      const proposals = Array.isArray(data.proposals) ? data.proposals : (data.proposal ? [data.proposal] : [])
+      setStudioMsgs([...next, { role: 'assistant', content: data.reply, proposals }]); refreshLive()
+    }
+    catch (e) { setStudioMsgs(p => [...p, { role: 'assistant', content: '⚠️ ' + e.message }]) } finally { setStudioBusy(false) }
+  }
+  function resolveStudioProposal(mi, pi, resolved, label) {
+    setStudioMsgs(ms => ms.map((m, i) => i !== mi ? m : { ...m, proposals: (m.proposals || (m.proposal ? [m.proposal] : [])).map((p, j) => j !== pi ? p : { ...p, resolved, resolved_label: label }), proposal: undefined }))
+  }
+
   const persona = me?.persona; const stats = me?.stats || {}
   const initials = (me?.profile?.full_name || session.user.email || '?').trim()[0]?.toUpperCase()
   const PRESETS = ['Make an Instagram carousel about my niche', 'Generate 5 posts in my voice', 'Turn on TikTok auto-replies', 'Repurpose my best LinkedIn post', "What's my whole setup right now?"]
@@ -3809,7 +3989,7 @@ function App({ session }) {
 
                   {/* Create lives in the unified Studio now — this tab is the
                       platform dashboard (auto-reply, niche engage, campaigns). */}
-                  <button className="btn-primary row" style={{ gap: 8, width: '100%', justifyContent: 'center', margin: '2px 0 6px' }} onClick={() => { setStudioPlatform(plat); setStudioMode('carousel'); setTab('studio') }}>
+                  <button className="btn-primary row" style={{ gap: 8, width: '100%', justifyContent: 'center', margin: '2px 0 6px' }} onClick={() => { setStudioPlatform(plat); setStudioMode('create'); setTab('studio') }}>
                     <Wand2 size={15} /> Make {plat === 'instagram' ? 'Reels & carousels' : 'clips & carousels'} in Studio
                   </button>
 
@@ -3913,7 +4093,7 @@ function App({ session }) {
                       ))}
                     </div>
                     <div className="studio-verbs">
-                      {[['carousel', studioPlatform === 'tiktok' ? 'Photo carousel' : 'Carousel', LImage, 'AI slides + your photos'], ['clip', studioPlatform === 'tiktok' ? 'Clip' : 'Reel / Clip', Film, 'cut from a video'], ['library', 'Library', FolderOpen, 'your media + albums']].map(([k, l, Ic, d]) => (
+                      {[['create', 'Create', Sparkles, 'describe it — agent makes it'], ['carousel', studioPlatform === 'tiktok' ? 'Photo carousel' : 'Carousel', LImage, 'AI slides + your photos'], ['clip', studioPlatform === 'tiktok' ? 'Clip' : 'Reel / Clip', Film, 'cut from a video'], ['library', 'Library', FolderOpen, 'your media + albums']].map(([k, l, Ic, d]) => (
                         <button key={k} className={'studio-verb' + (studioMode === k ? ' on' : '')} onClick={() => setStudioMode(k)}>
                           <Ic size={17} /><span className="studio-verb-txt"><span className="studio-verb-l">{l}</span><span className="studio-verb-d">{d}</span></span>
                         </button>
@@ -3921,6 +4101,7 @@ function App({ session }) {
                     </div>
                   </div>
                   <div className="studio-canvas">
+                    {studioMode === 'create' && <StudioComposer platform={studioPlatform} library={mediaAssets} messages={studioMsgs} busy={studioBusy} onSend={studioSend} onResolve={resolveStudioProposal} authed={authed} socialAccounts={socialAccounts} connected={connected} xConns={xConns} hasPhotos={hasPhotos} refreshLive={refreshLive} defaultHour={defaultHour} />}
                     {studioMode === 'carousel' && <SlideshowStudio hideAccounts platformFocus={studioPlatform} accounts={socialAccounts} configured={socialConfigured} slideshows={slideshows} albums={mediaAlbums} authed={authed} onConnect={connectSocial} onSync={syncSocial} onGenerate={generateSlideshow} onSave={saveSlideshow} onDelete={deleteSlideshow} onRefresh={loadSlideshows} />}
                     {studioMode === 'clip' && <ClipStudio platformFocus={studioPlatform} jobs={clipJobs} accounts={socialAccounts} configured={socialConfigured} library={mediaAssets} onCreate={createClipJob} onUpload={uploadClipFile} onDelete={deleteClipJob} onPost={postClip} />}
                     {studioMode === 'library' && <MediaLibrary assets={mediaAssets} albums={mediaAlbums} onUpload={uploadMedia} onCreateAlbum={createAlbum} onDeleteAlbum={deleteAlbum} onMove={moveAssets} onDelete={deleteAsset} onFavorite={favoriteAsset} onUseIn={(a) => setStudioMode(a.type === 'video' ? 'clip' : 'carousel')} />}
@@ -4624,6 +4805,42 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
   .lib { flex-direction: column; }
   .lib-side { width: 100%; flex-direction: row; flex-wrap: wrap; }
 }
+/* STUDIO COMPOSER — the agent create surface */
+.sc { display: flex; flex-direction: column; min-height: calc(100vh - 230px); }
+.sc-hero { max-width: 620px; margin: 0 auto; width: 100%; padding-top: 7vh; text-align: center; display: flex; flex-direction: column; align-items: center; }
+.sc-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; color: var(--accent-text); background: var(--accent-soft); border: 1px solid var(--accent-line); padding: 5px 11px; border-radius: 999px; margin-bottom: 16px; }
+.sc-title { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: var(--ink); margin: 0 0 8px; }
+.sc-sub { font-size: 13.5px; line-height: 1.6; color: var(--muted); margin: 0 0 22px; max-width: 460px; }
+.sc-composer { width: 100%; background: var(--surface); border: 1px solid var(--line2); border-radius: 16px; padding: 12px 12px 10px; box-shadow: 0 10px 34px -22px rgba(35,32,24,0.42); text-align: left; }
+.sc.has-thread .sc-composer { position: sticky; bottom: 0; margin-top: 4px; backdrop-filter: blur(6px); }
+.sc-input { width: 100%; border: none; background: none; outline: none; resize: none; font-family: inherit; font-size: 14px; line-height: 1.55; color: var(--ink); padding: 4px 6px 2px; max-height: 200px; }
+.sc-input::placeholder { color: var(--faint); }
+.sc-opts { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 6px 2px 0; }
+.sc-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line2); background: var(--surface); color: var(--muted); cursor: pointer; font-family: inherit; transition: .15s; white-space: nowrap; }
+.sc-chip:hover { border-color: var(--line-hover); color: var(--body); }
+.sc-chip.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+.sc-chipset { display: inline-flex; gap: 3px; background: var(--bg2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.sc-chipset .sc-chip { border: none; background: none; padding: 5px 11px; }
+.sc-chipset .sc-chip.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 4px -1px rgba(35,32,24,0.25); }
+.sc-send { width: 34px; height: 34px; border-radius: 10px; border: none; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; transition: .15s; }
+.sc-send:disabled { opacity: .4; cursor: default; }
+.sc-send:not(:disabled):hover { background: var(--accent-deep); }
+.sc-attach-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 8px; }
+.sc-attach { display: inline-flex; align-items: center; gap: 6px; max-width: 200px; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 3px 5px 3px 6px; font-size: 11.5px; color: var(--body); }
+.sc-attach img { width: 18px; height: 18px; border-radius: 4px; object-fit: cover; }
+.sc-attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-attach button { background: none; border: none; cursor: pointer; color: var(--faint); display: flex; padding: 1px; } .sc-attach button:hover { color: var(--ink); }
+.sc-quick { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px; }
+.sc-quick-chip { font-size: 12.5px; font-weight: 600; color: var(--body); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; cursor: pointer; font-family: inherit; transition: .15s; }
+.sc-quick-chip:hover { border-color: var(--accent); color: var(--accent-text); }
+.sc-thread { display: flex; flex-direction: column; gap: 14px; padding: 6px 2px 16px; flex: 1; }
+.sc-pick { width: 560px; }
+.sc-pick-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+.sc-pick-grid { max-height: 52vh; overflow-y: auto; padding: 2px; }
+.lib-cell.sel .lib-thumb { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lib-check.on { background: var(--accent); border-color: var(--accent); }
+.lib-vid-fallback { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--faint); background: var(--bg2); }
+.lib-name { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ss-thumb { width: 46px; height: 58px; border-radius: 6px; object-fit: cover; flex: none; border: 1px solid var(--line); }
 /* collapsible sections + clip studio */
 .sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }

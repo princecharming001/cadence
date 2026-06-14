@@ -675,7 +675,7 @@ export async function POST(req) {
     const user = await getUser(req)
     if (!user) return Response.json({ reply: 'Please sign in first.' }, { status: 401 })
 
-    const { messages, platform: rawPlatform, platforms: rawPlatforms } = await req.json()
+    const { messages, platform: rawPlatform, platforms: rawPlatforms, studio: rawStudio } = await req.json()
     // Optional platform scope from the chat UI. The agent is locked to the chosen
     // platform(s) (e.g. on the LinkedIn tab → only LinkedIn; or X + Instagram).
     const SCOPES = ['x', 'linkedin', 'instagram', 'tiktok']
@@ -694,7 +694,20 @@ export async function POST(req) {
       .map(m => ({ role: m.role, content: m.content.slice(0, 8000) }))
     if (!safeMessages.length) return Response.json({ reply: 'Say something first.' }, { status: 400 })
 
-    const { reply, proposals } = await runChatTurn({ user, messages: safeMessages, scope })
+    // STUDIO context (the create composer): a format hint + attached library
+    // assets the agent should build from. Sanitized to a small, safe shape.
+    let studio = null
+    if (rawStudio && typeof rawStudio === 'object') {
+      const atts = (Array.isArray(rawStudio.attachments) ? rawStudio.attachments : []).slice(0, 6)
+        .filter(a => a && typeof a.url === 'string')
+        .map(a => ({ id: String(a.id || ''), type: a.type === 'video' ? 'video' : 'image', url: a.url.slice(0, 600), filename: String(a.filename || '').slice(0, 120) }))
+      studio = {
+        format: ['carousel', 'clip', 'auto'].includes(rawStudio.format) ? rawStudio.format : 'auto',
+        captions: rawStudio.captions !== false,
+        attachments: atts,
+      }
+    }
+    const { reply, proposals } = await runChatTurn({ user, messages: safeMessages, scope, studio })
     return Response.json({ reply, proposals, proposal: proposals[0] || null })
   } catch (err) {
     console.error('[chat]', err)
@@ -705,7 +718,7 @@ export async function POST(req) {
 // The agent turn, extracted so it can be driven from tests and other server
 // code. `messages` is the already-validated user/assistant list; `scope` is the
 // platform focus (array) or null.
-export async function runChatTurn({ user, messages: safeMessages, scope }) {
+export async function runChatTurn({ user, messages: safeMessages, scope, studio = null }) {
   try {
     const now = new Date().toLocaleString('en-US', {
       timeZone: 'America/Los_Angeles', dateStyle: 'full', timeStyle: 'short',
@@ -809,9 +822,22 @@ ${scopeBlock}${liVoiceBlock}${trendBlocks}${feedbackBlock(fb)}`
     // Hard cap on agent hops — an unbounded loop is an unbounded token bill.
     // Block 1 (static) is cached across hops AND across requests; block 2
     // carries the volatile context and never busts the cache.
+    // When invoked from the Studio composer, bias toward MAKING the thing and
+    // wire up any attached Library assets so the agent builds from real media.
+    const studioBlock = studio ? (() => {
+      const L = ['\n\nSTUDIO MODE — the user is in the create Studio. Your job is to MAKE what they describe and show it inline (a carousel, a clip, a post — whatever fits). Lead with making it, not questions.']
+      if (studio.format === 'carousel') L.push('They want a CAROUSEL — use generate_slideshow.')
+      else if (studio.format === 'clip') L.push('They want a CLIP/REEL — use make_clip.')
+      const vids = studio.attachments.filter(a => a.type === 'video')
+      const imgs = studio.attachments.filter(a => a.type === 'image')
+      if (vids.length) L.push(`Attached video(s) from their Library — use make_clip with source_url set to: ${vids.map(v => `"${v.filename}" → ${v.url}`).join(' ; ')}${studio.captions === false ? ' (captions off)' : ''}.`)
+      if (imgs.length) L.push(`Attached photo(s) from their Library you can feature: ${imgs.map(v => `"${v.filename}" → ${v.url}`).join(' ; ')}.`)
+      L.push('The Studio is adaptable — if they ask for something other than a carousel/clip (a post, a thread, an ad script, a plan), just do that with the right tool.')
+      return L.join('\n- ')
+    })() : ''
     const systemBlocks = [
       { type: 'text', text: staticSystem, cache_control: { type: 'ephemeral' } },
-      { type: 'text', text: dynamicSystem },
+      { type: 'text', text: dynamicSystem + studioBlock },
     ]
 
     for (let hop = 0; hop < 8; hop++) {
