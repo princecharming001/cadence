@@ -112,9 +112,15 @@ export async function POST(req) {
           const persona = await buildAgentPersona({ interests: seed, handle: conn.username, feederType: ft })
           row = { user_id: user.id, x_connection_id: conn.id, platform: 'x', feeder_type: ft, interests: seed, persona, name: persona.name, active: false, avatar_url: await agentAvatar(persona, user.id) }
         } else { continue }
-        if (ft === 'ugc_influencer') { row.soul_ref = await provisionSoulRef(row.persona, user.id); row.voice_id = pickUgcVoice(row.persona) }
-        // Stagger arming so the fleet doesn't all wake at once (anti-lockstep).
-        row.next_run_at = new Date(Date.now() + stagger * 60 * 1000).toISOString(); stagger += 12 + Math.floor(Math.random() * 18)
+        if (ft === 'ugc_influencer') {
+          row.soul_ref = await provisionSoulRef(row.persona, user.id)
+          // No avatar = no consistent face for talking-heads; degrade to standard
+          // rather than leave a UGC agent that silently can't make video.
+          if (row.soul_ref) row.voice_id = pickUgcVoice(row.persona)
+          else { row.feeder_type = 'standard'; errors.push('avatar generation failed — created as standard') }
+        }
+        // Stagger arming (in MINUTES) so the fleet doesn't all wake at once (anti-lockstep).
+        row.next_run_at = new Date(Date.now() + stagger * 60 * 1000).toISOString(); stagger += 4 + Math.floor(Math.random() * 8)
         const { data, error } = await admin.from('feeder_agents').insert(row).select('id').single()
         if (error) { errors.push(/duplicate|unique/i.test(error.message) ? 'account already has an agent' : error.message); continue }
         if (campaignId) await admin.from('agent_campaign_assignments').upsert({ user_id: user.id, feeder_agent_id: data.id, campaign_id: campaignId }, { onConflict: 'feeder_agent_id,campaign_id', ignoreDuplicates: true })
@@ -155,7 +161,10 @@ export async function POST(req) {
   // lock them once at creation (P7 drives the talking-head renders from these).
   if (feederType === 'ugc_influencer') {
     insert.soul_ref = await provisionSoulRef(insert.persona, user.id)
-    insert.voice_id = pickUgcVoice(insert.persona)
+    // No avatar = no consistent face for talking-heads; degrade to standard so the
+    // agent isn't a UGC tier that can never make video.
+    if (insert.soul_ref) insert.voice_id = pickUgcVoice(insert.persona)
+    else insert.feeder_type = 'standard'
   }
   if (campaignId) insert.campaign_id = campaignId
 

@@ -90,9 +90,12 @@ export async function PATCH(req) {
   // The platform of the row being edited governs both length validation AND which
   // connection field is legal — never stamp an X connection onto a LinkedIn/IG/
   // TikTok post (the compose modal can default connId to an X account).
-  if (content !== undefined || xConnectionId !== undefined) {
-    const { data: row } = await admin.from('posts').select('platform').eq('id', id).eq('user_id', user.id).single()
+  if (content !== undefined || xConnectionId !== undefined || status !== undefined) {
+    const { data: row } = await admin.from('posts').select('platform, status').eq('id', id).eq('user_id', user.id).single()
     if (!row) return Response.json({ error: 'Post not found.' }, { status: 404 })
+    // A 'rendering' post is a placeholder waiting on its video — only the render
+    // reconciler may move it. Block client edits so it can't be posted half-baked.
+    if (row.status === 'rendering') return Response.json({ error: 'This post is still rendering its video — it’ll be ready to edit once the render finishes.' }, { status: 409 })
     const platform = row.platform || 'x'
     if (content !== undefined && String(content).length > capOf(platform)) {
       return Response.json({ error: `Over the ${capOf(platform)}-character limit.` }, { status: 400 })

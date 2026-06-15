@@ -4239,7 +4239,7 @@ function App({ session }) {
     const r = await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify(body) })
     const d = await r.json()
     if (d.error) { setBanner(d.error); return false }
-    setBanner('Campaign created — deploy agents to it'); loadAgentCamps(); return d.campaign || true
+    setBanner('Campaign created — deploy agents to it'); loadAgentCamps(); return d.campaign || null
   }
   // Spin up a whole fleet at once (company onboarding): batch-create typed agents
   // on the chosen accounts, all assigned to the campaign.
