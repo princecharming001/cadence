@@ -2562,11 +2562,20 @@ function composeBriefClient({ pitch, audience, keyPoints, avoid }) {
 // ── Campaign onboarding — a clean 3-step brief so the agents promote with real
 // substance, not "idk the promo". Step 1: what + (optional) AI auto-draft from
 // the link. Step 2: the brief. Step 3: how hard to push + review. ─────────────
-function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
+const FEEDER_TYPE_OPTS = [
+  ['faceless', 'Faceless channels', 'Value carousels & posts — no AI person. Lower policy risk, high volume.'],
+  ['ugc_influencer', 'UGC influencers', 'Branded AI creators that post talking-head videos. Higher trust; needs video credits + carries an AI-generated label.'],
+  ['standard', 'Persona accounts', 'Believable individual voices that post text/carousels in their own style.'],
+]
+function CampaignOnboarding({ onCancel, onCreate, onDraft, onSpawnFleet, freeX = [], freeSocial = [] }) {
   const [step, setStep] = useState(0)
   const [busy, setBusy] = useState(false); const [drafting, setDrafting] = useState(false)
   const [f, setF] = useState({ product: '', link: '', pitch: '', audience: '', keyPoints: '', avoid: '', cta: '', intensity: 'balanced', objective: 'awareness', linkStrategy: 'occasional', platforms: [] })
+  const [feederType, setFeederType] = useState('faceless')
+  const [fleetSel, setFleetSel] = useState([]) // ['x:<id>' | 's:<id>']
   const [override, setOverride] = useState(null) // manual edits to the composed brief
+  const hasFreeAccounts = freeX.length > 0 || freeSocial.length > 0
+  const toggleFleet = key => setFleetSel(s => s.includes(key) ? s.filter(x => x !== key) : [...s, key])
   const togglePlat = k => setF(s => ({ ...s, platforms: s.platforms.includes(k) ? s.platforms.filter(x => x !== k) : [...s.platforms, k] }))
   const set = (k, v) => { setF(s => ({ ...s, [k]: v })); setOverride(null) }
   const canDraft = (f.product.trim() || f.link.trim()) && !drafting
@@ -2582,10 +2591,11 @@ function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
       setStep(1)
     }
   }
-  async function submit() {
+  // Create the campaign, then (if accounts were picked) spin up the fleet on them.
+  async function launch() {
     const product = f.product.trim(); if (!product) return
     setBusy(true)
-    const ok = await onCreate({
+    const camp = await onCreate({
       product, name: product.length > 42 ? product.slice(0, 42).trimEnd() + '…' : product,
       link: f.link.trim() || null, brief, intensity: f.intensity, active: true,
       objective: f.objective, platforms: f.platforms, link_strategy: f.linkStrategy,
@@ -2593,14 +2603,23 @@ function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
       cta: f.cta.trim() || null,
       key_points: f.keyPoints.split('\n').map(s => s.trim()).filter(Boolean),
       dont_say: f.avoid.split('\n').map(s => s.trim()).filter(Boolean),
+      assign_all: false, // the fleet step decides who runs it
     })
+    const cid = camp && typeof camp === 'object' ? camp.id : null
+    if (cid && fleetSel.length && onSpawnFleet) {
+      const items = fleetSel.map(k => {
+        const [kind, id] = k.split(':')
+        return kind === 'x' ? { x_connection_id: id, feeder_type: feederType, interests: f.product } : { social_account_id: id, feeder_type: feederType, interests: f.product }
+      })
+      await onSpawnFleet({ campaign_id: cid, items })
+    }
     setBusy(false)
-    if (ok) onCancel()
+    if (camp) onCancel()
   }
 
   return (
     <div className="card camp-onb">
-      <div className="onb-dots" style={{ marginBottom: 16 }}>{[0, 1, 2].map(i => <span key={i} className={'ob-dot' + (i <= step ? ' on' : '')} />)}</div>
+      <div className="onb-dots" style={{ marginBottom: 16 }}>{[0, 1, 2, 3].map(i => <span key={i} className={'ob-dot' + (i <= step ? ' on' : '')} />)}</div>
 
       {step === 0 && (<>
         <div className="onb-q">What are the agents promoting?</div>
@@ -2659,7 +2678,45 @@ function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
         <textarea className="field dp-grow" rows={3} value={brief} onChange={e => setOverride(e.target.value)} placeholder="Add a pitch or points in the previous step to see the brief." />
         <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
           <button className="mini" onClick={() => setStep(1)}>← Back</button>
-          <button className="btn-primary btn-sm" disabled={busy || !f.product.trim()} onClick={submit}>{busy ? <Loader2 size={13} className="spin" /> : 'Launch campaign'}</button>
+          <button className="btn-primary btn-sm" disabled={busy || !f.product.trim()} onClick={() => setStep(3)}>Next → set up the fleet</button>
+        </div>
+      </>)}
+
+      {step === 3 && (<>
+        <div className="onb-q">Spin up the fleet</div>
+        <div className="muted tiny" style={{ marginBottom: 10 }}>Pick the kind of accounts that run this campaign. Each becomes an autonomous agent that weaves the mission into its own posting, in its own voice — never as an ad.</div>
+        <label className="onb-label">Feeder type</label>
+        <div className="onb-intensity">
+          {FEEDER_TYPE_OPTS.map(([k, l, d]) => (
+            <button key={k} className={'onb-int' + (feederType === k ? ' on' : '')} onClick={() => setFeederType(k)}>
+              <span className="onb-int-l">{l}</span>
+              <span className="onb-int-d">{d}</span>
+            </button>
+          ))}
+        </div>
+        {hasFreeAccounts ? (<>
+          <label className="onb-label">Deploy on <span className="muted tiny" style={{ fontWeight: 400 }}>· your free feeder accounts</span></label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 180, overflowY: 'auto' }}>
+            {freeX.map(x => (
+              <button key={`x:${x.id}`} type="button" className={'row chip' + (fleetSel.includes(`x:${x.id}`) ? ' on' : '')} style={{ justifyContent: 'flex-start', gap: 8 }} onClick={() => toggleFleet(`x:${x.id}`)}>
+                <span className={'mini-check' + (fleetSel.includes(`x:${x.id}`) ? ' on' : '')}>{fleetSel.includes(`x:${x.id}`) && <LCheck size={10} strokeWidth={4} />}</span>
+                <span className="status-dot" style={{ background: platformDot('x') }} />X · @{x.username}
+              </button>
+            ))}
+            {freeSocial.map(s => (
+              <button key={`s:${s.id}`} type="button" className={'row chip' + (fleetSel.includes(`s:${s.id}`) ? ' on' : '')} style={{ justifyContent: 'flex-start', gap: 8 }} onClick={() => toggleFleet(`s:${s.id}`)}>
+                <span className={'mini-check' + (fleetSel.includes(`s:${s.id}`) ? ' on' : '')}>{fleetSel.includes(`s:${s.id}`) && <LCheck size={10} strokeWidth={4} />}</span>
+                <span className="status-dot" style={{ background: platformDot(s.platform) }} />{s.platform} · @{s.username || s.platform}
+              </button>
+            ))}
+          </div>
+          {feederType === 'ugc_influencer' && <div className="muted tiny" style={{ marginTop: 6 }}>UGC influencers post talking-head videos (best on Instagram/TikTok) and need video generation enabled. Each post carries an AI-generated label.</div>}
+        </>) : (
+          <div className="muted tiny" style={{ marginTop: 8 }}>No free feeder accounts connected yet — you can launch now and deploy agents later from the campaign card (connect feeder X / social accounts first).</div>
+        )}
+        <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+          <button className="mini" onClick={() => setStep(2)}>← Back</button>
+          <button className="btn-primary btn-sm" disabled={busy || !f.product.trim()} onClick={launch}>{busy ? <Loader2 size={13} className="spin" /> : (fleetSel.length ? `Launch + spin up ${fleetSel.length} agent${fleetSel.length === 1 ? '' : 's'}` : 'Launch campaign')}</button>
         </div>
       </>)}
     </div>
@@ -2742,7 +2799,7 @@ function CampaignIntel({ m = {}, roster = [], handleOf }) {
   )
 }
 
-function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent, onOpenAgent, onDraftCamp, onAssign, onUnassign }) {
+function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onSpawnFleet, onPatchAgent, onRunAgent, onOpenAgent, onDraftCamp, onAssign, onUnassign }) {
   const onCamp = (a, cid) => (a.campaign_ids || []).includes(cid) // many-to-many membership
   const [form, setForm] = useState(null)        // create-campaign draft
   const [busy, setBusy] = useState(false)
@@ -2907,7 +2964,7 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
 
       {/* Create — guided onboarding */}
       {form ? (
-        <CampaignOnboarding onCancel={() => setForm(null)} onCreate={onSaveCamp} onDraft={onDraftCamp} />
+        <CampaignOnboarding onCancel={() => setForm(null)} onCreate={onSaveCamp} onDraft={onDraftCamp} onSpawnFleet={onSpawnFleet} freeX={freeX} freeSocial={freeSocial} />
       ) : (
         <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', marginTop: 4 }} onClick={() => setForm(true)}><Plus size={14} /> New campaign</button>
       )}
@@ -4182,7 +4239,16 @@ function App({ session }) {
     const r = await authed('/api/agent-campaigns', { method: 'POST', body: JSON.stringify(body) })
     const d = await r.json()
     if (d.error) { setBanner(d.error); return false }
-    setBanner('Campaign created — deploy agents to it'); loadAgentCamps(); return true
+    setBanner('Campaign created — deploy agents to it'); loadAgentCamps(); return d.campaign || true
+  }
+  // Spin up a whole fleet at once (company onboarding): batch-create typed agents
+  // on the chosen accounts, all assigned to the campaign.
+  async function spawnFleet(body) {
+    const r = await authed('/api/feeder-agents', { method: 'POST', body: JSON.stringify({ action: 'spawn_fleet', ...body }) })
+    const d = await r.json()
+    if (d.error) { setBanner(d.error); return false }
+    setBanner(`Fleet spun up — ${d.created || 0} agent${d.created === 1 ? '' : 's'} ready${d.errors?.length ? ` (${d.errors.length} skipped)` : ''}`)
+    loadAgents(); loadAgentCamps(); return true
   }
   async function scanTrends(platform) {
     setScanning(platform)
@@ -4864,7 +4930,7 @@ function App({ session }) {
                 <AgentCampaigns campaigns={agentCampaigns} agents={feederAgents} xConns={xConns} socialAccounts={socialAccounts} posts={posts}
                   onSaveCamp={saveAgentCamp} onPatchCamp={patchAgentCamp} onDeleteCamp={deleteAgentCamp} onDraftCamp={draftAgentCamp}
                   onAssign={assignAgents} onUnassign={unassignAgent}
-                  onSpawn={spawnAgent} onPatchAgent={patchAgent} onRunAgent={runAgent} onOpenAgent={setAgentProfileId} />
+                  onSpawn={spawnAgent} onSpawnFleet={spawnFleet} onPatchAgent={patchAgent} onRunAgent={runAgent} onOpenAgent={setAgentProfileId} />
               </>)}
 
               {/* STUDIO = the one chat. Describe anything (carousel, clip, video,

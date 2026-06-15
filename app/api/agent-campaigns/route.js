@@ -134,8 +134,12 @@ export async function POST(req) {
   const body = await req.json().catch(() => ({}))
 
   if (body.action === 'draft') {
-    try { return Response.json({ draft: await draftCampaignBrief({ product: body.product, link: body.link }) }) }
-    catch { return Response.json({ error: 'Could not draft that — fill it in manually.' }, { status: 200 }) }
+    try {
+      // Fold in the company's saved brand brief so drafts stay on-brand + consistent
+      // across campaigns (the thorough-onboarding payoff).
+      const { data: prof } = await admin.from('profiles').select('brand_brief').eq('id', user.id).maybeSingle()
+      return Response.json({ draft: await draftCampaignBrief({ product: body.product, link: body.link, company: prof?.brand_brief || null }) })
+    } catch { return Response.json({ error: 'Could not draft that — fill it in manually.' }, { status: 200 }) }
   }
 
   // Many-to-many assignment management.

@@ -83,6 +83,47 @@ export async function POST(req) {
     return Response.json({ agent: data })
   }
 
+  // Spin up a whole FLEET at once (company onboarding): one typed agent per chosen
+  // account, all assigned to the campaign, armed with staggered next_run_at so the
+  // fleet never posts in lockstep. Items: [{ x_connection_id|social_account_id, interests, feeder_type }].
+  if (body.action === 'spawn_fleet') {
+    const campaignId = body.campaign_id || null
+    if (campaignId) {
+      const { data: camp } = await admin.from('agent_campaigns').select('id').eq('id', campaignId).eq('user_id', user.id).single()
+      if (!camp) return Response.json({ error: 'Campaign not found.' }, { status: 404 })
+    }
+    const items = (Array.isArray(body.items) ? body.items : []).slice(0, 12)
+    if (!items.length) return Response.json({ error: 'Pick at least one account for the fleet.' }, { status: 400 })
+    const created = []; const errors = []
+    let stagger = 0
+    for (const it of items) {
+      try {
+        const ft = FEEDER_TYPES.includes(it.feeder_type) ? it.feeder_type : (FEEDER_TYPES.includes(body.feeder_type) ? body.feeder_type : 'standard')
+        const seed = String(it.interests || body.interests || '').slice(0, 400)
+        let row
+        if (it.social_account_id) {
+          const { data: acct } = await admin.from('social_accounts').select('id, username, platform').eq('id', it.social_account_id).eq('user_id', user.id).single()
+          if (!acct || !ZERNIO_PLATFORMS.includes(acct.platform)) { errors.push('account not connected'); continue }
+          const persona = await buildAgentPersona({ interests: seed, handle: acct.username || acct.platform, platform: acct.platform, feederType: ft })
+          row = { user_id: user.id, social_account_id: acct.id, platform: acct.platform, feeder_type: ft, interests: seed, persona, name: persona.name, active: false, support_primary: false, avatar_url: await agentAvatar(persona, user.id) }
+        } else if (it.x_connection_id) {
+          const { data: conn } = await admin.from('x_connections').select('id, username, is_primary').eq('id', it.x_connection_id).eq('user_id', user.id).single()
+          if (!conn || conn.is_primary) { errors.push('X account unavailable'); continue }
+          const persona = await buildAgentPersona({ interests: seed, handle: conn.username, feederType: ft })
+          row = { user_id: user.id, x_connection_id: conn.id, platform: 'x', feeder_type: ft, interests: seed, persona, name: persona.name, active: false, avatar_url: await agentAvatar(persona, user.id) }
+        } else { continue }
+        if (ft === 'ugc_influencer') { row.soul_ref = await provisionSoulRef(row.persona, user.id); row.voice_id = pickUgcVoice(row.persona) }
+        // Stagger arming so the fleet doesn't all wake at once (anti-lockstep).
+        row.next_run_at = new Date(Date.now() + stagger * 60 * 1000).toISOString(); stagger += 12 + Math.floor(Math.random() * 18)
+        const { data, error } = await admin.from('feeder_agents').insert(row).select('id').single()
+        if (error) { errors.push(/duplicate|unique/i.test(error.message) ? 'account already has an agent' : error.message); continue }
+        if (campaignId) await admin.from('agent_campaign_assignments').upsert({ user_id: user.id, feeder_agent_id: data.id, campaign_id: campaignId }, { onConflict: 'feeder_agent_id,campaign_id', ignoreDuplicates: true })
+        created.push(data.id)
+      } catch (e) { errors.push(String(e.message || 'spawn failed').slice(0, 80)) }
+    }
+    return Response.json({ created: created.length, errors })
+  }
+
   // Create: one agent per account, owner-verified. X agents take a feeder
   // x_connection; LinkedIn/IG/TikTok agents take a Zernio social account.
   const interests = String(body.interests || '').slice(0, 400)
