@@ -12,6 +12,7 @@
 // coords (the module the renderer also uses); the UI mounts only what PHASE_GATES
 // says the renderer honors. Export → the proven directed render.
 import { useReducer, useRef, useState, useEffect, useMemo, useCallback, memo } from 'react'
+import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { X as LX, Type, Image as LImage, Film, Plus, Trash2, Undo2, Redo2, Play, Pause, Search, Scissors, ZoomIn, ZoomOut, Music, Wand2, SkipBack, Magnet, ChevronDown, Copy } from 'lucide-react'
 import { normalizeEditPlanV2, FONTS, ANCHORS, MAX_ELEMENTS, MAX_SCENES, STYLE_KEYS, TRANSITIONS_V2, PHASE_GATES, MAX_CLIP_DUR } from '@/lib/edit-plan'
@@ -38,6 +39,19 @@ const blankClipScene = () => ({ id: uid('s'), kind: 'clip', query: '', url: null
 const blankCardScene = () => ({ id: uid('s'), kind: 'card', eyebrow: null, heading: 'New scene', body: null, duration: 3, transition: 'cut', transition_dur: 0.4, motion: null, elements: [] })
 
 function timeline(plan) { const starts = []; let acc = 0; for (const s of plan.scenes) { starts.push(acc); acc += sceneSecs(s) } return { starts, total: acc } }
+
+// Robust pointer-capture drag. setPointerCapture pins the pointer to the grabbed
+// element so a fast drag — or one that passes over the <video>, an iframe, or
+// leaves the window — NEVER drops events (the window-listener approach did). Move/
+// up/cancel fire on the captured element. onMove(ev, dx, dy, first); onEnd(ev, moved).
+function pointerDrag(e, { onMove, onEnd, threshold = 2 } = {}) {
+  const target = e.currentTarget, pid = e.pointerId, sx = e.clientX, sy = e.clientY
+  let moved = false
+  try { target.setPointerCapture(pid) } catch { /* fall back to bubbling */ }
+  const move = ev => { if (ev.pointerId !== pid) return; const was = moved; if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > threshold) moved = true; if (moved && onMove) onMove(ev, ev.clientX - sx, ev.clientY - sy, !was) }
+  const up = ev => { if (ev.pointerId !== pid) return; target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up); try { target.releasePointerCapture(pid) } catch {} onEnd && onEnd(ev, moved) }
+  target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up)
+}
 
 function reducer(s, a) {
   switch (a.type) {
@@ -92,6 +106,7 @@ export default function VideoEditor({ job, authed, onRerendered, onClose }) {
   const [downgrades, setDowngrades] = useState([])
   const stageRef = useRef(null); const videoRef = useRef(null); const doneRef = useRef(false)
   const clip = useRef(null)   // copy buffer for an element
+  const backdropDown = useRef(false)   // close only when a press STARTS on the backdrop
 
   // which scene the PREVIEW shows = under the playhead; which scene is being EDITED = selected (else preview).
   const activeIdx = useMemo(() => { let i = 0; for (let j = 0; j < starts.length; j++) if (globalT >= starts[j] - 1e-6) i = j; return Math.min(i, plan.scenes.length - 1) }, [starts, globalT, plan.scenes.length])
@@ -110,6 +125,8 @@ export default function VideoEditor({ job, authed, onRerendered, onClose }) {
     const ro = new ResizeObserver(() => { const r = el.getBoundingClientRect(); el.style.setProperty('--stage-w', r.width + 'px'); el.style.setProperty('--stage-h', r.height + 'px') })
     ro.observe(el); return () => ro.disconnect()
   }, [])
+  // lock body scroll while the editor is open
+  useEffect(() => { const prev = document.body.style.overflow; document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = prev } }, [])
 
   // a lifted clip with unknown length adopts its real duration (non-undoable)
   const onBgMeta = e => { if (previewScene.kind === 'clip' && previewScene.url && previewScene.duration == null && e.target.duration) dispatch({ type: 'quiet', plan: updScene(plan, activeIdx, s => ({ ...s, duration: clampN(Math.round(e.target.duration), 1, MAX_CLIP_DUR) })) }) }
@@ -131,33 +148,27 @@ export default function VideoEditor({ job, authed, onRerendered, onClose }) {
   const seek = useCallback(g => { setGlobalT(clampN(g, 0, total)) }, [total])
   const scrub = useCallback(g => { setPlaying(false); setGlobalT(clampN(g, 0, total)) }, [total])
 
-  // ── canvas: drag to move, corner handle to resize ──
+  // ── canvas: drag to move, corner handle to resize (pointer-capture) ──
   const startDrag = (e, el) => {
     e.stopPropagation(); setSelEl(el.id); setSelScene(previewScene.id); setPlaying(false)
-    const rect = stageRef.current.getBoundingClientRect()
-    const ox = el.x, oy = el.y, sx = e.clientX, sy = e.clientY; let moved = false
-    const onMove = ev => {
-      if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 2) { moved = true; snapshot() }
-      if (!moved) return
-      let nx = clamp01(ox + (ev.clientX - sx) / rect.width), ny = clamp01(oy + (ev.clientY - sy) / rect.height)
+    const rect = stageRef.current.getBoundingClientRect(); const ox = el.x, oy = el.y
+    pointerDrag(e, { onMove: (ev, dx, dy, first) => {
+      if (first) snapshot()
+      let nx = clamp01(ox + dx / rect.width), ny = clamp01(oy + dy / rect.height)
       if (magnet) { if (Math.abs(nx - 0.5) < 0.025) nx = 0.5; if (Math.abs(ny - 0.5) < 0.025) ny = 0.5 } // center snap
       live(updEl(plan, activeIdx, el.id, { x: nx, y: ny }))
-    }
-    const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
-    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
+    } })
   }
   const startResize = (e, el) => {
     e.stopPropagation(); setSelEl(el.id); setPlaying(false)
     const rect = stageRef.current.getBoundingClientRect()
     const cx = rect.left + el.x * rect.width, cy = rect.top + el.y * rect.height
-    const d0 = Math.max(10, Math.hypot(e.clientX - cx, e.clientY - cy)); const base = el.type === 'text' ? el.size : el.scale; let moved = false
-    const onMove = ev => {
-      if (!moved) { moved = true; snapshot() }
+    const d0 = Math.max(10, Math.hypot(e.clientX - cx, e.clientY - cy)); const base = el.type === 'text' ? el.size : el.scale
+    pointerDrag(e, { threshold: 0, onMove: (ev, dx, dy, first) => {
+      if (first) snapshot()
       const ratio = Math.max(10, Math.hypot(ev.clientX - cx, ev.clientY - cy)) / d0
       live(updEl(plan, activeIdx, el.id, el.type === 'text' ? { size: clampN(base * ratio, 0.02, 0.3) } : { scale: clampN(base * ratio, 0.03, 1) }))
-    }
-    const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
-    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
+    } })
   }
 
   // ── element / scene ops (target the SELECTED scene) ──
@@ -224,18 +235,13 @@ export default function VideoEditor({ job, authed, onRerendered, onClose }) {
   const exportJob = usePoll(exportId, authed, j => { if (j.status === 'done' && !doneRef.current) { doneRef.current = true; onRerendered && onRerendered() } })
   const style = SLIDE_STYLES[plan.style_key] || SLIDE_STYLES.bold
 
-  // timeline-dock splitter drag
-  const startSplit = e => {
-    e.preventDefault(); const sy = e.clientY, h0 = tlH
-    const onMove = ev => setTlH(clampN(h0 + (sy - ev.clientY), 132, window.innerHeight * 0.6))
-    const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
-    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
-  }
+  // timeline-dock splitter drag (pointer-capture)
+  const startSplit = e => { e.preventDefault(); const h0 = tlH; pointerDrag(e, { onMove: (ev, dx, dy) => setTlH(clampN(h0 - dy, 132, window.innerHeight * 0.6)) }) }
 
   const propTarget = selectedEl ? 'el' : 'scene'
 
-  return (
-    <motion.div className="ve-overlay" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+  const tree = (
+    <motion.div className="ve-overlay" onPointerDown={e => { backdropDown.current = e.target === e.currentTarget }} onClick={e => { if (e.target === e.currentTarget && backdropDown.current) onClose() }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <VeStyles />
       <motion.div className="ve" onClick={e => e.stopPropagation()} initial={{ opacity: 0, scale: 0.99 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.99 }} transition={spring}>
         <div className="ve-top">
@@ -306,6 +312,11 @@ export default function VideoEditor({ job, authed, onRerendered, onClose }) {
       {picker && <MediaPicker kind={picker.for} authed={authed} onClose={() => setPicker(null)} onPick={sel => picker.for === 'image' ? addImage(sel.url) : setBackground(sel)} onCard={() => setBackground({ kind: 'card' })} />}
     </motion.div>
   )
+  // Portal to <body> so the fixed-position editor ESCAPES the app shell's
+  // transformed framer-motion ancestors (a transform on an ancestor makes
+  // position:fixed resolve against IT, not the viewport — which mispositioned the
+  // overlay and made the editor unreachable in the real app).
+  return typeof document === 'undefined' ? null : createPortal(tree, document.body)
 }
 
 // ── timeline ──
@@ -314,14 +325,18 @@ const Timeline = memo(function Timeline({ plan, starts, total, pps, globalT, sel
   const W = Math.max(total * pps + 60, 240)
   const xToT = clientX => { const r = innerRef.current.getBoundingClientRect(); return (clientX - r.left) / pps }
   const sceneSnaps = useMemo(() => { const a = [0]; starts.forEach((s, i) => { a.push(s, s + sceneSecs(plan.scenes[i])) }); return a }, [plan, starts])
-  const snap = (t, extra = []) => { if (!magnet) return t; const targets = [...sceneSnaps, ...extra]; let best = t, bd = SNAP_PX / pps; for (const tg of targets) { const d = Math.abs(t - tg); if (d < bd) { bd = d; best = tg } } return best }
+  // snap a time to the nearest clip edge / playhead; sets the green guide (px).
+  const snap = (t, extra = []) => {
+    if (!magnet) { setSnapX(null); return t }
+    const targets = [...sceneSnaps, globalT, ...extra]; let best = t, bd = SNAP_PX / pps, hit = false
+    for (const tg of targets) { const d = Math.abs(t - tg); if (d < bd) { bd = d; best = tg; hit = true } }
+    setSnapX(hit ? best * pps : null); return best
+  }
 
   function rulerDown(e) {
     if (e.target.closest('.ve-clip') || e.target.closest('.ve-elbar')) return
     onScrub(xToT(e.clientX))
-    const onMove = ev => onScrub(snap(xToT(ev.clientX)))
-    const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
-    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
+    pointerDrag(e, { onMove: ev => onScrub(xToT(ev.clientX)), onEnd: () => setSnapX(null) })
   }
 
   function sceneDown(e, i) {
@@ -329,20 +344,19 @@ const Timeline = memo(function Timeline({ plan, starts, total, pps, globalT, sel
     const sc = plan.scenes[i]; onSelectScene(sc.id)
     const r = e.currentTarget.getBoundingClientRect(), lx = e.clientX - r.left
     const edge = lx < EDGE_PX ? 'left' : lx > r.width - EDGE_PX ? 'right' : 'body'
-    const sx = e.clientX, oDur = sceneSecs(sc), oTrim = sc.trim_start || 0; let moved = false
-    const onMove = ev => {
-      const dT = (ev.clientX - sx) / pps
-      if (!moved && Math.abs(ev.clientX - sx) > 3) { moved = true; snapshot() }
-      if (!moved) return
-      if (edge === 'right') { const nd = clampN(snap((starts[i] || 0) + oDur + dT) - (starts[i] || 0), 1, maxDurFor(sc)); live(updScene(plan, i, s => ({ ...s, duration: round1(nd) }))) }
-      else if (edge === 'left') { const ns = clampN(snap((starts[i] || 0) + dT), 0, (starts[i] || 0) + oDur - 1) - (starts[i] || 0); const nd = clampN(oDur - ns, 1, maxDurFor(sc)); live(updScene(plan, i, s => ({ ...s, duration: round1(nd), ...(sc.kind === 'clip' ? { trim_start: round1(Math.max(0, oTrim + (oDur - nd))) } : {}) }))) }
-      else { setSnapX(null) /* body reorder handled on up */ }
-    }
-    const onUp = ev => {
-      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); setSnapX(null)
-      if (edge === 'body' && moved) { const dropT = (starts[i] || 0) + oDur / 2 + (ev.clientX - sx) / pps; const others = plan.scenes.filter((_, j) => j !== i); let acc = 0, ni = others.length; for (let j = 0; j < others.length; j++) { const w = sceneSecs(others[j]); if (dropT < acc + w / 2) { ni = j; break } acc += w } if (ni !== i) { snapshot(); const a = plan.scenes.slice(); const [m] = a.splice(i, 1); a.splice(ni, 0, m); commit({ ...plan, scenes: a }) } }
-    }
-    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
+    const sx = e.clientX, oDur = sceneSecs(sc), oTrim = sc.trim_start || 0
+    pointerDrag(e, {
+      threshold: 3,
+      onMove: (ev, dx, dy, first) => {
+        const dT = dx / pps
+        if (edge === 'right') { if (first) snapshot(); const nd = clampN(snap((starts[i] || 0) + oDur + dT) - (starts[i] || 0), 1, maxDurFor(sc)); live(updScene(plan, i, s => ({ ...s, duration: round1(nd) }))) }
+        else if (edge === 'left') { if (first) snapshot(); const ns = clampN(snap((starts[i] || 0) + dT), 0, (starts[i] || 0) + oDur - 1) - (starts[i] || 0); const nd = clampN(oDur - ns, 1, maxDurFor(sc)); live(updScene(plan, i, s => ({ ...s, duration: round1(nd), ...(sc.kind === 'clip' ? { trim_start: round1(Math.max(0, oTrim + (oDur - nd))) } : {}) }))) }
+      },
+      onEnd: (ev, moved) => {
+        setSnapX(null)
+        if (edge === 'body' && moved) { const dropT = (starts[i] || 0) + oDur / 2 + (ev.clientX - sx) / pps; const others = plan.scenes.filter((_, j) => j !== i); let acc = 0, ni = others.length; for (let j = 0; j < others.length; j++) { const w = sceneSecs(others[j]); if (dropT < acc + w / 2) { ni = j; break } acc += w } if (ni !== i) { snapshot(); const a = plan.scenes.slice(); const [m] = a.splice(i, 1); a.splice(ni, 0, m); commit({ ...plan, scenes: a }) } }
+      }
+    })
   }
 
   function elDown(e, i, el) {
@@ -351,18 +365,19 @@ const Timeline = memo(function Timeline({ plan, starts, total, pps, globalT, sel
     const r = e.currentTarget.getBoundingClientRect(), lx = e.clientX - r.left
     const edge = lx < EDGE_PX ? 'left' : lx > r.width - EDGE_PX ? 'right' : 'body'
     onSelectEl(el.id, base + (el.start ?? 0))
-    const s0 = el.start ?? 0, e0 = el.end ?? sd, span = e0 - s0, sx = e.clientX; let moved = false
+    const s0 = el.start ?? 0, e0 = el.end ?? sd, span = e0 - s0
     const elemSnaps = [base, base + sd]
-    const onMove = ev => {
-      const dT = (ev.clientX - sx) / pps
-      if (!moved && Math.abs(ev.clientX - sx) > 3) { moved = true; snapshot() }
-      if (!moved) return
-      if (edge === 'body') { let ns = clampN(snap(base + s0 + dT, elemSnaps) - base, 0, sd - span); live(updEl(plan, i, el.id, { start: round1(ns), end: round1(ns + span) })) }
-      else if (edge === 'left') { let ns = clampN(snap(base + s0 + dT, elemSnaps) - base, 0, e0 - 0.2); live(updEl(plan, i, el.id, { start: round1(ns) })) }
-      else { let ne = clampN(snap(base + e0 + dT, elemSnaps) - base, s0 + 0.2, sd); live(updEl(plan, i, el.id, { end: round1(ne) })) }
-    }
-    const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); setSnapX(null) }
-    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
+    pointerDrag(e, {
+      threshold: 3,
+      onMove: (ev, dx, dy, first) => {
+        if (first) snapshot()
+        const dT = dx / pps
+        if (edge === 'body') { const ns = clampN(snap(base + s0 + dT, elemSnaps) - base, 0, sd - span); live(updEl(plan, i, el.id, { start: round1(ns), end: round1(ns + span) })) }
+        else if (edge === 'left') { const ns = clampN(snap(base + s0 + dT, elemSnaps) - base, 0, e0 - 0.2); live(updEl(plan, i, el.id, { start: round1(ns) })) }
+        else { const ne = clampN(snap(base + e0 + dT, elemSnaps) - base, s0 + 0.2, sd); live(updEl(plan, i, el.id, { end: round1(ne) })) }
+      },
+      onEnd: () => setSnapX(null)
+    })
   }
 
   const { texts, imgs } = useMemo(() => { const texts = [], imgs = []; plan.scenes.forEach((s, i) => s.elements.forEach(el => (el.type === 'image' ? imgs : texts).push({ i, el }))); return { texts, imgs } }, [plan])
@@ -377,7 +392,7 @@ const Timeline = memo(function Timeline({ plan, starts, total, pps, globalT, sel
       <div className="ve-tl-scroll">
         <div className="ve-tl-inner" ref={innerRef} style={{ width: W }} onPointerDown={rulerDown}>
           <div className="ve-ruler">{ticks.map(t => <span key={t} className="ve-tick" style={{ left: t * pps }}>{fmtT(t).replace(/\.\d+$/, '')}</span>)}</div>
-          <div className="ve-playhead" style={{ left: globalT * pps }}><span className="ve-playhead-head" onPointerDown={e => { e.stopPropagation(); onScrub(xToT(e.clientX)); const onMove = ev => onScrub(snap(xToT(ev.clientX))); const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }; window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp) }} /></div>
+          <div className="ve-playhead" style={{ left: globalT * pps }}><span className="ve-playhead-head" title="Drag to scrub" onPointerDown={e => { e.stopPropagation(); onScrub(xToT(e.clientX)); pointerDrag(e, { onMove: ev => onScrub(xToT(ev.clientX)), onEnd: () => setSnapX(null) }) }} /></div>
           {snapX != null && <div className="ve-snapline" style={{ left: snapX }} />}
           <div className="ve-track">
             {plan.scenes.map((s, i) => (
