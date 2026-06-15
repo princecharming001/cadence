@@ -1577,8 +1577,11 @@ const GOAL_OPTS = ['Grow my audience', 'Build authority', 'Generate leads', 'Dri
 // pillars, personality, goal, cadence, and boundaries. Researched from brand-
 // voice + content-strategy best practice. Shown at signup; required before
 // Autopilot. ─────────────────────────────────────────────────────────────────
-function BrandOnboarding({ initial, busy, onSave, onClose }) {
-  const [step, setStep] = useState(0)
+function BrandOnboarding({ initial, missing, platform, busy, onSave, onClose }) {
+  // If we were reopened because Autopilot was blocked, jump straight to the step
+  // that fixes the first thing missing (positioning → step 0, pillars → step 1).
+  const firstWhere = (missing || [])[0]?.where
+  const [step, setStep] = useState(firstWhere === 'pillars' ? 1 : 0)
   const [f, setF] = useState({
     positioning: initial?.positioning || '', audience: initial?.audience || '',
     pillars: (initial?.pillars || []).join('\n'), tone: initial?.tone || [],
@@ -1601,6 +1604,12 @@ function BrandOnboarding({ initial, busy, onSave, onClose }) {
           <button className="x-close" onClick={onClose}><LX size={18} /></button>
         </div>
         <div className="muted tiny" style={{ marginBottom: 14 }}>Before Cadence speaks for you, tell it who you are and how you want to come across.</div>
+        {missing?.length ? (
+          <div className="notice" style={{ margin: '0 0 14px' }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>To turn on Autopilot, finish:</div>
+            <ul style={{ margin: 0, paddingLeft: 16 }}>{missing.map((m, i) => <li key={i} style={{ marginTop: 2 }}>{m.label}</li>)}</ul>
+          </div>
+        ) : null}
         <div className="onb-dots" style={{ marginBottom: 16 }}>{[0, 1, 2].map(i => <span key={i} className={'ob-dot' + (i <= step ? ' on' : '')} />)}</div>
         {step === 0 && (<>
           <div className="onb-q">Who are you, and how do you want to be seen?</div>
@@ -1652,13 +1661,22 @@ function Stepper({ value, min = 1, max = 9, onChange }) {
 // second toggle. Comments live under Engage. Gated behind brand onboarding.
 function AutopilotBody({ row, onToggle, onEditBrief }) {
   const perDay = row.per_run || 1
+  const auto = !!row.auto_post
   return (
     <>
-      <div className="muted tiny" style={{ marginBottom: 12 }}>Writes posts in your voice and publishes them across your best times.{row?.enabled && row?.status_detail ? ` · ${row.status_detail}` : ''}</div>
+      <div className="muted tiny" style={{ marginBottom: 12 }}>Writes posts in your voice on a cadence.{row?.enabled && row?.status_detail ? ` · ${row.status_detail}` : ''}</div>
       <div className="ap-row">
         <span className="ap-rowlabel">Posts per day</span>
         <Stepper value={perDay} min={1} max={3} onChange={v => onToggle({ per_run: v, interval_hours: 24 })} />
       </div>
+      <div className="ap-row">
+        <span className="ap-rowlabel">When a post is ready</span>
+        <div className="row" style={{ gap: 6 }}>
+          <button type="button" className={'chip' + (!auto ? ' on' : '')} onClick={() => onToggle({ auto_post: false })}>Review first</button>
+          <button type="button" className={'chip' + (auto ? ' on' : '')} onClick={() => onToggle({ auto_post: true })}>Auto-post</button>
+        </div>
+      </div>
+      <div className="muted tiny" style={{ marginTop: -4, marginBottom: 10 }}>{auto ? 'Cadence posts at your best times — fully hands-off.' : 'Cadence drafts; nothing goes out until you approve it.'}</div>
       <button className="ap-edit" onClick={onEditBrief}>Edit your brand brief →</button>
     </>
   )
@@ -2228,7 +2246,6 @@ function EngageManager({ rules, primaryConn, xReadEnabled, posts, onSave, onPatc
   )
 }
 // Platforms whose APIs don't allow commenting on other people's posts (yet).
-const EngageStub = ({ platform }) => <div className="muted tiny" style={{ padding: '2px 2px 6px' }}>Coming soon — {platform} doesn&apos;t let apps comment on others&apos; posts yet.</div>
 
 // ── Feeder agents — an autonomous persona per feeder account. Each one thinks
 // on a cadence, posts and replies as ITSELF, quietly backs the primary, and
@@ -3788,6 +3805,7 @@ function App({ session }) {
   const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
   const [autopilot, setAutopilot] = useState([]); const [apRunning, setApRunning] = useState('')
   const [brandOnb, setBrandOnb] = useState(null); const [brandSaving, setBrandSaving] = useState(false) // platform string while open
+  const [gateMiss, setGateMiss] = useState(null) // { platform, missing[], autoPost } — what's blocking Autopilot
   const chatIdRef = useRef(null) // current saved-chat id; null until first save
   const inputRef = useRef(null); const bottomRef = useRef(null)
   const [leftPct, setLeftPct] = useState(47); const colsRef = useRef(null); const [dragging, setDragging] = useState(false)
@@ -4044,7 +4062,25 @@ function App({ session }) {
   async function patchAutopilot(platform, patch) {
     // optimistic so toggles/inputs feel instant
     setAutopilot(list => { const ex = list.find(a => a.platform === platform); const merged = { ...apFor(platform), ...patch }; return ex ? list.map(a => a.platform === platform ? merged : a) : [...list, merged] })
-    try { await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, ...patch }) }); loadAutopilot() } catch { loadAutopilot() }
+    try {
+      const r = await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, ...patch }) })
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        loadAutopilot() // roll the optimistic toggle back to the server truth
+        if (r.status === 422 && d.gate) return handleGateReject(d.gate)
+        setBanner(d.error || 'Could not update Autopilot.'); return
+      }
+      setGateMiss(null); loadAutopilot()
+    } catch { loadAutopilot() }
+  }
+  // Autopilot wasn't ready — route the user to the exact thing that's missing.
+  // brief/pillars live in the brand-brief modal; account/voice are external steps
+  // (connect, or let Cadence study the account), so for those we just guide.
+  function handleGateReject(gate) {
+    setGateMiss(gate)
+    const needsBrief = (gate.missing || []).some(m => m.where === 'brief' || m.where === 'pillars')
+    if (needsBrief) setBrandOnb(gate.platform)
+    setBanner((gate.missing || []).map(m => m.label).join('   ·   ') || 'Finish setup to turn on Autopilot.')
   }
   const brandOnboarded = !!me?.profile?.brand_brief?.positioning
   async function saveBrandBrief({ brief, cadence }) {
@@ -4052,8 +4088,16 @@ function App({ session }) {
     const platform = brandOnb || 'x'
     try {
       await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ brand_brief: brief }) })
-      await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, enabled: true, ...cadence }) })
+      const r = await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, enabled: true, ...cadence }) })
       await loadMe(session); loadAutopilot()
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        // Brief is saved; what's left (connect account / learn voice) can't be done
+        // in this modal — close it and guide to the next step.
+        if (r.status === 422 && d.gate) { setBrandOnb(null); setGateMiss(d.gate); setBanner((d.gate.missing || []).map(m => m.label).join('   ·   ')); return }
+        setBanner(d.error || 'Could not turn on Autopilot.'); return
+      }
+      setGateMiss(null)
       setBanner(`Autopilot on — Cadence is running your ${platform === 'linkedin' ? 'LinkedIn' : 'X'} in your voice`)
       setBrandOnb(null)
     } catch { setBanner('Could not save — try again.') } finally { setBrandSaving(false) }
@@ -4592,9 +4636,6 @@ function App({ session }) {
                     <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={engSettings.some(s => s.platform === plat && s.enabled)} />}>
                       <AutoReply platforms={[plat]} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
                     </Section>
-                    <Section title="Engage in your niche" hint="comments on relevant posts as you">
-                      <EngageStub platform={platLabel} />
-                    </Section>
                     <Section title="Campaign" hint="auto-post carousels & clips on a schedule" badge={<OnBadge on={campsTouching([plat]).some(c => c.active)} />}>
                       <PlatformCampaign campaigns={campsFor([plat])} targets={platCampTargets} supportsCarousel albums={mediaAlbums} canCreate={platCampTargets.length > 0} connectHint={`Connect ${platLabel} first (accounts, bottom-right).`} onSave={saveBrand} onPatch={patchBrand} onDelete={deleteBrand} onRun={runBrand} />
                       <CrossCampHint plats={[plat]} />
@@ -4753,7 +4794,7 @@ function App({ session }) {
 
       {/* brand onboarding — required before Autopilot speaks for you */}
       <AnimatePresence>
-        {brandOnb && <BrandOnboarding initial={{ ...(me?.profile?.brand_brief || {}), ...apFor(brandOnb) }} busy={brandSaving} onSave={saveBrandBrief} onClose={() => setBrandOnb(null)} />}
+        {brandOnb && <BrandOnboarding platform={brandOnb} initial={{ ...(me?.profile?.brand_brief || {}), ...apFor(brandOnb) }} missing={gateMiss?.platform === brandOnb ? gateMiss.missing : null} busy={brandSaving} onSave={saveBrandBrief} onClose={() => setBrandOnb(null)} />}
       </AnimatePresence>
 
       {/* agent profile modal — opened from the fleet or a campaign roster */}
