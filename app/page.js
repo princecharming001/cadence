@@ -3598,8 +3598,11 @@ function App({ session }) {
   // on a 20s poll, and whenever the tab regains focus — so the whole app stays
   // consistent no matter where (or what) changed it.
   const refreshLive = useCallback(() => {
-    loadQueue(); loadAutopilot(); loadAgents(); loadAgentCamps(); loadSlideshows(); loadSocialEng(); loadEngagement(); loadClips(); loadVideos(); loadBrand(); loadMedia()
-  }, [loadQueue, loadAutopilot, loadAgents, loadAgentCamps, loadSlideshows, loadSocialEng, loadEngagement, loadClips, loadVideos, loadBrand, loadMedia])
+    // loadMe carries the headline stats (queued/posted/accounts) shown in the
+    // topbar + profile tiles — refresh it too or those numbers go stale while the
+    // queue moves under them.
+    loadQueue(); loadMe(); loadAutopilot(); loadAgents(); loadAgentCamps(); loadSlideshows(); loadSocialEng(); loadEngagement(); loadClips(); loadVideos(); loadBrand(); loadMedia()
+  }, [loadQueue, loadMe, loadAutopilot, loadAgents, loadAgentCamps, loadSlideshows, loadSocialEng, loadEngagement, loadClips, loadVideos, loadBrand, loadMedia])
   useEffect(() => {
     const sync = () => { if (document.visibilityState === 'visible') refreshLive() }
     const id = setInterval(sync, 20000)            // background-change safety net
