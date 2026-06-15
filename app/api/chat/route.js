@@ -46,7 +46,7 @@ const tools = [
   },
   {
     name: 'list_linkedin_posts',
-    description: 'List the user\'s scraped LinkedIn posts (their own or accounts they track). Use this to repurpose LinkedIn content into tweets. Returns content, engagement, posted date, and source profile.',
+    description: "List the user's scraped LinkedIn posts (their own or accounts they track). Use this to repurpose LinkedIn content into tweets. Returns content, engagement, posted date, source profile, AND post_url — a REAL LinkedIn permalink for each post. When you reference or list specific posts, CITE the source by linking post_url as a markdown link, e.g. [that 1.6k-like post](post_url). Never claim you can't link the source — post_url is the actual URL.",
     input_schema: {
       type: 'object',
       properties: {
@@ -869,7 +869,8 @@ More rules:
 - To repurpose LinkedIn content: call list_linkedin_posts, pick the relevant one, rewrite it for the target platform, then propose_post.
 - The queue-management tools (reschedule, update, delete, set_status, pause/resume, set_cadence) act on posts the user already approved — those you may call directly when asked.
 - Relative times like "tomorrow at noon" resolve against the current LA time given below. Show times in Pacific (PT).
-- Be concise. If a tool errors, say plainly what went wrong.`
+- Be concise. If a tool errors, say plainly what went wrong.
+- Your replies render as MARKDOWN. Use real links — [label](https://…) — whenever you reference a source (e.g. a LinkedIn post's post_url), so the user can click through; never paste raw IDs or claim you can't link something you have a URL for. Light formatting (bold, bullet "- " lists) is fine; keep it tight.`
 
     // Live trending hook patterns for the focused TEXT platforms feed the
     // drafts (video formats apply at clip-render time, not here).

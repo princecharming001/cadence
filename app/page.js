@@ -8,7 +8,7 @@ import {
   Check as LCheck, X as LX, RefreshCw, Sparkles, Send, Plus,
   Brain, ChevronDown, Trash2, Pencil, Crown, Clock, Wand2, Image as LImage,
   ThumbsUp, ThumbsDown, Upload, Play, MessageCircle, Star, Loader2, Film, FolderOpen, Search as LSearch,
-  Paperclip, Captions, Video as LVideo, LayoutGrid as LGrid,
+  Paperclip, Captions, Video as LVideo, LayoutGrid as LGrid, Copy as LCopy,
   ArrowLeft, CreditCard, Users, User as LUser, Bot, History as LHistory,
   Calendar as LCalendar, List as LList,
 } from 'lucide-react'
@@ -62,6 +62,47 @@ const spring = { type: 'spring', stiffness: 400, damping: 30 }
 // icon wrappers (keep names used across the file)
 const Check = (p) => <LCheck size={15} strokeWidth={3} {...p} />
 const Ex = (p) => <LX size={15} strokeWidth={3} {...p} />
+
+// ── Safe chat markdown — renders the agent's replies as React nodes (never
+//    dangerouslySetInnerHTML): clickable links ([label](url) + bare urls), bold,
+//    inline code, and "- " bullet lists. Links open in a new tab, noopener. ────
+const MD_INLINE = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))|(\*\*([^*]+)\*\*)|(`([^`]+)`)|(https?:\/\/[^\s<>()]+)/
+function shortUrl(u) { try { const x = new URL(u); return x.hostname.replace(/^www\./, '') + (x.pathname.length > 1 ? '/…' : '') } catch { return u.slice(0, 40) } }
+function mdInline(s, k = { i: 0 }) {
+  const out = []; let rest = String(s)
+  while (rest) {
+    const m = rest.match(MD_INLINE)
+    if (!m) { out.push(rest); break }
+    if (m.index > 0) out.push(rest.slice(0, m.index))
+    if (m[1]) out.push(<a key={k.i++} href={m[3]} target="_blank" rel="noopener noreferrer" className="mb-link">{m[2]}</a>)
+    else if (m[4]) out.push(<strong key={k.i++}>{m[5]}</strong>)
+    else if (m[6]) out.push(<code key={k.i++} className="mb-code">{m[7]}</code>)
+    else if (m[8]) out.push(<a key={k.i++} href={m[8]} target="_blank" rel="noopener noreferrer" className="mb-link">{shortUrl(m[8])} ↗</a>)
+    rest = rest.slice(m.index + m[0].length)
+  }
+  return out
+}
+function MessageBody({ text }) {
+  const k = { i: 0 }
+  return String(text || '').split('\n').map((line, li) => {
+    const bullet = /^\s*[-*•·]\s+/.test(line)
+    const content = bullet ? line.replace(/^\s*[-*•·]\s+/, '') : line
+    if (!content.trim()) return <div key={li} className="mb-gap" />
+    return <div key={li} className={bullet ? 'mb-li' : 'mb-p'}>{bullet && <span className="mb-dot">•</span>}<span>{mdInline(content, k)}</span></div>
+  })
+}
+
+// Hover actions under an assistant message: Copy, and (on the latest) Retry.
+function MsgActions({ text, onRegenerate }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => { try { await navigator.clipboard.writeText(String(text || '')); setCopied(true); setTimeout(() => setCopied(false), 1400) } catch { /* clipboard blocked */ } }
+  return (
+    <div className="msg-actions">
+      <button className="msg-act" onClick={copy} title="Copy">{copied ? <LCheck size={12} strokeWidth={3} /> : <LCopy size={12} />}{copied ? 'Copied' : 'Copy'}</button>
+      {onRegenerate && <button className="msg-act" onClick={onRegenerate} title="Regenerate this reply"><RefreshCw size={12} /> Retry</button>}
+    </div>
+  )
+}
 const Refresh = (p) => <RefreshCw size={14} strokeWidth={2.4} {...p} />
 function XGlyph() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{ display: 'block' }}><path d="M18.9 1.2h3.7l-8 9.1L24 22.8h-7.4l-5.8-7.5-6.6 7.5H.5l8.5-9.7L0 1.2h7.6l5.2 6.9zM17.6 20.6h2L6.5 3.3H4.3z"/></svg> }
 function IGGlyph({ size = 14 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ display: 'block' }}><rect x="2.6" y="2.6" width="18.8" height="18.8" rx="5.4" /><circle cx="12" cy="12" r="4.4" /><circle cx="17.7" cy="6.3" r="1.5" fill="currentColor" stroke="none" /></svg> }
@@ -3293,7 +3334,7 @@ const SMART_VIEWS = [
 // a format, and the same Cadence agent builds it and drops the result inline.
 // It's a thin shell over /api/chat (with a `studio` context) so everything the
 // chat agent can do, the Studio can do — just create-first and structured.
-function StudioComposer({ library = [], messages, busy, onSend, onResolve, authed, socialAccounts, connected, xConns, hasPhotos, refreshLive, defaultHour, scope = [], onToggleScope, inputRef }) {
+function StudioComposer({ library = [], messages, busy, onSend, onResolve, onRegenerate, authed, socialAccounts, connected, xConns, hasPhotos, refreshLive, defaultHour, scope = [], onToggleScope, inputRef }) {
   const [input, setInput] = useState('')
   const [format, setFormat] = useState('auto')   // auto | carousel | clip | video
   const [captions, setCaptions] = useState(true)
@@ -3419,7 +3460,8 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, authe
                 return (
                   <motion.div key={i} className={'msg ' + m.role} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={spring}>
                     <div className={'msg-col' + (props.length ? ' has-dp' : '')} style={{ alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                      <div className={'bubble ' + m.role}>{m.content}</div>
+                      <div className={'bubble ' + m.role}>{m.role === 'assistant' ? <MessageBody text={m.content} /> : m.content}</div>
+                      {m.role === 'assistant' && m.content && <MsgActions text={m.content} onRegenerate={onRegenerate && i === messages.length - 1 && !busy ? onRegenerate : null} />}
                       {props.map((p, j) => p.question
                         ? <QuestionProposal key={j} proposal={p} onPick={(v) => go(v)} />
                         : p.campaign
@@ -4565,27 +4607,41 @@ function App({ session }) {
     })
   }
 
-  // The one chat = the Studio. `opts` (from the Studio composer) carries the
-  // create context — a format hint + attached Library media — so the agent makes
-  // the thing and shows it inline. Plain text messages just pass opts-less.
-  async function send(text, opts = null) {
-    const t = (text ?? input).trim(); if (!t || loading) return
-    setInput(''); const next = [...messages, { role: 'user', content: t }]; setMessages(next); setLoading(true)
+  // Run one agent turn over a given history (no new user message appended here);
+  // shared by send (after appending the user turn) and regenerate (which replays
+  // the last user turn). `opts` carries the Studio create-context.
+  async function runTurn(history, opts = null) {
+    setLoading(true)
     try {
-      const body = { messages: next.slice(-40), platforms: chatScope }
-      // Always pass a (possibly minimal) studio context — the chat IS the Studio.
-      body.studio = {
-        format: opts?.format || 'auto',
-        captions: opts ? opts.captions !== false : true,
-        attachments: (opts?.attachments || []).map(a => ({ id: a.id, type: a.type, url: a.url, filename: a.filename })),
+      const body = {
+        messages: history.slice(-40), platforms: chatScope,
+        // Always pass a (possibly minimal) studio context — the chat IS the Studio.
+        studio: {
+          format: opts?.format || 'auto',
+          captions: opts ? opts.captions !== false : true,
+          attachments: (opts?.attachments || []).map(a => ({ id: a.id, type: a.type, url: a.url, filename: a.filename })),
+        },
       }
       const res = await authed('/api/chat', { method: 'POST', body: JSON.stringify(body) })
       const data = await res.json()
       const proposals = Array.isArray(data.proposals) ? data.proposals : (data.proposal ? [data.proposal] : [])
-      const withReply = [...next, { role: 'assistant', content: data.reply, proposals }]
+      const withReply = [...history, { role: 'assistant', content: data.reply, proposals }]
       setMessages(withReply); saveChat(withReply); refreshLive()
     }
     catch (e) { setMessages(p => [...p, { role: 'assistant', content: '⚠️ ' + e.message }]) } finally { setLoading(false) }
+  }
+  async function send(text, opts = null) {
+    const t = (text ?? input).trim(); if (!t || loading) return
+    setInput(''); const next = [...messages, { role: 'user', content: t }]; setMessages(next)
+    await runTurn(next, opts)
+  }
+  // Re-run the latest exchange: drop the last assistant reply, replay from the
+  // last user message. Non-destructive to earlier turns.
+  async function regenerate() {
+    if (loading) return
+    const li = messages.map(m => m.role).lastIndexOf('user'); if (li < 0) return
+    const base = messages.slice(0, li + 1); setMessages(base)
+    await runTurn(base, null)
   }
 
   const persona = me?.persona; const stats = me?.stats || {}
@@ -4936,7 +4992,7 @@ function App({ session }) {
               {/* STUDIO = the one chat. Describe anything (carousel, clip, video,
                   post) and it makes it inline; pick where to post on the result. */}
               {tab === 'studio' && (
-                <StudioComposer library={mediaAssets} messages={messages} busy={loading} onSend={send} onResolve={resolveProposal}
+                <StudioComposer library={mediaAssets} messages={messages} busy={loading} onSend={send} onResolve={resolveProposal} onRegenerate={regenerate}
                   authed={authed} socialAccounts={socialAccounts} connected={connected} xConns={xConns} hasPhotos={hasPhotos}
                   refreshLive={refreshLive} defaultHour={defaultHour} scope={chatScope} onToggleScope={toggleScope} />
               )}
@@ -5371,6 +5427,21 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .bubble { max-width: 100%; padding: 11px 15px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bubble.user { background: var(--ink); color: #FAF9F7; border-radius: 12px 12px 4px 12px; }
 .bubble.assistant { background: var(--surface); border: 1px solid var(--line); color: var(--body); border-radius: 12px 12px 12px 4px; }
+.bubble.assistant { white-space: normal; }
+/* chat markdown */
+.mb-p { margin: 0; }
+.mb-p + .mb-p { margin-top: 7px; }
+.mb-gap { height: 7px; }
+.mb-li { display: flex; gap: 8px; margin-top: 4px; }
+.mb-dot { color: var(--accent); flex: none; }
+.mb-link { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; font-weight: 600; overflow-wrap: anywhere; }
+.mb-link:hover { color: var(--accent-deep); }
+.mb-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; background: var(--bg2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+/* per-message actions (copy / retry) */
+.msg-actions { display: flex; gap: 4px; margin-top: 2px; opacity: 0; transition: opacity .12s; }
+.msg:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
+.msg-act { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: 7px; padding: 4px 7px; cursor: pointer; font-family: inherit; }
+.msg-act:hover { background: var(--bg2); color: var(--ink); }
 .composer-wrap { border-top: 1px solid var(--line); padding: 12px 16px 14px; background: var(--bg); }
 .presets { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
 .presets::-webkit-scrollbar { display: none; }
