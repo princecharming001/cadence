@@ -15,6 +15,7 @@ import { admin } from '@/lib/supabase'
 import { postOne } from '@/lib/posting'
 import { refreshPostMetrics } from '@/lib/post-metrics'
 import { runDueBrandLearning } from '@/lib/brand-learning'
+import { runDueCampaignSentiment } from '@/lib/campaign-sentiment'
 import { runDueEngagement } from '@/lib/engagement'
 import { runDueBrandCampaigns } from '@/lib/brand-campaigns'
 import { runDueSocialEngagement } from '@/lib/social-engagement'
@@ -93,6 +94,10 @@ export async function GET(req) {
     // thumbs) into durable cross-platform learnings that shape every future post.
     // Runs AFTER the metrics refresh so it learns from the latest numbers.
     await runDueBrandLearning({ limit: 5 }).catch(() => {})
+    // Campaign intelligence — qualitative half: classify audience comments on
+    // each active campaign's posts (aspect-based sentiment + emotion + sarcasm
+    // gate) so the campaign-learning loop and dashboard see what the audience feels.
+    await runDueCampaignSentiment({ limit: 5 }).catch(() => {})
     // Intrinsic daily trend detection: harvest a few stale users' niches so
     // fresh viral formats feed generation without anyone pressing a button.
     await harvestDueTrends({ limit: 3, deepN: 2 }).catch(() => {})
