@@ -6,6 +6,9 @@
 // (posts.campaign_id/is_promo) so a company can measure what's working.
 import { admin, getUser } from '@/lib/supabase'
 import { draftCampaignBrief } from '@/lib/campaign-brief'
+import { campaignSentimentSummary } from '@/lib/campaign-sentiment'
+import { getCampaignInsights } from '@/lib/campaign-memory'
+import { topArms } from '@/lib/campaign-arms'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -52,27 +55,55 @@ async function syncMirror(userId, agentId) {
   await admin.from('feeder_agents').update({ campaign_id: data?.[0]?.campaign_id || null }).eq('id', agentId).eq('user_id', userId)
 }
 
-// Roll campaign performance up from attributed posts (the metrics spine).
+// Roll campaign performance up from attributed posts (the metrics spine) — now
+// reach-normalized (engagement RATE, not raw counts) and enriched with the
+// intelligence layer: per-platform + per-agent rates with each agent's best post,
+// the audience-sentiment distribution, the leading bandit arms, and the distilled
+// "what's working" insights. This is the campaign intelligence DASHBOARD payload.
+const eng = r => (Number(r.likes) || 0) + 2 * (Number(r.replies) || 0) + 2 * (Number(r.reposts) || 0)
+const rate = r => (Number(r.impressions) || 0) >= 50 ? eng(r) / r.impressions : null
+
 async function campaignMetrics(userId, campaignId) {
   const since = new Date(Date.now() - 7 * 24 * 3600e3).toISOString()
   const { data: posts } = await admin.from('posts')
-    .select('feeder_agent_id, is_promo, status, likes, replies, impressions, created_at')
+    .select('feeder_agent_id, is_promo, status, likes, replies, reposts, impressions, platform, content, created_at')
     .eq('user_id', userId).eq('campaign_id', campaignId)
   const rows = posts || []
   const sum = (k) => rows.reduce((n, r) => n + (Number(r[k]) || 0), 0)
+  const rateOf = (e, i) => i >= 50 ? +(e / i * 100).toFixed(2) : null
+
   const byAgent = {}
   for (const r of rows) {
-    const a = (byAgent[r.feeder_agent_id] ||= { posts: 0, promo: 0, likes: 0, replies: 0, impressions: 0 })
-    a.posts++; if (r.is_promo) a.promo++; a.likes += Number(r.likes) || 0; a.replies += Number(r.replies) || 0; a.impressions += Number(r.impressions) || 0
+    const a = (byAgent[r.feeder_agent_id] ||= { posts: 0, promo: 0, likes: 0, replies: 0, reposts: 0, impressions: 0, _eng: 0, best: null })
+    a.posts++; if (r.is_promo) a.promo++
+    a.likes += Number(r.likes) || 0; a.replies += Number(r.replies) || 0; a.reposts += Number(r.reposts) || 0; a.impressions += Number(r.impressions) || 0; a._eng += eng(r)
+    const pr = rate(r)
+    if (pr != null && (!a.best || pr > a.best.rate)) a.best = { rate: +(pr * 100).toFixed(2), content: String(r.content || '').slice(0, 120), likes: r.likes || 0, replies: r.replies || 0, impressions: r.impressions || 0 }
   }
+  for (const id in byAgent) { const a = byAgent[id]; a.eng_rate = rateOf(a._eng, a.impressions); delete a._eng }
+
+  const byPlatform = {}
+  for (const r of rows) {
+    const p = (byPlatform[r.platform || 'x'] ||= { posts: 0, impressions: 0, _eng: 0 })
+    p.posts++; p.impressions += Number(r.impressions) || 0; p._eng += eng(r)
+  }
+  for (const k in byPlatform) { const p = byPlatform[k]; p.eng_rate = rateOf(p._eng, p.impressions); delete p._eng }
+
   const { count: clicks } = await admin.from('campaign_clicks').select('id', { count: 'exact', head: true }).eq('campaign_id', campaignId)
+  const [sentiment, arms, insights] = await Promise.all([
+    campaignSentimentSummary(campaignId).catch(() => ({ total: 0 })),
+    topArms(campaignId).catch(() => []),
+    getCampaignInsights(campaignId, null, 8).catch(() => []),
+  ])
   return {
     posts: rows.length,
     promo_posts: rows.filter(r => r.is_promo).length,
     promo_7d: rows.filter(r => r.is_promo && r.created_at >= since).length,
-    impressions: sum('impressions'), likes: sum('likes'), replies: sum('replies'),
+    impressions: sum('impressions'), likes: sum('likes'), replies: sum('replies'), reposts: sum('reposts'),
+    eng_rate: rateOf(rows.reduce((n, r) => n + eng(r), 0), sum('impressions')),
     clicks: clicks || 0,
-    by_agent: byAgent,
+    by_agent: byAgent, by_platform: byPlatform,
+    sentiment, top_arms: arms, insights,
   }
 }
 

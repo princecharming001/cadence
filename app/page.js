@@ -2666,11 +2666,88 @@ function CampaignOnboarding({ onCancel, onCreate, onDraft }) {
   )
 }
 
+// Campaign intelligence panel — the shared brain made visible: what's working
+// (distilled learnings), audience sentiment, the winning angles the bandit found,
+// and per-platform / per-agent reach-normalized performance.
+function CampaignIntel({ m = {}, roster = [], handleOf }) {
+  const s = m.sentiment || {}
+  const arms = (m.top_arms || []).filter(a => a.dimension === 'angle_lens' && a.obs > 0)
+  const platforms = Object.entries(m.by_platform || {})
+  const nameFor = id => { const a = roster.find(x => x.id === id); return a ? (a.persona?.name || a.name) : 'agent' }
+  const sentTotal = s.total || 0
+  const pct = n => sentTotal ? Math.round((n / sentTotal) * 100) : 0
+  return (
+    <div className="camp2-manage" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* What's working — distilled campaign learnings */}
+      {m.insights?.length ? (
+        <div>
+          <div className="muted tiny" style={{ fontWeight: 700, marginBottom: 5 }}>WHAT'S WORKING</div>
+          {m.insights.slice(0, 5).map((i, k) => (
+            <div key={k} className="row" style={{ gap: 7, alignItems: 'flex-start', marginTop: 4 }}>
+              <span className="chip" style={{ flex: 'none', fontSize: 10, padding: '1px 6px', opacity: 0.8 }}>{i.kind}</span>
+              <span style={{ fontSize: 12, lineHeight: 1.4 }}>{i.text}{i.platform ? <span className="muted tiny"> · {i.platform}</span> : null}</span>
+            </div>
+          ))}
+        </div>
+      ) : <div className="muted tiny">Cadence is still gathering results — insights appear once the fleet has a few posts with real reach.</div>}
+
+      {/* Audience sentiment */}
+      {sentTotal > 0 && (
+        <div>
+          <div className="muted tiny" style={{ fontWeight: 700, marginBottom: 5 }}>AUDIENCE SENTIMENT <span style={{ fontWeight: 400 }}>· {sentTotal} comments</span></div>
+          <div style={{ display: 'flex', height: 7, borderRadius: 999, overflow: 'hidden', marginBottom: 6 }}>
+            <div style={{ width: `${pct(s.counts?.positive || 0)}%`, background: '#22c55e' }} />
+            <div style={{ width: `${pct(s.counts?.question || 0)}%`, background: '#3b82f6' }} />
+            <div style={{ width: `${pct(s.counts?.neutral || 0)}%`, background: '#9ca3af' }} />
+            <div style={{ width: `${pct(s.counts?.negative || 0)}%`, background: '#ef4444' }} />
+          </div>
+          <div className="muted tiny">{pct(s.counts?.positive || 0)}% positive · {pct(s.counts?.question || 0)}% questions · {pct(s.counts?.negative || 0)}% negative</div>
+          {s.questions?.length ? <div className="muted tiny" style={{ marginTop: 5 }}><b>They keep asking:</b> {s.questions.slice(0, 2).map(q => `"${q.slice(0, 60)}"`).join(' · ')}</div> : null}
+          {(s.neg_share || 0) >= 0.25 && s.negatives?.length ? <div className="tiny" style={{ marginTop: 4, color: '#ef4444' }}><b>Pushback:</b> {s.negatives.slice(0, 1).map(n => `"${n.slice(0, 60)}"`)}</div> : null}
+        </div>
+      )}
+
+      {/* Winning angles (bandit) */}
+      {arms.length > 0 && (
+        <div>
+          <div className="muted tiny" style={{ fontWeight: 700, marginBottom: 5 }}>WINNING ANGLES <span style={{ fontWeight: 400 }}>· the fleet is learning to favor these</span></div>
+          <div className="row" style={{ gap: 5, flexWrap: 'wrap' }}>
+            {arms.slice(0, 4).map((a, k) => <span key={k} className="chip sm">{a.value} <b style={{ marginLeft: 3 }}>{Math.round(a.mean * 100)}%</b></span>)}
+          </div>
+        </div>
+      )}
+
+      {/* Per-platform performance */}
+      {platforms.length > 0 && (
+        <div>
+          <div className="muted tiny" style={{ fontWeight: 700, marginBottom: 5 }}>BY PLATFORM</div>
+          {platforms.map(([p, v]) => (
+            <div key={p} className="row" style={{ gap: 8, fontSize: 12, marginTop: 3 }}>
+              <span className="status-dot" style={{ background: platformDot(p), width: 6, height: 6 }} />
+              <span style={{ width: 70 }}>{p}</span>
+              <span className="muted tiny">{v.posts} posts · {fmtNum(v.impressions)} impr{v.eng_rate != null ? ` · ${v.eng_rate}% eng` : ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Top agent */}
+      {m.by_agent && Object.keys(m.by_agent).length > 0 && (() => {
+        const best = Object.entries(m.by_agent).filter(([, a]) => a.eng_rate != null).sort((a, b) => b[1].eng_rate - a[1].eng_rate)[0]
+        if (!best) return null
+        const [id, a] = best
+        return <div className="muted tiny"><b>Top performer:</b> {nameFor(id)} — {a.eng_rate}% eng over {a.posts} posts{a.best ? `; best: "${a.best.content.slice(0, 50)}…"` : ''}</div>
+      })()}
+    </div>
+  )
+}
+
 function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSaveCamp, onPatchCamp, onDeleteCamp, onSpawn, onPatchAgent, onRunAgent, onOpenAgent, onDraftCamp, onAssign, onUnassign }) {
   const onCamp = (a, cid) => (a.campaign_ids || []).includes(cid) // many-to-many membership
   const [form, setForm] = useState(null)        // create-campaign draft
   const [busy, setBusy] = useState(false)
   const [manageFor, setManageFor] = useState(null) // campaign id with the crew panel open
+  const [intelFor, setIntelFor] = useState(null)   // campaign id with the intelligence panel open
   const [editFor, setEditFor] = useState(null)      // campaign id being edited
   const [edit, setEdit] = useState({ product: '', link: '' })
   const [deployAcct, setDeployAcct] = useState('')  // 'x:<id>' | 's:<id>'
@@ -2757,8 +2834,13 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
                 <span className="facepile-add"><Plus size={13} /></span>
               </div>
               <span className="camp2-stats">{m.promo_posts != null
-                ? <><b>{fmtNum(m.promo_posts)}</b> promo · <b>{fmtNum(m.impressions || 0)}</b> impressions{m.clicks ? <> · <b>{fmtNum(m.clicks)}</b> clicks</> : ''}</>
+                ? <><b>{fmtNum(m.promo_posts)}</b> promo · <b>{fmtNum(m.impressions || 0)}</b> impr{m.eng_rate != null ? <> · <b>{m.eng_rate}%</b> eng</> : ''}{m.clicks ? <> · <b>{fmtNum(m.clicks)}</b> clicks</> : ''}</>
                 : <><b>{live}</b> posted · <b>{pending}</b> queued</>}</span>
+              {(m.posts > 0 || m.insights?.length || m.sentiment?.total) && (
+                <button className="chip sm" title="Campaign intelligence — what's working, sentiment, winning angles" onClick={() => setIntelFor(intelFor === c.id ? null : c.id)}>
+                  <Sparkles size={11} style={{ marginRight: 3 }} />Intel
+                </button>
+              )}
               <div className="row" style={{ gap: 4, marginLeft: 'auto' }}>
                 {INTENSITY_OPTS.map(([k, l, hint]) => (
                   <button key={k} className={'chip sm' + (c.intensity === k ? ' on' : '')} title={hint} onClick={() => onPatchCamp(c.id, { intensity: k })}>{l}</button>
@@ -2808,6 +2890,14 @@ function AgentCampaigns({ campaigns, agents, xConns, socialAccounts, posts, onSa
                       )}
                     </div>
                   </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence initial={false}>
+              {intelFor === c.id && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
+                  <CampaignIntel m={m} roster={roster} handleOf={handleOf} />
                 </motion.div>
               )}
             </AnimatePresence>
