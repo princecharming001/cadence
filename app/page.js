@@ -3484,6 +3484,7 @@ function CarouselEditModal({ slideshow, authed, onSaved, onClose }) {
 function Projects({ slideshows = [], clipJobs = [], videoJobs = [], socialAccounts = [], authed, onDeleteSlideshow, onDeleteClip, onDeleteVideo, onPostClip, onPostVideo, onReloadSlideshows, onReloadVideos, onGoCreate }) {
   const [filter, setFilter] = useState('all')      // all | carousel | clip | video
   const [postOpen, setPostOpen] = useState(null)   // item key whose account-picker is open
+  const [postCaption, setPostCaption] = useState('') // editable caption for the open picker
   const [editing, setEditing] = useState(null)     // { kind:'carousel'|'video', raw }
 
   // While any video is rendering, poll the list so directed renders advance
@@ -3520,7 +3521,7 @@ function Projects({ slideshows = [], clipJobs = [], videoJobs = [], socialAccoun
     }
     for (const j of clipJobs) {
       if (j.status === 'done' && Array.isArray(j.clips) && j.clips.length) {
-        j.clips.forEach((c, i) => items.push({ key: 'cl' + j.id + '_' + i, kind: 'clip', badge: 'Clip', when: j.created_at, status: 'ready', title: c.title || j.source_name || 'Clip', video: c.url, meta: c.end != null && c.start != null ? `${Math.round(c.end - c.start)}s` : '', post: ids => onPostClip(j.id, i, ids), edit: () => setEditing({ kind: 'video', raw: { mode: 'clip', video_url: c.url, aspect: 'vertical', style_key: 'bold', prompt: c.title || j.source_name || '', id: null } }), del: () => onDeleteClip(j.id) }))
+        j.clips.forEach((c, i) => items.push({ key: 'cl' + j.id + '_' + i, kind: 'clip', badge: 'Clip', when: j.created_at, status: 'ready', title: c.title || j.source_name || 'Clip', video: c.url, meta: c.end != null && c.start != null ? `${Math.round(c.end - c.start)}s` : '', caption: c.caption || c.title || j.source_name || '', post: (ids, cap) => onPostClip(j.id, i, ids, cap), edit: () => setEditing({ kind: 'video', raw: { mode: 'clip', video_url: c.url, aspect: 'vertical', style_key: 'bold', prompt: c.title || j.source_name || '', id: null } }), del: () => onDeleteClip(j.id) }))
       } else {
         items.push({ key: 'cl' + j.id, kind: 'clip', badge: 'Clip', when: j.created_at, status: j.status, title: j.source_name || 'Clip', detail: j.status_detail, error: j.error, del: () => onDeleteClip(j.id) })
       }
@@ -3538,7 +3539,7 @@ function Projects({ slideshows = [], clipJobs = [], videoJobs = [], socialAccoun
         detail: v.status_detail === 'Ready' ? '' : v.status_detail, error: v.status === 'failed' ? v.error : null,
         rerendering: !!rerendering, rerenderDetail: rerendering?.status_detail,
         retry: failedClone ? () => setEditing({ kind: 'video', raw: failedClone }) : null, retryError: failedClone?.error,
-        post: ids => onPostVideo(v.id, ids, v.prompt || v.script || ''),
+        caption: v.prompt || v.script || '', post: (ids, cap) => onPostVideo(v.id, ids, cap ?? (v.prompt || v.script || '')),
         edit: ready ? () => setEditing({ kind: 'video', raw: v }) : null, del: () => onDeleteVideo(v.id),
       })
     }
@@ -3588,22 +3589,25 @@ function Projects({ slideshows = [], clipJobs = [], videoJobs = [], socialAccoun
                   {it.status === 'needs_provider' && <div className="muted tiny" style={{ marginTop: 4 }}>Generated video isn’t switched on.</div>}
                   {it.rerendering && <div className="muted tiny" style={{ marginTop: 4 }}><Loader2 size={11} className="spin" style={{ verticalAlign: '-2px', marginRight: 4 }} />Re-rendering an edit…{it.rerenderDetail ? ` ${it.rerenderDetail}` : ''}</div>}
                   {it.retry && <div className="muted tiny" style={{ marginTop: 4, color: '#B3372F' }}>Last re-render failed{it.retryError ? ` — ${it.retryError}` : ''}. <button className="vse-restore" onClick={it.retry}>Retry</button></div>}
-                  {ready && it.post && (
-                    postOpen === it.key ? (
-                      <div className="proj-post">
-                        {igtt.length === 0 && <span className="muted tiny">Connect Instagram or TikTok to post.</span>}
-                        {igtt.map(a => (
-                          <button key={a.id} className="chip" style={{ fontSize: 11 }} onClick={() => { it.post([a.id]); setPostOpen(null) }}>
-                            <span className="status-dot" style={{ background: platformDot(a.platform) }} />@{a.username}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null
+                  {ready && it.post && postOpen === it.key && (
+                    <div className="proj-post">
+                      {igtt.length === 0
+                        ? <span className="muted tiny">Connect Instagram or TikTok to post.</span>
+                        : (<>
+                          <textarea className="field" rows={2} value={postCaption} onChange={e => setPostCaption(e.target.value)} placeholder="Caption…" style={{ minHeight: 48, fontSize: 12, resize: 'vertical' }} />
+                          <div className="muted tiny" style={{ marginBottom: 2 }}>Post to:</div>
+                          {igtt.map(a => (
+                            <button key={a.id} className="chip" style={{ fontSize: 11 }} onClick={() => { it.post([a.id], postCaption); setPostOpen(null) }}>
+                              <span className="status-dot" style={{ background: platformDot(a.platform) }} />@{a.username}
+                            </button>
+                          ))}
+                        </>)}
+                    </div>
                   )}
                 </div>
                 <div className="proj-actions">
                   {it.edit && <button className="mini" onClick={it.edit}><Pencil size={11} /> Edit</button>}
-                  {ready && it.post && <button className="mini" onClick={() => setPostOpen(o => o === it.key ? null : it.key)}><Upload size={11} /> Post</button>}
+                  {ready && it.post && <button className="mini" onClick={() => { const opening = postOpen !== it.key; setPostOpen(opening ? it.key : null); if (opening) setPostCaption(it.caption || '') }}><Upload size={11} /> Post</button>}
                   <button className="mini danger" onClick={it.del}><Trash2 size={12} /></button>
                 </div>
               </div>
@@ -4140,9 +4144,9 @@ function App({ session }) {
     setBanner('Uploaded — ready to clip'); return d.url
   }
   async function deleteClipJob(id) { if (!await askConfirm({ title: 'Delete clip job?', body: 'This removes the job and its rendered clips.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/clips', { method: 'DELETE', body: JSON.stringify({ id }) }); loadClips() }
-  async function postClip(job_id, clip_index, account_ids) {
+  async function postClip(job_id, clip_index, account_ids, caption) {
     setBanner('Posting clip…')
-    const r = await authed('/api/clips', { method: 'POST', body: JSON.stringify({ action: 'post', job_id, clip_index, account_ids }) }); const d = await r.json()
+    const r = await authed('/api/clips', { method: 'POST', body: JSON.stringify({ action: 'post', job_id, clip_index, account_ids, caption }) }); const d = await r.json()
     setBanner(d.error || 'Clip posted')
   }
   async function deleteVideo(id) { if (!await askConfirm({ title: 'Delete video?', confirmLabel: 'Delete', danger: true })) return; await authed('/api/video', { method: 'DELETE', body: JSON.stringify({ id }) }); loadVideos() }
@@ -5416,6 +5420,7 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .proj-status.ok { background: #E7F3EC; color: #2E7D46; }
 .proj-status.bad { background: #FBEAEA; color: #B3372F; }
 .proj-post { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.proj-post textarea { flex-basis: 100%; }
 .proj-actions { display: flex; justify-content: flex-end; gap: 6px; padding: 6px 9px 9px; }
 /* video scene editor */
 .vse { width: 540px; max-width: 100%; }
