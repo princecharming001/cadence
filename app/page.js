@@ -3314,14 +3314,21 @@ const VSE_STYLES = [['bold', 'Bold'], ['minimal', 'Minimal'], ['editorial', 'Edi
 // new directed job (parent_job_id lineage) and never touches the original. Only
 // controls the render engine actually honors are exposed (text, duration, scene
 // order, style) — captions/transitions/motion arrive when the engine does.
+const rid = () => 'n_' + Date.now().toString(36) + Math.round(Math.random() * 1e6).toString(36)
+const sceneSecs = s => s.duration != null ? Number(s.duration) || 0 : (s.kind === 'card' || s.kind === 'color') ? 3 : 5
+// Strip editor-only fields (e.g. the swap-undo pointer) before the plan is sent.
+const stripPlan = p => ({ ...p, scenes: p.scenes.map(({ orig_url, ...s }) => s) }) // eslint-disable-line
+
 function VideoSceneEditor({ job, authed, onRerendered, onClose }) {
   const lifted = !(job.mode === 'directed' && job.edit_plan?.scenes?.length)
   const initial = useMemo(() => lifted
     ? { version: 1, aspect: job.aspect || 'vertical', captions: 'off', style_key: job.style_key || 'bold', scenes: [{ id: 's0', kind: 'clip', url: job.video_url, query: null, asset_id: null, duration: 15, transition: 'cut', motion: null, caption_text: null }] }
-    : JSON.parse(JSON.stringify(job.edit_plan)), [job, lifted])
+    : JSON.parse(JSON.stringify(job.edit_plan)), [job.id]) // eslint-disable-line
   const [plan, setPlan] = useState(initial)
   const [newJobId, setNewJobId] = useState(null)
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
+  const [downgrades, setDowngrades] = useState([])
+  const [srcLong, setSrcLong] = useState(false) // a lifted source longer than the 15s scene cap
   const rendered = useVideoJob(newJobId, authed, !!newJobId)
   const doneRef = useRef(false)
   useEffect(() => { if (rendered?.status === 'done' && !doneRef.current) { doneRef.current = true; onRerendered && onRerendered() } }, [rendered?.status]) // eslint-disable-line
@@ -3329,15 +3336,26 @@ function VideoSceneEditor({ job, authed, onRerendered, onClose }) {
   const setScene = (i, patch) => setPlan(p => ({ ...p, scenes: p.scenes.map((s, j) => j === i ? { ...s, ...patch } : s) }))
   const move = (i, d) => setPlan(p => { const a = p.scenes.slice(); const j = i + d; if (j < 0 || j >= a.length) return p;[a[i], a[j]] = [a[j], a[i]]; return { ...p, scenes: a } })
   const del = i => setPlan(p => p.scenes.length <= 1 ? p : ({ ...p, scenes: p.scenes.filter((_, j) => j !== i) }))
-  const add = kind => setPlan(p => p.scenes.length >= 6 ? p : ({ ...p, scenes: [...p.scenes, kind === 'card' ? { id: 'n' + p.scenes.length + '_' + Math.round(Date.now() % 1e6), kind: 'card', heading: 'New card', body: null, duration: 3, transition: 'cut', motion: null } : { id: 'n' + p.scenes.length + '_' + Math.round(Date.now() % 1e6), kind: 'clip', query: '', url: null, asset_id: null, duration: 4, transition: 'cut', motion: null }] }))
+  const add = kind => setPlan(p => p.scenes.length >= 6 ? p : ({ ...p, scenes: [...p.scenes, kind === 'card' ? { id: rid(), kind: 'card', heading: 'New card', body: null, duration: 3, transition: 'cut', motion: null } : { id: rid(), kind: 'clip', query: '', url: null, asset_id: null, duration: 4, transition: 'cut', motion: null }] }))
+  const totalSecs = Math.round(plan.scenes.reduce((a, s) => a + sceneSecs(s), 0))
 
   async function rerender() {
-    if (busy || !plan.scenes.length) { if (!plan.scenes.length) setErr('Add at least one scene.'); return }
-    setErr(''); setBusy(true)
-    const r = await authed('/api/video', { method: 'POST', body: JSON.stringify({ mode: 'directed', edit_plan: plan, prompt: job.prompt || '', parent_job_id: job.id }) })
-    const d = await r.json().catch(() => ({})); setBusy(false)
-    if (!r.ok || d.error) { setErr(d.error || 'Could not start the re-render.'); return }
-    setNewJobId(d.job.id)
+    if (busy) return
+    if (!plan.scenes.length) { setErr('Add at least one scene.'); return }
+    // Mirror the server's drop rule: a clip with no footage source (after a swap
+    // with no query typed) would be silently dropped, shrinking the plan.
+    if (plan.scenes.some(s => (s.kind === 'clip' || !s.kind) && !s.url && !s.asset_id && !String(s.query || '').trim())) {
+      setErr('Every clip needs footage — type what to show, or use your own clip.'); return
+    }
+    setErr(''); setDowngrades([]); setBusy(true)
+    try {
+      const r = await authed('/api/video', { method: 'POST', body: JSON.stringify({ mode: 'directed', edit_plan: stripPlan(plan), prompt: job.prompt || '', parent_job_id: job.id }) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || d.error) { setErr(d.error || 'Could not start the re-render.'); return }
+      if (Array.isArray(d.downgrades) && d.downgrades.length) setDowngrades(d.downgrades)
+      setNewJobId(d.job.id)
+    } catch { setErr('Could not reach the server — try again.') }
+    finally { setBusy(false) }
   }
 
   return (
@@ -3350,6 +3368,7 @@ function VideoSceneEditor({ job, authed, onRerendered, onClose }) {
 
         {newJobId ? (
           <div className="vse-rendering">
+            {downgrades.length > 0 && rendered?.status !== 'failed' && <div className="vse-note" style={{ marginBottom: 10 }}>Heads up: {downgradeText(downgrades)}</div>}
             {rendered?.status === 'done'
               ? (<><video className="mp-video" src={rendered.video_url} controls playsInline preload="metadata" style={{ marginBottom: 12 }} /><div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>Your edited version is ready — it’s in Projects.</div><button className="btn-primary btn-sm" onClick={onClose}>Done</button></>)
               : rendered?.status === 'failed' ? (<><div className="notice" style={{ color: '#B3372F' }}>{rendered.error || 'The re-render failed.'}</div><button className="btn-ghost btn-sm" style={{ marginTop: 10 }} onClick={() => { doneRef.current = false; setNewJobId(null) }}>Back to edit</button></>)
@@ -3358,38 +3377,50 @@ function VideoSceneEditor({ job, authed, onRerendered, onClose }) {
           </div>
         ) : (
           <>
-            <div className="muted tiny" style={{ marginBottom: 10 }}>{lifted ? 'Editing your video as scenes — add a hook card, more b-roll, or trim. The original stays in Projects.' : 'Reorder, retitle, swap footage or trim each scene. Scenes are short (≤15s).'}</div>
+            <div className="muted tiny" style={{ marginBottom: 10 }}>{lifted ? 'Editing your video as scenes — add a hook card, more b-roll, or trim. The original stays in Projects, untouched.' : 'Reorder, retitle, swap footage or trim each scene.'}</div>
+            {srcLong && <div className="vse-note" style={{ marginBottom: 10 }}>Your original is longer than one scene — re-rendering composes scenes of up to 15s each, so a long clip is trimmed. The original stays safe in Projects.</div>}
             <div className="vse-scenes">
-              {plan.scenes.map((s, i) => (
-                <div className="vse-scene" key={s.id || i}>
-                  <span className="vse-num">{i + 1}</span>
-                  <div className="vse-fields">
-                    <span className="vse-kind">{s.kind === 'card' || s.kind === 'color' ? 'Text card' : 'Clip'}</span>
-                    {(s.kind === 'card' || s.kind === 'color') ? (
-                      <>
-                        <input className="field" value={s.heading || ''} maxLength={80} onChange={e => setScene(i, { kind: 'card', heading: e.target.value })} placeholder="Big line" />
-                        <input className="field" value={s.body || ''} maxLength={160} onChange={e => setScene(i, { body: e.target.value })} placeholder="Subtext (optional)" />
-                      </>
-                    ) : (s.url && !s.query) ? (
-                      <div className="row" style={{ gap: 8 }}><span className="muted tiny">Your footage</span><button className="mini" onClick={() => setScene(i, { query: '', url: null })}>Swap for stock…</button></div>
-                    ) : (
-                      <input className="field" value={s.query || ''} onChange={e => setScene(i, { query: e.target.value, url: null })} placeholder="B-roll to show (e.g. coffee pour cafe)" />
-                    )}
-                    <div className="vse-row">
-                      <label className="vse-dur">Length <input type="number" min="1" max="15" value={s.duration || ''} onChange={e => setScene(i, { duration: Math.min(Math.max(Number(e.target.value) || 1, 1), 15) })} />s</label>
-                      <span style={{ flex: 1 }} />
-                      <button className="vse-ic" title="Move up" disabled={i === 0} onClick={() => move(i, -1)}><ChevronDown size={14} style={{ transform: 'rotate(180deg)' }} /></button>
-                      <button className="vse-ic" title="Move down" disabled={i === plan.scenes.length - 1} onClick={() => move(i, 1)}><ChevronDown size={14} /></button>
-                      <button className="vse-ic danger" title="Delete scene" disabled={plan.scenes.length <= 1} onClick={() => del(i)}><Trash2 size={13} /></button>
+              {plan.scenes.map((s, i) => {
+                const isCard = s.kind === 'card' || s.kind === 'color'
+                return (
+                  <div className="vse-scene" key={s.id || i}>
+                    <span className="vse-num">{i + 1}</span>
+                    {isCard
+                      ? <div className={'vse-thumb vse-thumb-card sty-' + (s.style_key || plan.style_key || 'bold')}><b>{(s.heading || 'Aa').slice(0, 14)}</b></div>
+                      : (s.url && !s.query)
+                        ? <video className="vse-thumb" src={s.url} muted playsInline preload="metadata" onLoadedMetadata={lifted && i === 0 ? (e => { if (e.target.duration > 15.5) setSrcLong(true) }) : undefined} />
+                        : <div className="vse-thumb vse-thumb-q"><Film size={16} /></div>}
+                    <div className="vse-fields">
+                      <span className="vse-kind">{isCard ? 'Text card' : 'Clip'}</span>
+                      {isCard ? (
+                        <>
+                          <input className="field" value={s.heading || ''} maxLength={80} onChange={e => setScene(i, { kind: 'card', heading: e.target.value })} placeholder="Big line" />
+                          <input className="field" value={s.body || ''} maxLength={160} onChange={e => setScene(i, { body: e.target.value })} placeholder="Subtext (optional)" />
+                        </>
+                      ) : (s.url && !s.query) ? (
+                        <div className="row" style={{ gap: 8 }}><span className="muted tiny">Your footage</span><button className="mini" onClick={() => setScene(i, { query: '', url: null, orig_url: s.url })}>Swap for stock…</button></div>
+                      ) : (
+                        <>
+                          <input className="field" value={s.query || ''} onChange={e => setScene(i, { query: e.target.value, url: null })} placeholder="B-roll to show (e.g. coffee pour cafe)" />
+                          {s.orig_url && <button className="vse-restore" onClick={() => setScene(i, { url: s.orig_url, query: null, orig_url: null })}>↩ Use my footage again</button>}
+                        </>
+                      )}
+                      <div className="vse-row">
+                        <label className="vse-dur">Length <input type="number" inputMode="numeric" min="1" max="15" value={s.duration || ''} onChange={e => setScene(i, { duration: Math.min(Math.max(Number(e.target.value) || 1, 1), 15) })} />s</label>
+                        <span style={{ flex: 1 }} />
+                        <button className="vse-ic" title="Move up" disabled={i === 0} onClick={() => move(i, -1)}><ChevronDown size={14} style={{ transform: 'rotate(180deg)' }} /></button>
+                        <button className="vse-ic" title="Move down" disabled={i === plan.scenes.length - 1} onClick={() => move(i, 1)}><ChevronDown size={14} /></button>
+                        <button className="vse-ic danger" title="Delete scene" disabled={plan.scenes.length <= 1} onClick={() => del(i)}><Trash2 size={13} /></button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
             <div className="vse-add">
               <button className="sc-chip" disabled={plan.scenes.length >= 6} onClick={() => add('card')}><Plus size={12} /> Text card</button>
               <button className="sc-chip" disabled={plan.scenes.length >= 6} onClick={() => add('clip')}><Plus size={12} /> B-roll clip</button>
-              <span className="muted tiny" style={{ marginLeft: 'auto' }}>{plan.scenes.length}/6 scenes</span>
+              <span className="muted tiny" style={{ marginLeft: 'auto' }}>~{totalSecs}s · {plan.scenes.length}/6 scenes</span>
             </div>
             <div className="vse-global">
               <span className="muted tiny" style={{ flex: 'none' }}>Style</span>
@@ -3405,6 +3436,16 @@ function VideoSceneEditor({ job, authed, onRerendered, onClose }) {
       </motion.div>
     </motion.div>
   )
+}
+
+// Friendly one-liner for the normalizer's downgrade list (ai_video->clip, etc.).
+function downgradeText(downgrades = []) {
+  const txt = downgrades.map(d => String(d)).join(' ')
+  const bits = []
+  if (/ai_video|avatar|->\s*clip|->\s*card|generat/i.test(txt)) bits.push('an AI scene was swapped for stock b-roll (generated video isn’t switched on)')
+  if (/drop/i.test(txt)) bits.push('a scene with no footage was dropped')
+  if (/aspect/i.test(txt)) bits.push('the aspect was set to vertical')
+  return (bits.length ? bits.join('; ') : 'some scenes were adjusted to render') + '.'
 }
 
 // Carousel editor — drops the existing SlideEditor into a modal; Save persists to
@@ -3428,8 +3469,8 @@ function CarouselEditModal({ slideshow, authed, onSaved, onClose }) {
           <button className="x-close" onClick={onClose}><LX size={18} /></button>
         </div>
         <SlideEditor slides={slideshow.slides} imageUrls={slideshow.image_urls} style={slideshow.style} format={slideshow.format} handle={slideshow.handle} authed={authed} onChange={(s, u) => setDraft({ slides: s, image_urls: u })} />
-        <label className="cp-l" style={{ marginTop: 10 }}>Caption</label>
-        <textarea className="field dp-text" rows={2} value={caption} onChange={e => setCaption(e.target.value)} placeholder="Caption…" />
+        <label className="se-label">Caption</label>
+        <textarea className="field" rows={2} value={caption} onChange={e => setCaption(e.target.value)} placeholder="Caption…" style={{ minHeight: 52, resize: 'vertical' }} />
         {err && <div className="notice" style={{ color: '#B3372F', marginTop: 8 }}>{err}</div>}
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
           <button className="btn-ghost btn-sm" onClick={onClose}>Cancel</button>
@@ -3444,35 +3485,69 @@ function Projects({ slideshows = [], clipJobs = [], videoJobs = [], socialAccoun
   const [filter, setFilter] = useState('all')      // all | carousel | clip | video
   const [postOpen, setPostOpen] = useState(null)   // item key whose account-picker is open
   const [editing, setEditing] = useState(null)     // { kind:'carousel'|'video', raw }
-  const igtt = socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform))
 
-  // Collapse re-render lineages: a directed edit is a new job pointing back at its
-  // parent — show only the newest per lineage so edits replace in place.
-  const byId = new Map(videoJobs.map(v => [v.id, v]))
-  const rootOf = v => { let r = v, hops = 0; while (r.parent_job_id && byId.has(r.parent_job_id) && hops++ < 20) r = byId.get(r.parent_job_id); return r.id }
-  const newestByRoot = new Map()
-  for (const v of videoJobs) { const root = rootOf(v); const cur = newestByRoot.get(root); if (!cur || new Date(v.created_at || 0) > new Date(cur.created_at || 0)) newestByRoot.set(root, v) }
-  const shownVideos = [...newestByRoot.values()]
+  // While any video is rendering, poll the list so directed renders advance
+  // promptly (mirrors the clip poll); stops once everything is terminal.
+  useEffect(() => {
+    if (!onReloadVideos || !videoJobs.some(j => ['queued', 'processing', 'rendering'].includes(j.status))) return
+    const t = setInterval(onReloadVideos, 4000)
+    return () => clearInterval(t)
+  }, [videoJobs, onReloadVideos])
 
-  const items = []
-  for (const s of slideshows) {
-    items.push({ key: 'ss' + s.id, kind: 'carousel', badge: 'Carousel', when: s.created_at || s.scheduled_for, status: s.status || 'draft', title: s.title || s.topic || 'Carousel', thumb: s.image_urls?.[0], meta: `${s.image_urls?.length || 0} slides`, edit: (s.status || 'draft') === 'draft' ? () => setEditing({ kind: 'carousel', raw: s }) : null, del: () => onDeleteSlideshow(s.id) })
-  }
-  for (const j of clipJobs) {
-    if (j.status === 'done' && Array.isArray(j.clips) && j.clips.length) {
-      j.clips.forEach((c, i) => items.push({ key: 'cl' + j.id + '_' + i, kind: 'clip', badge: 'Clip', when: j.created_at, status: 'ready', title: c.title || j.source_name || 'Clip', video: c.url, meta: c.end != null && c.start != null ? `${Math.round(c.end - c.start)}s` : '', post: ids => onPostClip(j.id, i, ids), edit: () => setEditing({ kind: 'video', raw: { mode: 'clip', video_url: c.url, aspect: 'vertical', style_key: 'bold', prompt: c.title || j.source_name || '', id: null } }), del: () => onDeleteClip(j.id) }))
-    } else {
-      items.push({ key: 'cl' + j.id, kind: 'clip', badge: 'Clip', when: j.created_at, status: j.status, title: j.source_name || 'Clip', detail: j.status_detail, error: j.error, del: () => onDeleteClip(j.id) })
+  // Build the gallery once per data change (not per keystroke / filter toggle).
+  const { items, counts, igtt } = useMemo(() => {
+    const igtt = socialAccounts.filter(a => ['instagram', 'tiktok'].includes(a.platform))
+
+    // Collapse re-render lineages. A directed edit is a new job pointing back at
+    // its parent; show the newest DONE render per lineage as the card so a failed
+    // or in-flight clone can NEVER bury the proven original — a more-recent
+    // non-done clone is surfaced as a note ON that card (re-rendering / retry).
+    const byId = new Map(videoJobs.map(v => [v.id, v]))
+    const rootOf = v => { let r = v, hops = 0; while (r.parent_job_id && byId.has(r.parent_job_id) && hops++ < 20) r = byId.get(r.parent_job_id); return r.id }
+    const newer = (a, b) => new Date(a?.created_at || 0) > new Date(b?.created_at || 0)
+    const lineage = new Map() // root -> { newest, newestDone }
+    for (const v of videoJobs) {
+      const root = rootOf(v)
+      const cur = lineage.get(root) || { newest: null, newestDone: null }
+      if (newer(v, cur.newest)) cur.newest = v
+      if (v.status === 'done' && newer(v, cur.newestDone)) cur.newestDone = v
+      lineage.set(root, cur)
     }
-  }
-  for (const v of shownVideos) {
-    const badge = v.mode === 'directed' ? 'Video' : v.mode === 'ugc' ? 'Avatar' : v.mode === 'edit' ? 'Edit' : 'AI video'
-    const ready = v.status === 'done'
-    items.push({ key: 'vd' + v.id, kind: 'video', badge, edited: !!v.parent_job_id, when: v.created_at, status: ready ? 'ready' : v.status, title: v.prompt || v.script || badge, video: v.video_url, thumb: v.thumb_url, detail: v.status_detail === 'Ready' ? '' : v.status_detail, error: v.error, post: ids => onPostVideo(v.id, ids), edit: ready ? () => setEditing({ kind: 'video', raw: v }) : null, del: () => onDeleteVideo(v.id) })
-  }
-  items.sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0))
+
+    const items = []
+    for (const s of slideshows) {
+      items.push({ key: 'ss' + s.id, kind: 'carousel', badge: 'Carousel', when: s.created_at || s.scheduled_for, status: s.status || 'draft', title: s.title || s.topic || 'Carousel', thumb: s.image_urls?.[0], meta: `${s.image_urls?.length || 0} slides`, edit: (s.status || 'draft') === 'draft' ? () => setEditing({ kind: 'carousel', raw: s }) : null, del: () => onDeleteSlideshow(s.id) })
+    }
+    for (const j of clipJobs) {
+      if (j.status === 'done' && Array.isArray(j.clips) && j.clips.length) {
+        j.clips.forEach((c, i) => items.push({ key: 'cl' + j.id + '_' + i, kind: 'clip', badge: 'Clip', when: j.created_at, status: 'ready', title: c.title || j.source_name || 'Clip', video: c.url, meta: c.end != null && c.start != null ? `${Math.round(c.end - c.start)}s` : '', post: ids => onPostClip(j.id, i, ids), edit: () => setEditing({ kind: 'video', raw: { mode: 'clip', video_url: c.url, aspect: 'vertical', style_key: 'bold', prompt: c.title || j.source_name || '', id: null } }), del: () => onDeleteClip(j.id) }))
+      } else {
+        items.push({ key: 'cl' + j.id, kind: 'clip', badge: 'Clip', when: j.created_at, status: j.status, title: j.source_name || 'Clip', detail: j.status_detail, error: j.error, del: () => onDeleteClip(j.id) })
+      }
+    }
+    for (const { newest, newestDone } of lineage.values()) {
+      const v = newestDone || newest                                  // proven render wins; else its native state
+      const clone = newestDone && newest && newest.id !== newestDone.id ? newest : null
+      const rerendering = clone && ['queued', 'processing', 'rendering'].includes(clone.status) ? clone : null
+      const failedClone = clone && clone.status === 'failed' ? clone : null
+      const badge = v.mode === 'directed' ? 'Video' : v.mode === 'ugc' ? 'Avatar' : v.mode === 'edit' ? 'Edit' : 'AI video'
+      const ready = v.status === 'done'
+      items.push({
+        key: 'vd' + v.id, kind: 'video', badge, edited: !!v.parent_job_id, when: (clone || v).created_at,
+        status: ready ? 'ready' : v.status, title: v.prompt || v.script || badge, video: v.video_url, thumb: v.thumb_url,
+        detail: v.status_detail === 'Ready' ? '' : v.status_detail, error: v.status === 'failed' ? v.error : null,
+        rerendering: !!rerendering, rerenderDetail: rerendering?.status_detail,
+        retry: failedClone ? () => setEditing({ kind: 'video', raw: failedClone }) : null, retryError: failedClone?.error,
+        post: ids => onPostVideo(v.id, ids, v.prompt || v.script || ''),
+        edit: ready ? () => setEditing({ kind: 'video', raw: v }) : null, del: () => onDeleteVideo(v.id),
+      })
+    }
+    items.sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0))
+    const counts = { all: items.length, carousel: items.filter(i => i.kind === 'carousel').length, clip: items.filter(i => i.kind === 'clip').length, video: items.filter(i => i.kind === 'video').length }
+    return { items, counts, igtt }
+  }, [slideshows, clipJobs, videoJobs, socialAccounts]) // eslint-disable-line
+
   const shown = filter === 'all' ? items : items.filter(it => it.kind === filter)
-  const counts = { all: items.length, carousel: items.filter(i => i.kind === 'carousel').length, clip: items.filter(i => i.kind === 'clip').length, video: items.filter(i => i.kind === 'video').length }
 
   return (
     <div className="proj">
@@ -3511,6 +3586,8 @@ function Projects({ slideshows = [], clipJobs = [], videoJobs = [], socialAccoun
                   {pending && it.detail && <div className="muted tiny" style={{ marginTop: 4 }}>{it.detail}</div>}
                   {it.status === 'failed' && it.error && <div className="muted tiny" style={{ marginTop: 4, color: '#B3372F' }}>{it.error}</div>}
                   {it.status === 'needs_provider' && <div className="muted tiny" style={{ marginTop: 4 }}>Generated video isn’t switched on.</div>}
+                  {it.rerendering && <div className="muted tiny" style={{ marginTop: 4 }}><Loader2 size={11} className="spin" style={{ verticalAlign: '-2px', marginRight: 4 }} />Re-rendering an edit…{it.rerenderDetail ? ` ${it.rerenderDetail}` : ''}</div>}
+                  {it.retry && <div className="muted tiny" style={{ marginTop: 4, color: '#B3372F' }}>Last re-render failed{it.retryError ? ` — ${it.retryError}` : ''}. <button className="vse-restore" onClick={it.retry}>Retry</button></div>}
                   {ready && it.post && (
                     postOpen === it.key ? (
                       <div className="proj-post">
@@ -3526,7 +3603,7 @@ function Projects({ slideshows = [], clipJobs = [], videoJobs = [], socialAccoun
                 </div>
                 <div className="proj-actions">
                   {it.edit && <button className="mini" onClick={it.edit}><Pencil size={11} /> Edit</button>}
-                  {ready && it.post && igtt.length > 0 && <button className="mini" onClick={() => setPostOpen(o => o === it.key ? null : it.key)}><Upload size={11} /> Post</button>}
+                  {ready && it.post && <button className="mini" onClick={() => setPostOpen(o => o === it.key ? null : it.key)}><Upload size={11} /> Post</button>}
                   <button className="mini danger" onClick={it.del}><Trash2 size={12} /></button>
                 </div>
               </div>
@@ -5357,6 +5434,22 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .vse-add { display: flex; align-items: center; gap: 7px; margin-top: 10px; }
 .vse-global { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .vse-rendering { padding: 8px 0 4px; text-align: center; }
+.vse-thumb { width: 42px; height: 60px; border-radius: 8px; object-fit: cover; flex: none; border: 1px solid var(--line); background: var(--surface); }
+.vse-thumb-card, .vse-thumb-q { display: flex; align-items: center; justify-content: center; text-align: center; overflow: hidden; color: var(--muted); }
+.vse-thumb-card b { font-size: 8px; line-height: 1.15; font-weight: 800; padding: 3px; word-break: break-word; }
+.vse-thumb-card.sty-bold { background: #111113; color: #D4A017; }
+.vse-thumb-card.sty-minimal { background: #F5F1E8; color: #111113; }
+.vse-thumb-card.sty-editorial { background: #fff; color: #111113; font-style: italic; }
+.vse-thumb-card.sty-gradient { background: linear-gradient(135deg, #6366F1, #EC4899); color: #fff; }
+.vse-thumb-card.sty-mint { background: #D9F2E6; color: #0F5132; }
+.vse-restore { align-self: flex-start; background: none; border: none; padding: 2px 0; font-family: inherit; font-size: 11.5px; color: #B5891A; cursor: pointer; }
+.vse-restore:hover { text-decoration: underline; }
+.vse-note { font-size: 12px; line-height: 1.4; color: #7A5B12; background: #FBF3DC; border: 1px solid #EBD9A8; border-radius: 9px; padding: 7px 10px; text-align: left; }
+@media (max-width: 600px) {
+  .vse { width: 100%; }
+  .vse-scene { flex-wrap: wrap; }
+  .vse-row { flex-wrap: wrap; }
+}
 .ss-thumb { width: 46px; height: 58px; border-radius: 6px; object-fit: cover; flex: none; border: 1px solid var(--line); }
 /* collapsible sections + clip studio */
 .sec-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 14px; background: none; border: none; cursor: pointer; font-family: inherit; text-align: left; }

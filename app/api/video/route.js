@@ -36,11 +36,15 @@ export async function POST(req) {
     if (!job || !job.video_url) return Response.json({ error: 'Video not ready.' }, { status: 404 })
     const { data: accts } = await admin.from('social_accounts').select('*').eq('user_id', user.id).in('id', b.account_ids || [])
     if (!accts?.length) return Response.json({ error: 'Pick at least one account.' }, { status: 400 })
+    // Caption default: never publish a blank Reel/TikTok — fall back to the job's
+    // prompt/script (what the gallery already shows as the title) when the client
+    // omits a caption.
+    const caption = String(b.caption ?? job.prompt ?? job.script ?? '').slice(0, 2200)
     try {
       const r = await createPost({
         userId: user.id, accounts: accts,
-        content: b.caption ?? '', mediaUrls: [],
-        scheduledFor: b.scheduled_for || undefined, title: (b.caption || 'Video').slice(0, 80),
+        content: caption, mediaUrls: [],
+        scheduledFor: b.scheduled_for || undefined, title: (caption || 'Video').slice(0, 80),
         videoUrl: job.video_url,
       })
       return Response.json({ posted: true, id: r.id })
@@ -54,7 +58,17 @@ export async function POST(req) {
   // original; parent_job_id carries lineage so the gallery replaces in place).
   if (b.mode === 'directed') {
     const brief = String(b.prompt || '').slice(0, 300)
-    const { plan } = normalizeEditPlan(b.edit_plan, { brief, wantsGen: wantsGenerative(brief), genReady: false })
+    // Bound runaway spend (each render is a long ffmpeg pass + stock re-hosting):
+    // cap concurrent in-flight directed renders per user. Also dedupes a double
+    // click on Re-render, which would otherwise queue identical clones.
+    const { count: inflight } = await admin.from('video_jobs').select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id).eq('mode', 'directed').in('status', ['queued', 'processing', 'rendering'])
+    if ((inflight || 0) >= 3) return Response.json({ error: 'A couple of edits are still rendering — give them a moment, then try again.' }, { status: 429 })
+    // genReady stays false: the render engine has no AI-scene renderer yet (Phase 4),
+    // so the normalizer downgrades ai_video/avatar scenes to stock/cards. We return
+    // the downgrades so the editor can tell the user when the result will differ
+    // from what they composed (never a silent swap).
+    const { plan, downgrades } = normalizeEditPlan(b.edit_plan, { brief, wantsGen: wantsGenerative(brief), genReady: false })
     if (!plan.scenes.length) return Response.json({ error: 'The edit has no scenes.' }, { status: 400 })
     let parent = typeof b.parent_job_id === 'string' && b.parent_job_id ? b.parent_job_id : null
     if (parent) { const { data: p } = await admin.from('video_jobs').select('id').eq('id', parent).eq('user_id', user.id).single(); if (!p) parent = null }
@@ -65,7 +79,7 @@ export async function POST(req) {
     if (error) return Response.json({ error: error.message }, { status: 500 })
     const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
     fetch(`${base}/api/video/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
-    return Response.json({ job })
+    return Response.json({ job, downgrades })
   }
 
   // Create a render job.
