@@ -14,6 +14,7 @@ import { after } from 'next/server'
 import { admin } from '@/lib/supabase'
 import { postOne } from '@/lib/posting'
 import { refreshPostMetrics } from '@/lib/post-metrics'
+import { attachRenderedVideos } from '@/lib/video'
 import { runDueBrandLearning } from '@/lib/brand-learning'
 import { runDueCampaignSentiment } from '@/lib/campaign-sentiment'
 import { runDueCampaignLearning } from '@/lib/campaign-learning'
@@ -89,6 +90,7 @@ export async function GET(req) {
   after(async () => {
     await fetch(`${base}/api/clips/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
     await fetch(`${base}/api/video/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {}) // render queued generated-video jobs (backstop)
+    await attachRenderedVideos().catch(() => {}) // attach finished UGC talking-heads to their placeholder posts
     await fetch(`${base}/api/media/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {}) // analyze queued library videos
     await refreshPostMetrics().catch(() => {}) // pull engagement back onto published posts
     // Engagement → memory: distill fresh results (numbers + audience comments +

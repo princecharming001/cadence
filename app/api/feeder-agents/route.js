@@ -1,6 +1,6 @@
 // /api/feeder-agents — CRUD + run-now + persona re-roll for feeder-account agents.
 import { admin, getUser, isCron } from '@/lib/supabase'
-import { buildAgentPersona, agentAvatar, refreshAgentStats, runDueFeederAgents, runFeederAgentById } from '@/lib/feeder-agents'
+import { buildAgentPersona, agentAvatar, refreshAgentStats, runDueFeederAgents, runFeederAgentById, provisionSoulRef, pickUgcVoice } from '@/lib/feeder-agents'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // a think-cycle does several LLM calls + X reads
@@ -8,6 +8,7 @@ export const maxDuration = 300 // a think-cycle does several LLM calls + X reads
 // campaign_id is no longer patched here — assignment is many-to-many, managed
 // via /api/agent-campaigns { action:'assign'|'unassign' }.
 const EDITABLE = ['interests', 'support_primary', 'posts_per_day', 'replies_per_day', 'interval_hours', 'auto_post', 'active']
+const FEEDER_TYPES = ['standard', 'faceless', 'ugc_influencer']
 const clampInt = (v, lo, hi, dflt) => Math.min(hi, Math.max(lo, parseInt(v, 10) || dflt))
 
 function clean(body) {
@@ -85,6 +86,7 @@ export async function POST(req) {
   // Create: one agent per account, owner-verified. X agents take a feeder
   // x_connection; LinkedIn/IG/TikTok agents take a Zernio social account.
   const interests = String(body.interests || '').slice(0, 400)
+  const feederType = FEEDER_TYPES.includes(body.feeder_type) ? body.feeder_type : 'standard'
   const campaignId = body.campaign_id || null
   if (campaignId) {
     const { data: camp } = await admin.from('agent_campaigns').select('id').eq('id', campaignId).eq('user_id', user.id).single()
@@ -97,16 +99,22 @@ export async function POST(req) {
       .select('id, username, platform').eq('id', body.social_account_id).eq('user_id', user.id).single()
     if (!acct) return Response.json({ error: 'That account is not connected.' }, { status: 404 })
     if (!ZERNIO_PLATFORMS.includes(acct.platform)) return Response.json({ error: 'Agents support X, LinkedIn, Instagram, and TikTok accounts.' }, { status: 400 })
-    const persona = await buildAgentPersona({ interests, handle: acct.username || acct.platform, platform: acct.platform })
-    insert = { user_id: user.id, social_account_id: acct.id, platform: acct.platform, interests, persona, name: persona.name, active: false, support_primary: false, avatar_url: await agentAvatar(persona, user.id) }
+    const persona = await buildAgentPersona({ interests, handle: acct.username || acct.platform, platform: acct.platform, feederType })
+    insert = { user_id: user.id, social_account_id: acct.id, platform: acct.platform, feeder_type: feederType, interests, persona, name: persona.name, active: false, support_primary: false, avatar_url: await agentAvatar(persona, user.id) }
   } else {
     if (!body.x_connection_id) return Response.json({ error: 'Pick an account for the agent.' }, { status: 400 })
     const { data: conn } = await admin.from('x_connections')
       .select('id, username, is_primary').eq('id', body.x_connection_id).eq('user_id', user.id).single()
     if (!conn) return Response.json({ error: 'That X account is not connected.' }, { status: 404 })
     if (conn.is_primary) return Response.json({ error: 'Agents run on feeder accounts — your primary stays yours.' }, { status: 400 })
-    const persona = await buildAgentPersona({ interests, handle: conn.username })
-    insert = { user_id: user.id, x_connection_id: conn.id, platform: 'x', interests, persona, name: persona.name, active: false, avatar_url: await agentAvatar(persona, user.id) }
+    const persona = await buildAgentPersona({ interests, handle: conn.username, feederType })
+    insert = { user_id: user.id, x_connection_id: conn.id, platform: 'x', feeder_type: feederType, interests, persona, name: persona.name, active: false, avatar_url: await agentAvatar(persona, user.id) }
+  }
+  // A ugc_influencer needs a CONSISTENT face + voice reused across every video —
+  // lock them once at creation (P7 drives the talking-head renders from these).
+  if (feederType === 'ugc_influencer') {
+    insert.soul_ref = await provisionSoulRef(insert.persona, user.id)
+    insert.voice_id = pickUgcVoice(insert.persona)
   }
   if (campaignId) insert.campaign_id = campaignId
 
