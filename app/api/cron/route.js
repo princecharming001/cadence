@@ -16,6 +16,7 @@ import { postOne } from '@/lib/posting'
 import { refreshPostMetrics } from '@/lib/post-metrics'
 import { runDueBrandLearning } from '@/lib/brand-learning'
 import { runDueCampaignSentiment } from '@/lib/campaign-sentiment'
+import { runDueCampaignLearning } from '@/lib/campaign-learning'
 import { runDueEngagement } from '@/lib/engagement'
 import { runDueBrandCampaigns } from '@/lib/brand-campaigns'
 import { runDueSocialEngagement } from '@/lib/social-engagement'
@@ -98,6 +99,10 @@ export async function GET(req) {
     // each active campaign's posts (aspect-based sentiment + emotion + sarcasm
     // gate) so the campaign-learning loop and dashboard see what the audience feels.
     await runDueCampaignSentiment({ limit: 5 }).catch(() => {})
+    // Campaign intelligence — quantitative half: distill the fleet's per-platform,
+    // reach-normalized results + the sentiment rollup into durable campaign_memory
+    // learnings that flow back into every agent's mission. Runs AFTER sentiment.
+    await runDueCampaignLearning({ limit: 5 }).catch(() => {})
     // Intrinsic daily trend detection: harvest a few stale users' niches so
     // fresh viral formats feed generation without anyone pressing a button.
     await harvestDueTrends({ limit: 3, deepN: 2 }).catch(() => {})
