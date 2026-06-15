@@ -5,6 +5,7 @@ import { X_RUBRIC, CHAT_STYLE } from '@/lib/rubric'
 import { recentFeedback, feedbackBlock } from '@/lib/feedback'
 import { voiceBlock, enforceLen, LINKEDIN_RUBRIC } from '@/lib/prompts'
 import { generateSlideshow } from '@/lib/slideshow'
+import { getBrandMemory } from '@/lib/brand-memory'
 import { createPost, zernioEnabled } from '@/lib/zernio'
 import { runSocialEngagement, SOCIAL_ENGAGEMENT_PLATFORMS } from '@/lib/social-engagement'
 import { analyzeViralVideo, analyzeViralText, trendingBlock } from '@/lib/trends'
@@ -507,8 +508,8 @@ async function executeTool(name, input, userId) {
 
     case 'generate_slideshow': {
       if (!input.topic) return { error: 'topic required' }
-      const { data: persona } = await admin.from('personas').select('*').eq('user_id', userId).single()
-      const deck = await generateSlideshow({ topic: input.topic, format: input.format || 'listicle', style: input.style || 'bold', slides: input.slides || 6, persona, userId })
+      const mem = await getBrandMemory(userId, { platform: 'instagram', includeTrends: false, includeContext: false })
+      const deck = await generateSlideshow({ topic: input.topic, format: input.format || 'listicle', style: input.style || 'bold', slides: input.slides || 6, persona: mem.persona, userId, memory: mem.memoryBlock({ withContext: false, withTrends: false }) })
       const row = { user_id: userId, topic: input.topic, format: deck.format, style: deck.style, slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls, status: 'draft' }
       let result = 'saved as a draft in the Slideshows tab'
       if (input.post_to?.length) {
@@ -1000,8 +1001,8 @@ NON-NEGOTIABLES: never publish (everything renders inline for the user to pick a
             if (!block.input.topic) { result = { error: 'topic required' } }
             else {
               try {
-                const { data: persona } = await admin.from('personas').select('*').eq('user_id', user.id).single()
-                const deck = await generateSlideshow({ topic: block.input.topic, format: block.input.format || 'listicle', style: block.input.style || 'bold', slides: block.input.slides || 6, persona, userId: user.id })
+                const mem = await getBrandMemory(user.id, { platform: 'instagram', includeTrends: false, includeContext: false })
+                const deck = await generateSlideshow({ topic: block.input.topic, format: block.input.format || 'listicle', style: block.input.style || 'bold', slides: block.input.slides || 6, persona: mem.persona, userId: user.id, memory: mem.memoryBlock({ withContext: false, withTrends: false }) })
                 proposals.push({ slideshow: { topic: block.input.topic, format: deck.format, style: deck.style, handle: deck.handle, slides: deck.slides, caption: deck.caption, image_urls: deck.imageUrls } })
                 result = { ok: true, slides: deck.imageUrls.length, note: 'Carousel rendered and shown inline for the user to review — they pick accounts and schedule/post/save. Do NOT also call generate_slideshow again.' }
               } catch (e) { result = { error: String(e.message || 'Could not build the carousel.').slice(0, 180) } }

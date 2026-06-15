@@ -3,6 +3,7 @@
 // Auth: the signed-in user, or Bearer CRON_SECRET (server/automation).
 import { admin, getUser, isCron } from '@/lib/supabase'
 import { generateSlideshow, SLIDE_STYLES, SLIDESHOW_FORMATS } from '@/lib/slideshow'
+import { getBrandMemory } from '@/lib/brand-memory'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120 // rendering several slides + AI can take a bit
@@ -13,7 +14,7 @@ export async function POST(req) {
   // Resolve the owner (real user, or a server caller acting on a given user_id).
   // isCron fails closed when CRON_SECRET is unset, so a real user is always
   // required there — an arbitrary body.user_id can never be honored otherwise.
-  let userId = null, persona = null
+  let userId = null, persona = null, memory = ''
   if (isCron(req)) {
     userId = body.user_id || null
   } else {
@@ -22,8 +23,11 @@ export async function POST(req) {
     userId = user.id
   }
   if (userId) {
-    const { data } = await admin.from('personas').select('*').eq('user_id', userId).single()
-    persona = data || null
+    // The shared brain — so a carousel carries the same voice, brand direction,
+    // and learned insights as every other surface.
+    const mem = await getBrandMemory(userId, { platform: 'instagram', includeTrends: false, includeContext: false })
+    persona = mem.persona
+    memory = mem.memoryBlock({ withContext: false, withTrends: false })
   }
 
   const topic = String(body.topic || '').trim()
@@ -34,7 +38,7 @@ export async function POST(req) {
   try {
     const out = await generateSlideshow({
       topic, format, style,
-      slides: body.slides, persona, handle: body.handle, userId,
+      slides: body.slides, persona, handle: body.handle, userId, memory,
       albumIds: Array.isArray(body.album_ids) ? body.album_ids : undefined,
     })
     return Response.json(out)
