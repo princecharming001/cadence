@@ -2,7 +2,7 @@
 // list, create (kicks the background worker), post a finished video, delete.
 import { admin, getUser } from '@/lib/supabase'
 import { createPost, zernioEnabled } from '@/lib/zernio'
-import { normalizeEditPlan, wantsGenerative } from '@/lib/edit-plan'
+import { normalizeEditPlanV2, wantsGenerative } from '@/lib/edit-plan'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -68,7 +68,7 @@ export async function POST(req) {
     // so the normalizer downgrades ai_video/avatar scenes to stock/cards. We return
     // the downgrades so the editor can tell the user when the result will differ
     // from what they composed (never a silent swap).
-    const { plan, downgrades } = normalizeEditPlan(b.edit_plan, { brief, wantsGen: wantsGenerative(brief), genReady: false })
+    const { plan, downgrades } = normalizeEditPlanV2(b.edit_plan, { brief, wantsGen: wantsGenerative(brief), genReady: false })
     if (!plan.scenes.length) return Response.json({ error: 'The edit has no scenes.' }, { status: 400 })
     let parent = typeof b.parent_job_id === 'string' && b.parent_job_id ? b.parent_job_id : null
     if (parent) { const { data: p } = await admin.from('video_jobs').select('id').eq('id', parent).eq('user_id', user.id).single(); if (!p) parent = null }
