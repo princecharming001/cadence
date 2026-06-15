@@ -1703,6 +1703,159 @@ function Stepper({ value, min = 1, max = 9, onChange }) {
 // first (drafts) vs Auto-post (hands-off). Both are gated server-side by the
 // onboarding gate (brief + connected account; auto-post also needs voice +
 // pillars). Comments live under Engage.
+// ── Instagram / TikTok visual autopilot ──────────────────────────────────────
+// Research-grounded MCQ options (archetype + goal are the master switches that
+// pre-set the format mix; minimal free-text).
+const IG_ARCHETYPES = [
+  { key: 'educator', emoji: '🎓', label: 'Educator', desc: 'Teach a skill — “save this” content', formats: ['carousel', 'ugc_face'] },
+  { key: 'entertainer', emoji: '😄', label: 'Entertainer', desc: 'Relatable, funny, rewatchable', formats: ['ugc_face', 'clip'] },
+  { key: 'aesthetic', emoji: '🎨', label: 'Aesthetic curator', desc: 'A look / vibe / niche taste', formats: ['clip', 'carousel'] },
+  { key: 'founder', emoji: '🚀', label: 'Founder / build-in-public', desc: 'Document building your thing', formats: ['ugc_face', 'carousel'] },
+  { key: 'commentator', emoji: '🎤', label: 'Commentator', desc: 'Hot takes on your industry', formats: ['ugc_face', 'clip'] },
+  { key: 'storyteller', emoji: '📖', label: 'Storyteller', desc: 'Personal narrative + lessons', formats: ['clip', 'ugc_face'] },
+  { key: 'insider', emoji: '🔧', label: 'Insider / BTS', desc: 'Pull back the curtain on your craft', formats: ['clip', 'carousel'] },
+  { key: 'promoter', emoji: '🛍️', label: 'Brand builder', desc: 'Drive a product or offer', formats: ['ugc_face', 'carousel'] },
+]
+const IG_GOALS = [
+  { key: 'grow', emoji: '📈', label: 'Grow followers' },
+  { key: 'authority', emoji: '🧠', label: 'Build authority' },
+  { key: 'sales', emoji: '💸', label: 'Drive sales' },
+  { key: 'entertain', emoji: '🎉', label: 'Entertain & community' },
+  { key: 'educate', emoji: '📚', label: 'Be useful / educate' },
+  { key: 'personal_brand', emoji: '✨', label: 'Build my personal brand' },
+]
+const IG_FORMATS = [
+  { key: 'carousel', emoji: '🖼️', label: 'Carousels', desc: 'Swipe decks — best for saves & depth' },
+  { key: 'ugc_face', emoji: '🎬', label: 'Talking-head videos', desc: 'Your face on camera (needs a photo)' },
+  { key: 'clip', emoji: '🎞️', label: 'Short video clips', desc: 'Faceless stock-B-roll reels' },
+]
+const IG_CADENCE = [[24, '1× / day'], [48, 'Every 2 days'], [72, '2× / week'], [168, 'Weekly']]
+
+// The MCQ-first onboarding for IG/TikTok autopilot. 4 quick steps, all tap-to-pick;
+// archetype pre-selects the format mix so most users just confirm.
+function SocialAutopilotOnboarding({ platform, initial, photos = [], missing, busy, onSave, onClose, onUploadPhoto }) {
+  const label = platform === 'instagram' ? 'Instagram' : 'TikTok'
+  const [step, setStep] = useState(0)
+  const [p, setP] = useState({
+    archetype: initial?.archetype || '', goal: initial?.goal || '',
+    formats: initial?.formats || [], niche: initial?.niche || '', tone: initial?.tone || [],
+    face_photo_url: initial?.face_photo_url || '', per_run: initial?.per_run || 1, interval_hours: initial?.interval_hours || 24,
+  })
+  const set = (k, v) => setP(s => ({ ...s, [k]: v }))
+  const pickArchetype = a => setP(s => ({ ...s, archetype: a.key, formats: s.formats.length ? s.formats : a.formats })) // pre-set the mix
+  const toggleFmt = k => setP(s => ({ ...s, formats: s.formats.includes(k) ? s.formats.filter(x => x !== k) : [...s.formats, k] }))
+  const toggleTone = t => setP(s => ({ ...s, tone: s.tone.includes(t) ? s.tone.filter(x => x !== t) : [...s.tone, t].slice(0, 4) }))
+  const needsFace = p.formats.includes('ugc_face')
+  function submit() {
+    onSave({
+      content_plan: { archetype: p.archetype, goal: p.goal, formats: p.formats, niche: p.niche.trim(), tone: p.tone, face_photo_url: p.face_photo_url },
+      cadence: { per_run: Number(p.per_run), interval_hours: Number(p.interval_hours) },
+    })
+  }
+  const Card = ({ on, emoji, title, sub, onClick }) => (
+    <button type="button" className={'ig-onb-card' + (on ? ' on' : '')} onClick={onClick}
+      style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start', textAlign: 'left', padding: '11px 13px', borderRadius: 12, border: `1.5px solid ${on ? 'var(--ink,#111)' : 'rgba(0,0,0,0.12)'}`, background: on ? 'rgba(0,0,0,0.04)' : '#fff', cursor: 'pointer', width: '100%' }}>
+      <span style={{ fontSize: 18 }}>{emoji}</span>
+      <span style={{ fontWeight: 650, fontSize: 13 }}>{title}</span>
+      {sub && <span className="muted tiny" style={{ lineHeight: 1.3 }}>{sub}</span>}
+    </button>
+  )
+  return (
+    <motion.div className="overlay" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.div className="card modal" style={{ width: 540, maxHeight: '88vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.97 }} transition={spring}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+          <span style={{ fontWeight: 700, fontSize: 15.5 }}>Set up {label} Autopilot</span>
+          <button className="x-close" onClick={onClose}><LX size={18} /></button>
+        </div>
+        <div className="muted tiny" style={{ marginBottom: 12 }}>A few taps and Cadence starts making + posting content for you. You can change any of this later.</div>
+        {missing?.length ? (
+          <div className="notice" style={{ margin: '0 0 12px' }}><div style={{ fontWeight: 600, marginBottom: 4 }}>To turn it on, finish:</div><ul style={{ margin: 0, paddingLeft: 16 }}>{missing.map((m, i) => <li key={i} style={{ marginTop: 2 }}>{m.label}</li>)}</ul></div>
+        ) : null}
+        <div className="onb-dots" style={{ marginBottom: 14 }}>{[0, 1, 2, 3].map(i => <span key={i} className={'ob-dot' + (i <= step ? ' on' : '')} />)}</div>
+
+        {step === 0 && (<>
+          <div className="onb-q">What kind of account are you building?</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {IG_ARCHETYPES.map(a => <Card key={a.key} on={p.archetype === a.key} emoji={a.emoji} title={a.label} sub={a.desc} onClick={() => pickArchetype(a)} />)}
+          </div>
+          <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}><button className="btn-primary btn-sm" disabled={!p.archetype} onClick={() => setStep(1)}>Next →</button></div>
+        </>)}
+
+        {step === 1 && (<>
+          <div className="onb-q">What's the goal?</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {IG_GOALS.map(g => <Card key={g.key} on={p.goal === g.key} emoji={g.emoji} title={g.label} onClick={() => set('goal', g.key)} />)}
+          </div>
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}><button className="mini" onClick={() => setStep(0)}>← Back</button><button className="btn-primary btn-sm" disabled={!p.goal} onClick={() => setStep(2)}>Next →</button></div>
+        </>)}
+
+        {step === 2 && (<>
+          <div className="onb-q">What should it post? <span className="muted tiny" style={{ fontWeight: 400 }}>· pick any (pre-set for your type)</span></div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {IG_FORMATS.map(f => <Card key={f.key} on={p.formats.includes(f.key)} emoji={f.emoji} title={f.label} sub={f.desc} onClick={() => toggleFmt(f.key)} />)}
+          </div>
+          {needsFace && (
+            <div style={{ marginTop: 12 }}>
+              <label className="onb-label">Your face for talking-head videos</label>
+              {photos.length ? (
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  {photos.map(ph => (
+                    <button key={ph.id} type="button" onClick={() => set('face_photo_url', ph.url)} style={{ padding: 0, border: `2px solid ${p.face_photo_url === ph.url ? 'var(--ink,#111)' : 'transparent'}`, borderRadius: 10, cursor: 'pointer', lineHeight: 0 }}>
+                      <img src={ph.url} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8 }} />
+                    </button>
+                  ))}
+                  <label className="btn-ghost" style={{ width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 10 }}>
+                    <Plus size={16} /><input type="file" accept="image/*" hidden onChange={e => e.target.files?.[0] && onUploadPhoto?.(e.target.files[0])} />
+                  </label>
+                </div>
+              ) : (
+                <label className="btn-ghost row" style={{ gap: 7, justifyContent: 'center', cursor: 'pointer' }}><Plus size={14} /> Upload a clear photo of your face<input type="file" accept="image/*" hidden onChange={e => e.target.files?.[0] && onUploadPhoto?.(e.target.files[0])} /></label>
+              )}
+            </div>
+          )}
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}><button className="mini" onClick={() => setStep(1)}>← Back</button><button className="btn-primary btn-sm" disabled={!p.formats.length || (needsFace && !p.face_photo_url)} onClick={() => setStep(3)}>Next →</button></div>
+        </>)}
+
+        {step === 3 && (<>
+          <div className="onb-q">Last bit — your niche & vibe</div>
+          <label className="onb-label">What do you post about?</label>
+          <input className="field" autoFocus placeholder="e.g. home cooking for busy parents" value={p.niche} onChange={e => set('niche', e.target.value)} />
+          <label className="onb-label">Personality <span className="muted tiny" style={{ fontWeight: 400 }}>· pick up to 4</span></label>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>{TONE_OPTS.map(t => <button key={t} type="button" className={'chip' + (p.tone.includes(t) ? ' on' : '')} onClick={() => toggleTone(t)}>{t}</button>)}</div>
+          <label className="onb-label">How often</label>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>{IG_CADENCE.map(([h, l]) => <button key={h} type="button" className={'chip' + (Number(p.interval_hours) === h ? ' on' : '')} onClick={() => set('interval_hours', h)}>{l}</button>)}</div>
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 16 }}>
+            <button className="mini" onClick={() => setStep(2)}>← Back</button>
+            <button className="btn-primary btn-sm" disabled={busy || !p.niche.trim()} onClick={submit}>{busy ? <Loader2 size={13} className="spin" /> : 'Turn on Autopilot'}</button>
+          </div>
+        </>)}
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// Section body for an active IG/TikTok autopilot — plan summary + cadence + review/auto-post.
+function SocialAutopilotBody({ row, onToggle, onEditPlan }) {
+  const plan = row.content_plan || {}
+  const auto = !!row.auto_post
+  const fmtLabel = { carousel: 'carousels', ugc_face: 'talking-head videos', clip: 'clips' }
+  return (
+    <>
+      <div className="muted tiny" style={{ marginBottom: 10 }}>Makes {(plan.formats || []).map(f => fmtLabel[f] || f).join(' + ') || 'content'} about {plan.niche || 'your niche'} on a cadence.{row?.enabled && row?.status_detail ? ` · ${row.status_detail}` : ''}</div>
+      <div className="ap-row"><span className="ap-rowlabel">Posts per run</span><Stepper value={row.per_run || 1} min={1} max={3} onChange={v => onToggle({ per_run: v })} /></div>
+      <div className="ap-row">
+        <span className="ap-rowlabel">When a post is ready</span>
+        <div className="row" style={{ gap: 6 }}>
+          <button type="button" className={'chip' + (!auto ? ' on' : '')} onClick={() => onToggle({ auto_post: false })}>Review first</button>
+          <button type="button" className={'chip' + (auto ? ' on' : '')} onClick={() => onToggle({ auto_post: true })}>Auto-post</button>
+        </div>
+      </div>
+      <div className="muted tiny" style={{ marginTop: -4, marginBottom: 10 }}>{auto ? 'Cadence posts at your best times — fully hands-off.' : 'Cadence makes it; nothing goes out until you approve it.'}</div>
+      <button className="ap-edit" onClick={onEditPlan}>Edit your content plan →</button>
+    </>
+  )
+}
+
 function AutopilotBody({ row, onToggle, onEditBrief }) {
   const perDay = row.per_run || 1
   const auto = !!row.auto_post
@@ -4035,6 +4188,7 @@ function App({ session }) {
   const [autopilot, setAutopilot] = useState([]); const [apRunning, setApRunning] = useState('')
   const [insights, setInsights] = useState([]); const [insightsLearnedAt, setInsightsLearnedAt] = useState(null); const [learning, setLearning] = useState(false)
   const [brandOnb, setBrandOnb] = useState(null); const [brandSaving, setBrandSaving] = useState(false) // platform string while open
+  const [socialOnb, setSocialOnb] = useState(null) // 'instagram'|'tiktok' while the IG/TikTok autopilot wizard is open
   const [gateMiss, setGateMiss] = useState(null) // { platform, missing[], autoPost } — what's blocking Autopilot
   const chatIdRef = useRef(null) // current saved-chat id; null until first save
   const inputRef = useRef(null); const bottomRef = useRef(null)
@@ -4322,9 +4476,30 @@ function App({ session }) {
   // (connect, or let Cadence study the account), so for those we just guide.
   function handleGateReject(gate) {
     setGateMiss(gate)
-    const needsBrief = (gate.missing || []).some(m => m.where === 'brief' || m.where === 'pillars')
-    if (needsBrief) setBrandOnb(gate.platform)
+    if (gate.platform === 'instagram' || gate.platform === 'tiktok') {
+      setSocialOnb(gate.platform) // the visual MCQ wizard owns IG/TikTok setup
+    } else {
+      const needsBrief = (gate.missing || []).some(m => m.where === 'brief' || m.where === 'pillars')
+      if (needsBrief) setBrandOnb(gate.platform)
+    }
     setBanner((gate.missing || []).map(m => m.label).join('   ·   ') || 'Finish setup to turn on Autopilot.')
+  }
+  // Save the IG/TikTok content plan + enable autopilot (from the MCQ wizard).
+  const [socialSaving, setSocialSaving] = useState(false)
+  async function saveSocialPlan({ content_plan, cadence }) {
+    if (!socialOnb) return
+    setSocialSaving(true)
+    try {
+      const r = await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform: socialOnb, enabled: true, content_plan, ...cadence }) })
+      const d = await r.json().catch(() => ({}))
+      loadAutopilot()
+      if (!r.ok) {
+        if (r.status === 422 && d.gate) { setGateMiss(d.gate); setBanner((d.gate.missing || []).map(m => m.label).join('   ·   ')); return }
+        setBanner(d.error || 'Could not turn on Autopilot.'); return
+      }
+      setGateMiss(null); setSocialOnb(null)
+      setBanner(`Autopilot on — Cadence is creating ${socialOnb === 'instagram' ? 'Instagram' : 'TikTok'} content for you`)
+    } catch { setBanner('Could not save — try again.') } finally { setSocialSaving(false) }
   }
   async function learnNow() {
     setLearning(true)
@@ -4899,13 +5074,26 @@ function App({ session }) {
                   )}
                   {!socialConfigured && <div className="notice" style={{ margin: '0 0 10px' }}>Connect Zernio to post — previews work now.</div>}
 
-                  {/* Create lives in the unified Studio now — this tab is the
-                      platform dashboard (auto-reply, niche engage, campaigns). */}
-                  <button className="btn-primary row" style={{ gap: 8, width: '100%', justifyContent: 'center', margin: '2px 0 6px' }} onClick={() => { if (!chatScope.includes(plat)) setChatScope([plat]); setTab('studio') }}>
-                    <Wand2 size={15} /> Make {plat === 'instagram' ? 'Reels & carousels' : 'clips & carousels'} in Studio
-                  </button>
+                  {(() => {
+                    const ap = apFor(plat)
+                    const hasPlan = !!(ap.content_plan && (ap.content_plan.formats || []).length)
+                    return (
+                      <div style={{ marginTop: 4, marginBottom: 14 }}>
+                        <Section title="Autopilot" hint={`make + post ${plat === 'instagram' ? 'Reels & carousels' : 'clips & carousels'} for you`}
+                          badge={ap.enabled ? <span className="muted tiny">{ap.running ? 'creating…' : `${queue.filter(p => p.platform === plat).length} queued`}</span> : null}
+                          toggle={{ on: ap.enabled, onChange: v => { if (v && !hasPlan) setSocialOnb(plat); else patchAutopilot(plat, { enabled: v }) } }}>
+                          {hasPlan
+                            ? <SocialAutopilotBody row={ap} onToggle={patch => patchAutopilot(plat, patch)} onEditPlan={() => setSocialOnb(plat)} />
+                            : <div className="muted tiny">Flip this on and Cadence will run a thorough 4-step setup, then start making {plat === 'instagram' ? 'carousels, talking-head videos & clips' : 'clips, talking-head videos & carousels'} in your niche — posted for you or queued for review.</div>}
+                        </Section>
+                      </div>
+                    )
+                  })()}
 
                   <div style={{ marginTop: 14 }}>
+                    <Section title="What's working" hint="learned from your engagement" badge={insights.filter(i => !i.platform || i.platform === plat).length ? <span className="muted tiny">{insights.filter(i => !i.platform || i.platform === plat).length}</span> : null}>
+                      <InsightsPanel insights={insights} platform={plat} learnedAt={insightsLearnedAt} learning={learning} onLearn={learnNow} />
+                    </Section>
                     <Section title="Auto-reply" hint="answers comments in your voice" badge={<OnBadge on={engSettings.some(s => s.platform === plat && s.enabled)} />}>
                       <AutoReply platforms={[plat]} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
                     </Section>
@@ -5066,6 +5254,7 @@ function App({ session }) {
       {/* brand onboarding — required before Autopilot speaks for you */}
       <AnimatePresence>
         {brandOnb && <BrandOnboarding platform={brandOnb} initial={{ ...(me?.profile?.brand_brief || {}), ...apFor(brandOnb) }} missing={gateMiss?.platform === brandOnb ? gateMiss.missing : null} busy={brandSaving} onSave={saveBrandBrief} onClose={() => setBrandOnb(null)} />}
+        {socialOnb && <SocialAutopilotOnboarding platform={socialOnb} initial={{ ...(apFor(socialOnb).content_plan || {}), per_run: apFor(socialOnb).per_run, interval_hours: apFor(socialOnb).interval_hours }} photos={photos} missing={gateMiss?.platform === socialOnb ? gateMiss.missing : null} busy={socialSaving} onSave={saveSocialPlan} onClose={() => setSocialOnb(null)} onUploadPhoto={uploadPhoto} />}
       </AnimatePresence>
 
       {/* agent profile modal — opened from the fleet or a campaign roster */}

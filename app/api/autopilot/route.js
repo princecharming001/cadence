@@ -17,6 +17,24 @@ async function platformHasAccount(userId, platform) {
   return (count || 0) > 0
 }
 
+// Sanitize the IG/TikTok content plan from the MCQ onboarding (bounded enums +
+// short strings) so a client can't stuff arbitrary jsonb onto the row.
+const ARCHETYPES = ['educator', 'entertainer', 'aesthetic', 'founder', 'commentator', 'storyteller', 'insider', 'promoter']
+const GOALS = ['grow', 'authority', 'sales', 'entertain', 'educate', 'personal_brand']
+const PLAN_FORMATS = ['carousel', 'ugc_face', 'clip']
+function cleanContentPlan(p) {
+  if (!p || typeof p !== 'object') return {}
+  const arr = (v, allow) => (Array.isArray(v) ? v : []).map(String).filter(x => allow.includes(x))
+  return {
+    archetype: ARCHETYPES.includes(p.archetype) ? p.archetype : null,
+    goal: GOALS.includes(p.goal) ? p.goal : null,
+    formats: [...new Set(arr(p.formats, PLAN_FORMATS))],
+    niche: String(p.niche || '').slice(0, 200).trim(),
+    tone: (Array.isArray(p.tone) ? p.tone : []).map(t => String(t).slice(0, 24)).filter(Boolean).slice(0, 5),
+    face_photo_url: /^https?:\/\//.test(String(p.face_photo_url || '')) ? String(p.face_photo_url).slice(0, 600) : '',
+  }
+}
+
 export async function GET(req) {
   const user = await getUser(req)
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
@@ -37,8 +55,9 @@ export async function POST(req) {
   // tier, which additionally needs a learned voice + content pillars). Turning
   // things OFF is always allowed. Per-platform: each platform's account is its own
   // requirement, so finishing X never unlocks LinkedIn.
+  const incomingPlan = b.content_plan !== undefined ? cleanContentPlan(b.content_plan) : undefined
   if (b.enabled === true || b.auto_post === true) {
-    const { data: existing } = await admin.from('autopilot').select('auto_post, enabled').eq('user_id', user.id).eq('platform', b.platform).maybeSingle()
+    const { data: existing } = await admin.from('autopilot').select('auto_post, enabled, content_plan').eq('user_id', user.id).eq('platform', b.platform).maybeSingle()
     const willEnable = b.enabled !== undefined ? !!b.enabled : !!existing?.enabled
     const autoPost = b.auto_post !== undefined ? !!b.auto_post : !!existing?.auto_post
     if (willEnable) {
@@ -47,7 +66,8 @@ export async function POST(req) {
         admin.from('personas').select('user_id').eq('user_id', user.id).maybeSingle(),
         platformHasAccount(user.id, b.platform),
       ])
-      const gate = autopilotGate({ brief: prof?.brand_brief, hasPersona: !!persona, hasAccount, autoPost, platform: b.platform })
+      const contentPlan = { ...(existing?.content_plan || {}), ...(incomingPlan || {}) }
+      const gate = autopilotGate({ brief: prof?.brand_brief, hasPersona: !!persona, hasAccount, autoPost, platform: b.platform, contentPlan })
       if (!gate.ok) {
         return Response.json({ error: 'Finish setting up before turning on Autopilot.', gate: { platform: b.platform, missing: gate.missing, autoPost } }, { status: 422 })
       }
@@ -57,6 +77,7 @@ export async function POST(req) {
   const patch = { user_id: user.id, platform: b.platform }
   if (b.enabled !== undefined) { patch.enabled = !!b.enabled; if (b.enabled) patch.next_run_at = new Date().toISOString() }
   if (b.auto_post !== undefined) patch.auto_post = !!b.auto_post
+  if (incomingPlan !== undefined) patch.content_plan = incomingPlan
   if (b.per_run !== undefined) patch.per_run = Math.min(Math.max(Number(b.per_run) || 1, 1), 3)
   if (b.comments_per_day !== undefined) patch.comments_per_day = Math.min(Math.max(Number(b.comments_per_day) || 0, 0), 20)
   if (b.interval_hours !== undefined) patch.interval_hours = Math.min(Math.max(Number(b.interval_hours) || 24, 1), 168)
