@@ -3969,6 +3969,10 @@ function App({ session }) {
 
   // Pull live X account stats (followers etc.) when the X tab is open.
   useEffect(() => { if (tab === 'x' && xConns.length) loadXStats() }, [tab, xConns.length, loadXStats])
+  // Fresh-on-view for the social platforms too (X already does, above) — so the
+  // follower/post tiles aren't indefinitely stale. loadSocial is stable, so this
+  // only fires on a tab change.
+  useEffect(() => { if (['instagram', 'tiktok', 'linkedin'].includes(tab)) loadSocial(true) }, [tab, loadSocial])
   // The chat follows the active tab onto a platform focus — but a HAND-PICKED
   // selection survives tab switches (auto-sync resumes after "All").
   const scopeDirty = useRef(false)
@@ -4323,7 +4327,7 @@ function App({ session }) {
     if (d.error) setBanner(d.error); else { setBanner('Voice profile updated'); loadMe() }
   }
   function openNew() { setCompose({ mode: 'new', platform: 'x', content: '', when: defaultWhen(defaultHour), imgOn: imgDefault, img: '', connId: xConns[0]?.id || '', personal: false }) }
-  function openSchedule(p) { setCompose({ mode: p.status === 'draft' ? 'draft' : 'edit', id: p.id, platform: p.platform || 'x', content: p.content, when: toLocalInput(new Date(p.scheduled_for)), imgOn: !!p.image_url, img: p.image_url || '', connId: p.x_connection_id || xConns[0]?.id || '', personal: false }) }
+  function openSchedule(p) { const plat = p.platform || 'x'; setCompose({ mode: p.status === 'draft' ? 'draft' : 'edit', id: p.id, platform: plat, content: p.content, when: toLocalInput(new Date(p.scheduled_for)), imgOn: !!p.image_url, img: p.image_url || '', connId: plat === 'x' ? (p.x_connection_id || xConns[0]?.id || '') : '', personal: false }) }
   async function saveEdit(id, content) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, content }) }); refreshLive() }
   async function pausePost(id) { await authed('/api/posts', { method: 'PATCH', body: JSON.stringify({ id, status: 'paused' }) }); setBanner('Held — it won’t go out until you resume it'); refreshLive() }
   async function composeGenImg() {
@@ -4749,14 +4753,8 @@ function App({ session }) {
                     <InsightsPanel insights={insights} platform="linkedin" learnedAt={insightsLearnedAt} learning={learning} onLearn={learnNow} />
                   </Section>
 
-                  <Section title="Auto-reply" hint="reply to comments on your posts" toggle={{ on: arOn, onChange: v => toggleReplies('linkedin', { enabled: v }) }}>
-                    <div className="muted tiny">{!liAccount ? 'Connect LinkedIn to enable replies.' : arOn ? 'Cadence checks for new comments on a schedule and replies in your voice.' : 'Off — turn on to reply to comments in your voice.'}</div>
-                    {(socialReplies || []).filter(r => r.platform === 'linkedin' && r.reply_text).slice(0, 4).map(d => (
-                      <div className="ar-draft" key={d.id} style={{ marginTop: 8 }}>
-                        <div className="ar-comment"><span className="ar-author">@{authorHandle(d.comment_author)}</span>{str(d.comment_text) ? ' · ' + str(d.comment_text).slice(0, 120) : ''}</div>
-                        <div className="ar-reply">{str(d.reply_text)}</div>
-                      </div>
-                    ))}
+                  <Section title="Auto-reply" hint="reply to comments on your posts" badge={<OnBadge on={engSettings.some(s => s.platform === 'linkedin' && s.enabled)} />}>
+                    <AutoReply platforms={['linkedin']} settings={engSettings} replies={socialReplies} accounts={socialAccounts} configured={socialConfigured} onToggle={toggleReplies} onRun={runReplies} onPostDraft={postReplyDraft} />
                   </Section>
 
                   <Section title="Ready to post" defaultOpen={liDrafts.length > 0} badge={liDrafts.length ? <span className="camp-state on">{liDrafts.length}</span> : null}>
@@ -4914,18 +4912,27 @@ function App({ session }) {
                   </motion.div>
                 )}
               </AnimatePresence>
-              {compose.platform !== 'linkedin' && xConns.length > 1 && (
+              {(compose.platform || 'x') === 'x' && xConns.length > 1 && (
                 <select className="field dp-acct" style={{ marginTop: 10 }} value={compose.connId || ''} onChange={e => setCompose(c => ({ ...c, connId: e.target.value }))}>
                   {xConns.map(c => <option key={c.id} value={c.id}>Post as @{c.username}</option>)}
                 </select>
               )}
-              <div className="row" style={{ justifyContent: 'space-between', marginTop: 12, gap: 8 }}>
-                <input type="datetime-local" className="field dt" value={compose.when} onChange={e => setCompose(c => ({ ...c, when: e.target.value }))} />
-                <div className="row" style={{ gap: 10 }}>
-                  <button className="btn-ghost" disabled={composeBusy} onClick={() => saveCompose(false)}>Schedule</button>
-                  <motion.button className="btn-primary" whileTap={{ scale: 0.97 }} disabled={composeBusy || (compose.platform === 'linkedin' ? !socialAccounts.some(a => a.platform === 'linkedin') : !connected) || (compose.content || '').length > capFor(compose) || !(compose.content || '').trim()} onClick={() => saveCompose(true)} title={compose.platform === 'linkedin' ? '' : (!connected ? 'Connect X first' : '')}>{composeBusy ? <span className="dots"><i/><i/><i/></span> : 'Post now'}</motion.button>
-                </div>
-              </div>
+              {(() => {
+                // Post-now needs a connected account for THIS post's platform —
+                // X uses the X connection; the rest use a social_accounts row.
+                const cp = compose.platform || 'x'
+                const hasAcct = cp === 'x' ? connected : socialAccounts.some(a => a.platform === cp)
+                const plLabel = cp === 'x' ? 'X' : (PLATFORMS.find(p => p.key === cp)?.label || cp)
+                return (
+                  <div className="row" style={{ justifyContent: 'space-between', marginTop: 12, gap: 8 }}>
+                    <input type="datetime-local" className="field dt" value={compose.when} onChange={e => setCompose(c => ({ ...c, when: e.target.value }))} />
+                    <div className="row" style={{ gap: 10 }}>
+                      <button className="btn-ghost" disabled={composeBusy} onClick={() => saveCompose(false)}>Schedule</button>
+                      <motion.button className="btn-primary" whileTap={{ scale: 0.97 }} disabled={composeBusy || !hasAcct || (compose.content || '').length > capFor(compose) || !(compose.content || '').trim()} onClick={() => saveCompose(true)} title={hasAcct ? '' : `Connect ${plLabel} first`}>{composeBusy ? <span className="dots"><i/><i/><i/></span> : 'Post now'}</motion.button>
+                    </div>
+                  </div>
+                )
+              })()}
             </motion.div>
           </motion.div>
         )}

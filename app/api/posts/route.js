@@ -87,14 +87,17 @@ export async function PATCH(req) {
   if (scheduledFor !== undefined)  patch.scheduled_for = scheduledFor
   if (status !== undefined)        patch.status = status
   if (imageUrl !== undefined)      patch.image_url = imageUrl
-  if (xConnectionId !== undefined) patch.x_connection_id = xConnectionId
-  // Edits respect the platform of the row being edited.
-  if (patch.content !== undefined) {
+  // The platform of the row being edited governs both length validation AND which
+  // connection field is legal — never stamp an X connection onto a LinkedIn/IG/
+  // TikTok post (the compose modal can default connId to an X account).
+  if (content !== undefined || xConnectionId !== undefined) {
     const { data: row } = await admin.from('posts').select('platform').eq('id', id).eq('user_id', user.id).single()
     if (!row) return Response.json({ error: 'Post not found.' }, { status: 404 })
-    if (String(patch.content).length > capOf(row.platform || 'x')) {
-      return Response.json({ error: `Over the ${capOf(row.platform || 'x')}-character limit.` }, { status: 400 })
+    const platform = row.platform || 'x'
+    if (content !== undefined && String(content).length > capOf(platform)) {
+      return Response.json({ error: `Over the ${capOf(platform)}-character limit.` }, { status: 400 })
     }
+    if (xConnectionId !== undefined && platform === 'x') patch.x_connection_id = xConnectionId
   }
   const { data, error } = await admin.from('posts')
     .update(patch).eq('id', id).eq('user_id', user.id).select().single()
