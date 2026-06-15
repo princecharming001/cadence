@@ -1656,9 +1656,11 @@ function Stepper({ value, min = 1, max = 9, onChange }) {
   )
 }
 
-// ── Autopilot body — cadence settings. The on/off toggle (in the section
-// header) IS the autopost switch — when on, Cadence writes AND publishes. No
-// second toggle. Comments live under Engage. Gated behind brand onboarding.
+// ── Autopilot body — cadence settings. The section-header toggle turns Autopilot
+// ON (writing on a cadence); the "When a post is ready" control chooses Review-
+// first (drafts) vs Auto-post (hands-off). Both are gated server-side by the
+// onboarding gate (brief + connected account; auto-post also needs voice +
+// pillars). Comments live under Engage.
 function AutopilotBody({ row, onToggle, onEditBrief }) {
   const perDay = row.per_run || 1
   const auto = !!row.auto_post
@@ -1678,6 +1680,43 @@ function AutopilotBody({ row, onToggle, onEditBrief }) {
       </div>
       <div className="muted tiny" style={{ marginTop: -4, marginBottom: 10 }}>{auto ? 'Cadence posts at your best times — fully hands-off.' : 'Cadence drafts; nothing goes out until you approve it.'}</div>
       <button className="ap-edit" onClick={onEditBrief}>Edit your brand brief →</button>
+    </>
+  )
+}
+
+// ── What Cadence has learned — the durable, cross-platform brand memory distilled
+// from the user's own engagement (numbers + audience comments + thumbs). It's
+// applied to every post automatically; showing it makes the loop legible and
+// gives the user a manual re-analyze. Shows cross-platform learnings + this
+// platform's specific ones.
+const INSIGHT_TAG = { insight: 'Works', tactic: 'Do', audience: 'Audience', format: 'Format' }
+const insightAgo = iso => {
+  if (!iso) return ''
+  const s = (Date.now() - new Date(iso).getTime()) / 1000
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m ago`
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`
+  return `${Math.round(s / 86400)}d ago`
+}
+function InsightsPanel({ insights, platform, learnedAt, learning, onLearn }) {
+  const rel = (insights || []).filter(i => !i.platform || i.platform === platform)
+  return (
+    <>
+      <div className="muted tiny" style={{ marginBottom: 10 }}>
+        Learned from your real engagement and applied to every post Cadence writes — across all your platforms.{learnedAt ? ` Updated ${insightAgo(learnedAt)}.` : ''}
+      </div>
+      {rel.length ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+          {rel.map(i => (
+            <div key={i.id} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+              <span className="chip" style={{ flex: 'none', fontSize: 10.5, padding: '2px 7px', opacity: 0.85 }}>{INSIGHT_TAG[i.kind] || i.kind}</span>
+              <span style={{ fontSize: 12.5, lineHeight: 1.4 }}>{i.text}{i.platform ? <span className="muted tiny"> · {i.platform}</span> : null}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="muted tiny" style={{ padding: '2px 0 10px' }}>Nothing yet — once you’ve posted a few times, Cadence studies what landed and learns your patterns.</div>
+      )}
+      <button className="ap-edit" disabled={learning} onClick={onLearn}>{learning ? 'Analyzing your engagement…' : 'Analyze my engagement now →'}</button>
     </>
   )
 }
@@ -3804,6 +3843,7 @@ function App({ session }) {
   const [agentProfileId, setAgentProfileId] = useState(null) // open agent-profile modal
   const [trends, setTrends] = useState([]); const [scanning, setScanning] = useState('')
   const [autopilot, setAutopilot] = useState([]); const [apRunning, setApRunning] = useState('')
+  const [insights, setInsights] = useState([]); const [insightsLearnedAt, setInsightsLearnedAt] = useState(null); const [learning, setLearning] = useState(false)
   const [brandOnb, setBrandOnb] = useState(null); const [brandSaving, setBrandSaving] = useState(false) // platform string while open
   const [gateMiss, setGateMiss] = useState(null) // { platform, missing[], autoPost } — what's blocking Autopilot
   const chatIdRef = useRef(null) // current saved-chat id; null until first save
@@ -3856,9 +3896,10 @@ function App({ session }) {
   const loadAgentCamps = useCallback(async () => { const r = await authed('/api/agent-campaigns?metrics=1'); const d = await r.json(); setAgentCampaigns(d.campaigns || []) }, [authed])
   const loadTrends = useCallback(async () => { try { const r = await authed('/api/trends'); const d = await r.json(); setTrends(d.formats || []) } catch {} }, [authed])
   const loadAutopilot = useCallback(async () => { try { const r = await authed('/api/autopilot'); const d = await r.json(); setAutopilot(d.autopilot || []) } catch {} }, [authed])
+  const loadInsights = useCallback(async () => { try { const r = await authed('/api/brand-memory'); const d = await r.json(); setInsights(d.insights || []); setInsightsLearnedAt(d.last_learned_at || null) } catch {} }, [authed])
   const loadMedia = useCallback(async () => { try { const r = await authed('/api/media'); const d = await r.json(); setMediaAssets(d.assets || []); setMediaAlbums(d.albums || []) } catch {} }, [authed])
 
-  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadVideos(); loadAgents(); loadAgentCamps(); loadTrends(); loadAutopilot(); loadMedia() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadVideos, loadAgents, loadAgentCamps, loadTrends, loadAutopilot, loadMedia])
+  useEffect(() => { loadQueue(); loadX(); loadLinkedIn(); loadMe(); loadPhotos(); loadEngagement(); loadSocial(); loadSlideshows(); loadSocialEng(); loadBrand(); loadInspoX(); loadClips(); loadVideos(); loadAgents(); loadAgentCamps(); loadTrends(); loadAutopilot(); loadInsights(); loadMedia() }, [loadQueue, loadX, loadLinkedIn, loadMe, loadPhotos, loadEngagement, loadSocial, loadSlideshows, loadSocialEng, loadBrand, loadInspoX, loadClips, loadVideos, loadAgents, loadAgentCamps, loadTrends, loadAutopilot, loadInsights, loadMedia])
 
   // ── Coordinated state sync ──────────────────────────────────────────────────
   // Every view derives from a shared set of lists. Mutations used to hand-pick
@@ -4081,6 +4122,16 @@ function App({ session }) {
     const needsBrief = (gate.missing || []).some(m => m.where === 'brief' || m.where === 'pillars')
     if (needsBrief) setBrandOnb(gate.platform)
     setBanner((gate.missing || []).map(m => m.label).join('   ·   ') || 'Finish setup to turn on Autopilot.')
+  }
+  async function learnNow() {
+    setLearning(true)
+    try {
+      const r = await authed('/api/brand-memory', { method: 'POST', body: JSON.stringify({ action: 'learn' }) })
+      const d = await r.json()
+      setInsights(d.insights || []); loadInsights()
+      const res = d.result || {}
+      setBanner(res.learned ? `Learned ${res.learned} insight${res.learned === 1 ? '' : 's'} from your engagement` : (res.skipped === 'not enough signal' ? 'Not enough posted activity yet — post a few and check back.' : 'No new patterns this round.'))
+    } catch { setBanner('Could not analyze right now.') } finally { setLearning(false) }
   }
   const brandOnboarded = !!me?.profile?.brand_brief?.positioning
   async function saveBrandBrief({ brief, cadence }) {
@@ -4580,6 +4631,11 @@ function App({ session }) {
                       <AutopilotBody row={ap} onToggle={patch => patchAutopilot('x', patch)} onEditBrief={() => setBrandOnb('x')} />
                     </Section>
 
+                    {/* What Cadence has learned — durable brand memory from real engagement */}
+                    <Section title="What's working" hint="learned from your engagement" badge={insights.filter(i => !i.platform || i.platform === 'x').length ? <span className="muted tiny">{insights.filter(i => !i.platform || i.platform === 'x').length}</span> : null}>
+                      <InsightsPanel insights={insights} platform="x" learnedAt={insightsLearnedAt} learning={learning} onLearn={learnNow} />
+                    </Section>
+
                     {/* Auto-reply — replies to comments on your posts (after a human pause) */}
                     <Section title="Auto-reply" hint="reply to comments on your posts" toggle={{ on: arOn, onChange: v => toggleReplies('x', { enabled: v }) }}>
                       <div className="muted tiny" style={{ marginBottom: 4 }}>{arOn ? 'Cadence checks for new comments on a schedule and replies automatically — after a natural 30–90s pause so it never reads as a bot.' : 'Off — turn on to reply to comments in your voice.'}</div>
@@ -4687,6 +4743,10 @@ function App({ session }) {
                   <Section title="Autopilot" hint="run your account hands-free" badge={ap.enabled ? <span className="muted tiny">{ap.running ? 'writing…' : `${queue.filter(p => p.platform === 'linkedin' && ['queued', 'posting'].includes(p.status)).length} queued`}</span> : null}
                     toggle={{ on: ap.enabled, onChange: v => { if (v && !brandOnboarded) setBrandOnb('linkedin'); else patchAutopilot('linkedin', { enabled: v }) } }}>
                     <AutopilotBody row={ap} onToggle={patch => patchAutopilot('linkedin', patch)} onEditBrief={() => setBrandOnb('linkedin')} />
+                  </Section>
+
+                  <Section title="What's working" hint="learned from your engagement" badge={insights.filter(i => !i.platform || i.platform === 'linkedin').length ? <span className="muted tiny">{insights.filter(i => !i.platform || i.platform === 'linkedin').length}</span> : null}>
+                    <InsightsPanel insights={insights} platform="linkedin" learnedAt={insightsLearnedAt} learning={learning} onLearn={learnNow} />
                   </Section>
 
                   <Section title="Auto-reply" hint="reply to comments on your posts" toggle={{ on: arOn, onChange: v => toggleReplies('linkedin', { enabled: v }) }}>

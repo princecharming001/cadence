@@ -14,6 +14,7 @@ import { after } from 'next/server'
 import { admin } from '@/lib/supabase'
 import { postOne } from '@/lib/posting'
 import { refreshPostMetrics } from '@/lib/post-metrics'
+import { runDueBrandLearning } from '@/lib/brand-learning'
 import { runDueEngagement } from '@/lib/engagement'
 import { runDueBrandCampaigns } from '@/lib/brand-campaigns'
 import { runDueSocialEngagement } from '@/lib/social-engagement'
@@ -88,6 +89,10 @@ export async function GET(req) {
     await fetch(`${base}/api/video/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {}) // render queued generated-video jobs (backstop)
     await fetch(`${base}/api/media/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {}) // analyze queued library videos
     await refreshPostMetrics().catch(() => {}) // pull engagement back onto published posts
+    // Engagement → memory: distill fresh results (numbers + audience comments +
+    // thumbs) into durable cross-platform learnings that shape every future post.
+    // Runs AFTER the metrics refresh so it learns from the latest numbers.
+    await runDueBrandLearning({ limit: 5 }).catch(() => {})
     // Intrinsic daily trend detection: harvest a few stale users' niches so
     // fresh viral formats feed generation without anyone pressing a button.
     await harvestDueTrends({ limit: 3, deepN: 2 }).catch(() => {})
