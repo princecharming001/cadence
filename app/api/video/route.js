@@ -2,11 +2,12 @@
 // list, create (kicks the background worker), post a finished video, delete.
 import { admin, getUser } from '@/lib/supabase'
 import { createPost, zernioEnabled } from '@/lib/zernio'
+import { normalizeEditPlan, wantsGenerative } from '@/lib/edit-plan'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-const MODES = ['ai_video', 'ugc', 'edit']
+const MODES = ['ai_video', 'ugc', 'edit', 'directed']
 const ASPECTS = ['vertical', 'square', 'wide']
 
 // GET            → recent jobs (for refresh)
@@ -44,6 +45,27 @@ export async function POST(req) {
       })
       return Response.json({ posted: true, id: r.id })
     } catch (e) { return Response.json({ error: e.message }, { status: 500 }) }
+  }
+
+  // Directed: a (possibly edited) EditPlan → a render job. The plan is normalized
+  // SERVER-SIDE (the render engine has no bounds of its own — scene cap, enums,
+  // duration clamps all live in normalizeEditPlan), and every directed create is
+  // a FRESH job_id (non-destructive: a re-render never clobbers the proven
+  // original; parent_job_id carries lineage so the gallery replaces in place).
+  if (b.mode === 'directed') {
+    const brief = String(b.prompt || '').slice(0, 300)
+    const { plan } = normalizeEditPlan(b.edit_plan, { brief, wantsGen: wantsGenerative(brief), genReady: false })
+    if (!plan.scenes.length) return Response.json({ error: 'The edit has no scenes.' }, { status: 400 })
+    let parent = typeof b.parent_job_id === 'string' && b.parent_job_id ? b.parent_job_id : null
+    if (parent) { const { data: p } = await admin.from('video_jobs').select('id').eq('id', parent).eq('user_id', user.id).single(); if (!p) parent = null }
+    const { data: job, error } = await admin.from('video_jobs').insert({
+      user_id: user.id, mode: 'directed', edit_plan: plan, style_key: plan.style_key || null,
+      aspect: plan.aspect, prompt: brief || null, parent_job_id: parent, status: 'queued',
+    }).select().single()
+    if (error) return Response.json({ error: error.message }, { status: 500 })
+    const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
+    fetch(`${base}/api/video/process`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }).catch(() => {})
+    return Response.json({ job })
   }
 
   // Create a render job.
