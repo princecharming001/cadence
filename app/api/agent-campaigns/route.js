@@ -9,6 +9,7 @@ import { draftCampaignBrief } from '@/lib/campaign-brief'
 import { campaignSentimentSummary } from '@/lib/campaign-sentiment'
 import { getCampaignInsights } from '@/lib/campaign-memory'
 import { topArms } from '@/lib/campaign-arms'
+import { engScore } from '@/lib/weights'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -60,14 +61,21 @@ async function syncMirror(userId, agentId) {
 // intelligence layer: per-platform + per-agent rates with each agent's best post,
 // the audience-sentiment distribution, the leading bandit arms, and the distilled
 // "what's working" insights. This is the campaign intelligence DASHBOARD payload.
-const eng = r => (Number(r.likes) || 0) + 2 * (Number(r.replies) || 0) + 2 * (Number(r.reposts) || 0)
+// Use the SHARED per-platform weights (lib/weights.js) so the dashboard scores a
+// post exactly as the bandit-reward loop does — otherwise "what's winning" on
+// screen disagrees with what the bandit learns, and the operator optimizes against
+// a different number than the system does.
+const eng = engScore
 const rate = r => (Number(r.impressions) || 0) >= 50 ? eng(r) / r.impressions : null
 
 async function campaignMetrics(userId, campaignId) {
   const since = new Date(Date.now() - 7 * 24 * 3600e3).toISOString()
+  // Only POSTED posts count: drafts/failed/rendering have no real reach and would
+  // deflate eng_rate (denominator) and inflate post counts (the learning loop also
+  // reads status='posted', so this keeps the two populations identical).
   const { data: posts } = await admin.from('posts')
     .select('feeder_agent_id, is_promo, status, likes, replies, reposts, impressions, platform, content, created_at')
-    .eq('user_id', userId).eq('campaign_id', campaignId)
+    .eq('user_id', userId).eq('campaign_id', campaignId).eq('status', 'posted')
   const rows = posts || []
   const sum = (k) => rows.reduce((n, r) => n + (Number(r[k]) || 0), 0)
   const rateOf = (e, i) => i >= 50 ? +(e / i * 100).toFixed(2) : null
