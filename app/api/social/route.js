@@ -65,7 +65,16 @@ export async function DELETE(req) {
       { user_id: user.id, zernio_account_id: acct.zernio_account_id, platform: acct.platform },
       { onConflict: 'user_id,zernio_account_id', ignoreDuplicates: true }).then(() => {}, () => {})
   }
-  // 3) Remove the local row (cascades to feeder agents bound to it).
+  // 3) Clean up THIS account's derived data so a future account on the same
+  //    platform never inherits stale posts/replies (the "new account shows
+  //    1 posted / 1 queued" bug) and orphaned pending posts don't clog the queue.
+  //    Pending posts (can't fire without the account) go; posted history stays.
+  await admin.from('posts').delete().eq('user_id', user.id).eq('social_account_id', id)
+    .in('status', ['draft', 'queued', 'posting', 'rendering']).then(() => {}, () => {})
+  if (acct.zernio_account_id) {
+    await admin.from('social_replies').delete().eq('user_id', user.id).eq('account_id', acct.zernio_account_id).then(() => {}, () => {})
+  }
+  // 4) Remove the local row (cascades to feeder agents bound to it).
   await admin.from('social_accounts').delete().eq('id', id).eq('user_id', user.id)
   return Response.json({ deleted: true, unlinked })
 }

@@ -1482,7 +1482,10 @@ function AutoReply({ platforms, settings, replies, accounts, configured, onToggl
       {platforms.map(pl => {
         const s = byPlat[pl] || { platform: pl, enabled: false }
         const has = accounts.some(a => a.platform === pl)
-        const recent = (replies || []).filter(r => r.platform === pl && (r.status === 'posted' || r.reply_text)).slice(0, 6)
+        // Only show replies for accounts STILL connected on this platform — a
+        // disconnected/old account's replies must not linger after a switch.
+        const liveZids = new Set(accounts.filter(a => a.platform === pl).map(a => a.zernio_account_id).filter(Boolean))
+        const recent = (replies || []).filter(r => r.platform === pl && (r.status === 'posted' || r.reply_text) && (!r.account_id || liveZids.has(r.account_id))).slice(0, 6)
         return (
           <div className={'ar-block card' + (s.enabled ? ' on' : '')} key={pl}>
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
@@ -4310,8 +4313,8 @@ function App({ session }) {
     // loadMe carries the headline stats (queued/posted/accounts) shown in the
     // topbar + profile tiles — refresh it too or those numbers go stale while the
     // queue moves under them.
-    loadQueue(); loadMe(); loadAutopilot(); loadAgents(); loadAgentCamps(); loadSlideshows(); loadSocialEng(); loadEngagement(); loadClips(); loadVideos(); loadBrand(); loadMedia()
-  }, [loadQueue, loadMe, loadAutopilot, loadAgents, loadAgentCamps, loadSlideshows, loadSocialEng, loadEngagement, loadClips, loadVideos, loadBrand, loadMedia])
+    loadQueue(); loadMe(); loadAutopilot(); loadAgents(); loadAgentCamps(); loadSlideshows(); loadSocialEng(); loadEngagement(); loadClips(); loadVideos(); loadBrand(); loadMedia(); loadSocial(); loadInsights()
+  }, [loadQueue, loadMe, loadAutopilot, loadAgents, loadAgentCamps, loadSlideshows, loadSocialEng, loadEngagement, loadClips, loadVideos, loadBrand, loadMedia, loadSocial, loadInsights])
   useEffect(() => {
     const sync = () => { if (document.visibilityState === 'visible') refreshLive() }
     const id = setInterval(sync, 20000)            // background-change safety net
@@ -5110,17 +5113,23 @@ function App({ session }) {
                 const platAccts = socialAccounts.filter(a => a.platform === plat)
                 const platCampTargets = platAccts.map(a => ({ kind: 'social', id: a.id, platform: plat, label: '@' + (a.username || plat) }))
                 const followers = platAccts.reduce((n, a) => n + (a.followers || 0), 0)
+                // Scope counts to THIS platform's CURRENTLY-connected accounts — a post
+                // tied to a since-disconnected account (or to no account) must not
+                // inflate a freshly-connected account's stats.
+                const platAcctIds = new Set(platAccts.map(a => a.id))
+                const mine = p => platAcctIds.has(p.social_account_id)
                 // "Posted" = the account's REAL all-time post count (Zernio
-                // mediaCount/videoCount), not just posts made through Cadence.
+                // mediaCount/videoCount); fall back to Cadence posts FOR THIS ACCOUNT.
                 const realPosted = platAccts.reduce((n, a) => n + (a.posts_count || 0), 0)
-                const platPosted = realPosted || posts.filter(p => p.platform === plat && p.status === 'posted').length
+                const platPosted = realPosted || posts.filter(p => p.platform === plat && p.status === 'posted' && mine(p)).length
+                const platQueued = posts.filter(p => p.platform === plat && ['queued', 'posting'].includes(p.status) && mine(p)).length
                 return (<>
                   <BrainBanner theme={plat} />
                   {platAccts.length ? (
                     <StatTiles tiles={[
                       { value: platAccts.some(a => a.followers != null) ? fmtNum(followers) : '—', label: 'Followers' },
                       { value: platPosted ? fmtNum(platPosted) : '—', label: 'Posted' },
-                      { value: fmtNum(queue.filter(p => p.platform === plat).length), label: 'Queued' },
+                      { value: fmtNum(platQueued), label: 'Queued' },
                     ]} />
                   ) : (
                     <button className="btn-ghost row" style={{ gap: 7, width: '100%', justifyContent: 'center', margin: '8px 0 14px' }} disabled={!socialConfigured} onClick={() => connectSocial(plat)}>{plat === 'instagram' ? <IGGlyph size={15} /> : <TTGlyph size={15} />} Connect {platLabel}</button>
@@ -5133,7 +5142,7 @@ function App({ session }) {
                     return (
                       <div style={{ marginTop: 4, marginBottom: 14 }}>
                         <Section title="Autopilot" hint={`make + post ${plat === 'instagram' ? 'Reels & carousels' : 'clips & carousels'} for you`}
-                          badge={ap.enabled ? <span className="muted tiny">{ap.running ? 'creating…' : `${queue.filter(p => p.platform === plat).length} queued`}</span> : null}
+                          badge={ap.enabled ? <span className="muted tiny">{ap.running ? 'creating…' : `${platQueued} queued`}</span> : null}
                           toggle={{ on: ap.enabled, onChange: v => { if (v && !hasPlan) setSocialOnb(plat); else patchAutopilot(plat, { enabled: v }) } }}>
                           {hasPlan
                             ? <SocialAutopilotBody row={ap} onToggle={patch => patchAutopilot(plat, patch)} onEditPlan={() => setSocialOnb(plat)} />
@@ -5144,7 +5153,7 @@ function App({ session }) {
                   })()}
 
                   {(() => {
-                    const igItems = posts.filter(p => p.platform === plat && p.source === 'autopilot' && ['draft', 'rendering', 'failed'].includes(p.status))
+                    const igItems = posts.filter(p => p.platform === plat && p.source === 'autopilot' && ['draft', 'rendering', 'failed'].includes(p.status) && (mine(p) || !p.social_account_id))
                       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).slice(0, 12)
                     if (!apFor(plat).enabled && !igItems.length) return null
                     return (
