@@ -10,7 +10,7 @@ import {
   ThumbsUp, ThumbsDown, Upload, Play, MessageCircle, Star, Loader2, Film, FolderOpen, Search as LSearch,
   Paperclip, Captions, Video as LVideo, LayoutGrid as LGrid, Copy as LCopy,
   ArrowLeft, CreditCard, Users, User as LUser, Bot, History as LHistory,
-  Calendar as LCalendar, List as LList,
+  Calendar as LCalendar, List as LList, Clapperboard,
 } from 'lucide-react'
 import { SLIDESHOW_FORMATS, SLIDE_STYLE_LIST } from '@/lib/slideshow-styles'
 import { PLANS, PLAN_LIST, monthlyEquivalent } from '@/lib/plans'
@@ -2310,6 +2310,40 @@ function TrendFormats({ platform, formats, busy, canScan, onScan, onDelete }) {
 
 // "Ready to post" — AI-drafted posts for this platform, waiting for one-tap
 // approval. The heart of each content tab: open the tab, see posts ready to go.
+// Media-aware "Ready to post" list for IG/TikTok autopilot output — carousels
+// (thumbnail) and videos (clapper badge), plus in-flight 'rendering' placeholders
+// and failed renders. Review-mode drafts surface here for approval; without this
+// the engine would post into a void.
+function SocialDrafts({ items, onPostNow, onSchedule, onDiscard }) {
+  if (!items.length) return <div className="muted tiny" style={{ padding: '2px 0' }}>Nothing waiting — Autopilot will drop carousels & videos here for your OK as it makes them.</div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {items.map(p => {
+        const rendering = p.status === 'rendering', failed = p.status === 'failed'
+        const thumb = p.image_urls?.[0] || p.image_url
+        return (
+          <div className="row" key={p.id} style={{ gap: 10, alignItems: 'flex-start', padding: '7px 0', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+            <div style={{ width: 44, height: 44, flex: 'none', borderRadius: 8, overflow: 'hidden', background: 'rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {thumb ? <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Clapperboard size={16} style={{ opacity: 0.5 }} />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.content || (p.video_url ? 'Video' : 'Carousel')}</div>
+              <div className="muted tiny" style={{ marginTop: 2 }}>{p.image_urls?.length ? `${p.image_urls.length}-slide carousel` : p.video_url ? 'video' : rendering ? '' : 'post'}{rendering ? 'rendering your video…' : failed ? <span style={{ color: '#B3372F' }}>render failed</span> : ''}</div>
+            </div>
+            {rendering ? <Loader2 size={13} className="spin" style={{ marginTop: 4, opacity: 0.6 }} />
+              : failed ? <button className="mini danger" onClick={() => onDiscard(p.id)}><Trash2 size={11} /></button>
+              : (<div className="row" style={{ gap: 5, flex: 'none' }}>
+                  <button className="mini" onClick={() => onPostNow(p.id)}>Post</button>
+                  <button className="mini" onClick={() => onSchedule(p)}><Clock size={11} /></button>
+                  <button className="mini danger" onClick={() => onDiscard(p.id)}><Trash2 size={11} /></button>
+                </div>)}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function Suggestions({ platform, drafts, busy, canPost, onGenerate, onPostNow, onSchedule, onDiscard }) {
   return (
     <>
@@ -5085,6 +5119,19 @@ function App({ session }) {
                           {hasPlan
                             ? <SocialAutopilotBody row={ap} onToggle={patch => patchAutopilot(plat, patch)} onEditPlan={() => setSocialOnb(plat)} />
                             : <div className="muted tiny">Flip this on and Cadence will run a thorough 4-step setup, then start making {plat === 'instagram' ? 'carousels, talking-head videos & clips' : 'clips, talking-head videos & carousels'} in your niche — posted for you or queued for review.</div>}
+                        </Section>
+                      </div>
+                    )
+                  })()}
+
+                  {(() => {
+                    const igItems = posts.filter(p => p.platform === plat && p.source === 'autopilot' && ['draft', 'rendering', 'failed'].includes(p.status))
+                      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).slice(0, 12)
+                    if (!apFor(plat).enabled && !igItems.length) return null
+                    return (
+                      <div style={{ marginTop: 14 }}>
+                        <Section title="Ready to post" hint="autopilot output — approve or skip" defaultOpen={igItems.some(p => p.status === 'draft')} badge={igItems.filter(p => p.status === 'draft').length ? <span className="camp-state on">{igItems.filter(p => p.status === 'draft').length}</span> : null}>
+                          <SocialDrafts items={igItems} onPostNow={postNow} onSchedule={openSchedule} onDiscard={delPost} />
                         </Section>
                       </div>
                     )
