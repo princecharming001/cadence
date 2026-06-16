@@ -1919,10 +1919,10 @@ function InsightsPanel({ insights, platform, learnedAt, learning, onLearn }) {
   return (
     <>
       <div className="muted tiny" style={{ marginBottom: 10 }}>
-        Learned from your real engagement and applied to every post Cadence writes — across all your platforms.{learnedAt ? ` Updated ${insightAgo(learnedAt)}.` : ''}
+        Cadence keeps learning from your real engagement automatically and applies it to every post it writes — across all your platforms.{learnedAt ? ` Last updated ${insightAgo(learnedAt)}.` : ''}
       </div>
       {rel.length ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
           {rel.map(i => (
             <div key={i.id} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
               <span className="chip" style={{ flex: 'none', fontSize: 10.5, padding: '2px 7px', opacity: 0.85 }}>{INSIGHT_TAG[i.kind] || i.kind}</span>
@@ -1931,9 +1931,9 @@ function InsightsPanel({ insights, platform, learnedAt, learning, onLearn }) {
           ))}
         </div>
       ) : (
-        <div className="muted tiny" style={{ padding: '2px 0 10px' }}>Nothing yet — once you’ve posted a few times, Cadence studies what landed and learns your patterns.</div>
+        <div className="muted tiny" style={{ padding: '2px 0 8px' }}>Nothing yet — as your posts gather engagement, Cadence studies what landed and learns your patterns on its own.</div>
       )}
-      <button className="ap-edit" disabled={learning} onClick={onLearn}>{learning ? 'Analyzing your engagement…' : 'Analyze my engagement now →'}</button>
+      <div className="muted tiny row" style={{ gap: 5, opacity: 0.7 }}><Sparkles size={11} /> Updates on its own — no button to press.{learning ? ' Analyzing now…' : ''}</div>
     </>
   )
 }
@@ -5063,7 +5063,7 @@ function App({ session }) {
                   const engRule = engRules.find(r => r.active) || engRules[0]
                   const liveCamps = campsTouching(['x']).filter(c => c.active).length
                   function engToggle(v) {
-                    if (v) { engRule?.id ? patchEngagement(engRule.id, { active: true, auto_post: true }) : saveEngagement({ comment_styles: ['add_value'], connection_ids: primaryX ? [primaryX.id] : [], interval_hours: 24, replies_per_run: 4, auto_post: true, active: true }) }
+                    if (v) { engRule?.id ? patchEngagement(engRule.id, { active: true, auto_post: true, interval_hours: 0.33 }) : saveEngagement({ comment_styles: ['add_value'], connection_ids: primaryX ? [primaryX.id] : [], interval_hours: 0.33, replies_per_run: 4, auto_post: true, active: true }) }
                     else if (engRule?.id) patchEngagement(engRule.id, { active: false })
                   }
                   return (<>

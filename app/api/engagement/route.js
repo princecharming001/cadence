@@ -28,7 +28,9 @@ const MAX_WATCHED = 3 // accounts a rule can watch
 function clean(body) {
   const patch = {}
   for (const k of FIELDS) if (body[k] !== undefined) patch[k] = body[k]
-  if (patch.interval_hours !== undefined) patch.interval_hours = Math.max(1, Number(patch.interval_hours) || 24)
+  // Niche-engage should be responsive (reply to a trending post within ~20 min),
+  // not daily — allow sub-hour, default ~20 min. The X-read budget caps spend.
+  if (patch.interval_hours !== undefined) patch.interval_hours = Math.max(0.05, Number(patch.interval_hours) || 0.33)
   if (patch.replies_per_run !== undefined) patch.replies_per_run = Math.min(MAX_REPLIES_PER_RUN, Math.max(1, Number(patch.replies_per_run) || 1))
   for (const k of ['target_keywords', 'target_handles', 'comment_styles', 'connection_ids']) {
     if (patch[k] !== undefined) patch[k] = arr(patch[k])
