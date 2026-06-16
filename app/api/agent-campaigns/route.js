@@ -74,7 +74,7 @@ async function campaignMetrics(userId, campaignId) {
   // deflate eng_rate (denominator) and inflate post counts (the learning loop also
   // reads status='posted', so this keeps the two populations identical).
   const { data: posts } = await admin.from('posts')
-    .select('feeder_agent_id, is_promo, status, likes, replies, reposts, impressions, platform, content, created_at')
+    .select('feeder_agent_id, is_promo, status, likes, replies, reposts, impressions, platform, content, created_at, posted_at')
     .eq('user_id', userId).eq('campaign_id', campaignId).eq('status', 'posted')
   const rows = posts || []
   const sum = (k) => rows.reduce((n, r) => n + (Number(r[k]) || 0), 0)
@@ -97,6 +97,21 @@ async function campaignMetrics(userId, campaignId) {
   }
   for (const k in byPlatform) { const p = byPlatform[k]; p.eng_rate = rateOf(p._eng, p.impressions); delete p._eng }
 
+  // Time-of-day breakdown (4 six-hour UTC windows) so the operator can see when
+  // results are timing-driven vs angle-driven. concentration = share of posts in
+  // the busiest window; high concentration means angle comparisons are confounded.
+  const WINDOWS = ['00–06', '06–12', '12–18', '18–24']
+  const byHour = {}
+  for (const r of rows) {
+    if (!r.posted_at) continue
+    const w = WINDOWS[Math.floor(new Date(r.posted_at).getUTCHours() / 6)]
+    const h = (byHour[w] ||= { posts: 0, impressions: 0, _eng: 0 })
+    h.posts++; h.impressions += Number(r.impressions) || 0; h._eng += eng(r)
+  }
+  let timed = 0
+  for (const k in byHour) { const h = byHour[k]; h.eng_rate = rateOf(h._eng, h.impressions); delete h._eng; timed += h.posts }
+  const timingConcentration = timed ? +(Math.max(0, ...Object.values(byHour).map(h => h.posts)) / timed).toFixed(2) : null
+
   const { count: clicks } = await admin.from('campaign_clicks').select('id', { count: 'exact', head: true }).eq('campaign_id', campaignId)
   const [sentiment, arms, insights] = await Promise.all([
     campaignSentimentSummary(campaignId).catch(() => ({ total: 0 })),
@@ -111,6 +126,7 @@ async function campaignMetrics(userId, campaignId) {
     eng_rate: rateOf(rows.reduce((n, r) => n + eng(r), 0), sum('impressions')),
     clicks: clicks || 0,
     by_agent: byAgent, by_platform: byPlatform,
+    by_hour: byHour, timing_concentration: timingConcentration,
     sentiment, top_arms: arms, insights,
   }
 }
