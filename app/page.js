@@ -4609,7 +4609,9 @@ function App({ session }) {
     const platform = brandOnb || 'x'
     try {
       await authed('/api/profile', { method: 'PATCH', body: JSON.stringify({ brand_brief: brief }) })
-      const r = await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, enabled: true, ...cadence }) })
+      // brand_brief is also sent to autopilot so it's stored as THIS account's
+      // per-account identity (not just the user-level default).
+      const r = await authed('/api/autopilot', { method: 'POST', body: JSON.stringify({ platform, enabled: true, brand_brief: brief, ...cadence }) })
       await loadMe(session); loadAutopilot()
       if (!r.ok) {
         const d = await r.json().catch(() => ({}))

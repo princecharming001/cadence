@@ -2,7 +2,7 @@
 import { admin, getUser } from '@/lib/supabase'
 import { runAutopilot, AUTOPILOT_PLATFORMS } from '@/lib/autopilot'
 import { autopilotGate } from '@/lib/onboarding-gate'
-import { activeAccount, markAccountOnboarded } from '@/lib/account-scope'
+import { activeAccount, accountProfile, markAccountOnboarded } from '@/lib/account-scope'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -57,6 +57,10 @@ export async function POST(req) {
   // things OFF is always allowed. Per-platform: each platform's account is its own
   // requirement, so finishing X never unlocks LinkedIn.
   const incomingPlan = b.content_plan !== undefined ? cleanContentPlan(b.content_plan) : undefined
+  // The active account is its own identity: prefer its brand brief + persona
+  // override for the readiness gate, falling back to the user-level defaults.
+  const acct = await activeAccount(user.id, b.platform)
+  const aProf = acct ? await accountProfile(acct) : null
   if (b.enabled === true || b.auto_post === true) {
     const { data: existing } = await admin.from('autopilot').select('auto_post, enabled, content_plan').eq('user_id', user.id).eq('platform', b.platform).maybeSingle()
     const willEnable = b.enabled !== undefined ? !!b.enabled : !!existing?.enabled
@@ -67,8 +71,10 @@ export async function POST(req) {
         admin.from('personas').select('user_id').eq('user_id', user.id).maybeSingle(),
         platformHasAccount(user.id, b.platform),
       ])
+      const brief = aProf?.brand_brief || prof?.brand_brief
+      const hasPersona = !!(aProf?.persona || persona)
       const contentPlan = { ...(existing?.content_plan || {}), ...(incomingPlan || {}) }
-      const gate = autopilotGate({ brief: prof?.brand_brief, hasPersona: !!persona, hasAccount, autoPost, platform: b.platform, contentPlan })
+      const gate = autopilotGate({ brief, hasPersona, hasAccount, autoPost, platform: b.platform, contentPlan })
       if (!gate.ok) {
         return Response.json({ error: 'Finish setting up before turning on Autopilot.', gate: { platform: b.platform, missing: gate.missing, autoPost } }, { status: 422 })
       }
@@ -87,10 +93,12 @@ export async function POST(req) {
   if (error) return Response.json({ error: error.message }, { status: 500 })
 
   // Completing setup for a platform (the onboarding flows enable autopilot here)
-  // marks the ACTIVE account for that platform as onboarded — so switching to it
-  // later won't re-prompt, and switching to a DIFFERENT account still will.
+  // marks the ACTIVE account onboarded AND persists its per-account brand brief
+  // override (so each account keeps its own identity) — switching to it later
+  // won't re-prompt, but switching to a DIFFERENT account still will.
   if (b.enabled === true) {
-    try { await markAccountOnboarded(user.id, await activeAccount(user.id, b.platform)) } catch {}
+    const brief = (b.brand_brief && typeof b.brand_brief === 'object') ? b.brand_brief : undefined
+    try { await markAccountOnboarded(user.id, acct, { brand_brief: brief }) } catch {}
   }
 
   if (b.action === 'run') {
