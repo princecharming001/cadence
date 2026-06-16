@@ -2,7 +2,7 @@
 import { admin, getUser } from '@/lib/supabase'
 import { runAutopilot, AUTOPILOT_PLATFORMS } from '@/lib/autopilot'
 import { autopilotGate } from '@/lib/onboarding-gate'
-import { activeAccount, accountProfile, markAccountOnboarded } from '@/lib/account-scope'
+import { activeAccount, accountProfile, markAccountOnboarded, snapshotAccountConfig } from '@/lib/account-scope'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -100,6 +100,9 @@ export async function POST(req) {
     const brief = (b.brand_brief && typeof b.brand_brief === 'object') ? b.brand_brief : undefined
     try { await markAccountOnboarded(user.id, acct, { brand_brief: brief }) } catch {}
   }
+  // Snapshot this (just-saved) config onto the ACTIVE account so it's preserved
+  // per-account and survives switching to another account and back.
+  try { await snapshotAccountConfig(user.id, b.platform, acct) } catch {}
 
   if (b.action === 'run') {
     const r = await runAutopilot({ ...data, running: false })

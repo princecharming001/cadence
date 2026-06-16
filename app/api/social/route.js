@@ -62,6 +62,11 @@ export async function POST(req) {
     // Only one active per (user, platform).
     await admin.from('social_accounts').update({ active: false }).eq('user_id', user.id).eq('platform', acct.platform)
     await admin.from('social_accounts').update({ active: true }).eq('id', id).eq('user_id', user.id)
+    // Swap the live autopilot/auto-reply config to this account's saved settings
+    // (fresh account → disabled until onboarded), so the new identity's automations
+    // run instead of the previous account's.
+    const { activeAccount, restoreAccountConfig } = await import('@/lib/account-scope')
+    try { await restoreAccountConfig(user.id, acct.platform, await activeAccount(user.id, acct.platform)) } catch {}
     const { data: prof } = await admin.from('account_profiles').select('onboarded_at').eq('social_account_id', id).maybeSingle()
     return Response.json({ ok: true, onboarded: !!prof?.onboarded_at })
   }

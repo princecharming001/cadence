@@ -3,6 +3,7 @@ import { admin, getUser } from '@/lib/supabase'
 import { runSocialEngagement, SOCIAL_ENGAGEMENT_PLATFORMS } from '@/lib/social-engagement'
 import { replyToInboxComment, zernioEnabled } from '@/lib/zernio'
 import { getValidAccessToken, postTweet } from '@/lib/x-oauth'
+import { activeAccount, snapshotAccountConfig } from '@/lib/account-scope'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -35,6 +36,8 @@ export async function PATCH(req) {
   // automatically", so default auto_post on unless the caller said otherwise.
   if (patch.enabled === true && !('auto_post' in b)) patch.auto_post = true
   await admin.from('social_engagement').upsert({ user_id: user.id, platform: b.platform, ...patch }, { onConflict: 'user_id,platform' })
+  // Preserve this auto-reply config on the ACTIVE account so it survives switching.
+  try { await snapshotAccountConfig(user.id, b.platform, await activeAccount(user.id, b.platform)) } catch {}
   return Response.json({ ok: true })
 }
 

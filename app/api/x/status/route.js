@@ -1,6 +1,7 @@
 // GET /api/x/status  (Authorization: Bearer <supabase token>)
 // Returns the user's connected X accounts (no tokens exposed).
 import { admin, getUser } from '@/lib/supabase'
+import { activeAccount, restoreAccountConfig } from '@/lib/account-scope'
 
 export async function GET(req) {
   const user = await getUser(req)
@@ -33,6 +34,10 @@ export async function PATCH(req) {
   await admin.from('x_connections').update({ is_primary: false }).eq('user_id', user.id).eq('is_primary', true)
   const { error } = await admin.from('x_connections').update({ is_primary: true }).eq('id', id).eq('user_id', user.id)
   if (error) return Response.json({ error: error.message }, { status: 500 })
+  // Swap the live autopilot/auto-reply config to THIS account's saved settings (a
+  // fresh account comes up disabled until onboarded) so the new identity's
+  // automations run, not the previous account's.
+  try { await restoreAccountConfig(user.id, 'x', await activeAccount(user.id, 'x')) } catch {}
   // Tell the client whether this newly-active account still needs onboarding (a
   // different account is a different identity — persona/autopilot/etc).
   const { data: prof } = await admin.from('account_profiles').select('onboarded_at').eq('x_connection_id', id).maybeSingle()
