@@ -3543,13 +3543,15 @@ const SMART_VIEWS = [
 // a format, and the same Cadence agent builds it and drops the result inline.
 // It's a thin shell over /api/chat (with a `studio` context) so everything the
 // chat agent can do, the Studio can do — just create-first and structured.
-function StudioComposer({ library = [], messages, busy, onSend, onResolve, onRegenerate, authed, socialAccounts, connected, xConns, hasPhotos, refreshLive, defaultHour, scope = [], onToggleScope, inputRef }) {
+function StudioComposer({ library = [], messages, busy, onSend, onResolve, onRegenerate, authed, socialAccounts, connected, xConns, hasPhotos, refreshLive, defaultHour, scope = [], onToggleScope, inputRef, onUploadFile }) {
   const [input, setInput] = useState('')
   const [format, setFormat] = useState('auto')   // auto | carousel | clip | video
   const [captions, setCaptions] = useState(true)
   const [attach, setAttach] = useState([])        // [{id,type,url,filename,thumb_url}]
   const [pickOpen, setPickOpen] = useState(false)
   const [pickType, setPickType] = useState('all') // all | video | image
+  const [dragOver, setDragOver] = useState(false) // drag-and-drop media onto the bar
+  const [uploading, setUploading] = useState(0)   // # of files currently uploading
   const endRef = useRef(null)
   const fallbackTa = useRef(null)
   const taRef = inputRef || fallbackTa
@@ -3568,6 +3570,24 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, onReg
     setInput('')
     onSend(t, { format, captions, attachments: attach })
   }
+
+  // Drag-and-drop media straight onto the bar: upload each file, then attach it so
+  // the agent can feature it (videos attach while they finish analyzing).
+  const addAttach = a => a && setAttach(p => p.some(x => x.id === a.id) ? p : [...p, { id: a.id, type: a.type, url: a.url, filename: a.filename, thumb_url: a.thumb_url }])
+  async function onDropFiles(e) {
+    e.preventDefault(); setDragOver(false)
+    const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image') || f.type.startsWith('video'))
+    if (!files.length || !onUploadFile) return
+    setUploading(u => u + files.length)
+    for (const f of files) {
+      try { addAttach(await onUploadFile(f)) } catch {} finally { setUploading(u => Math.max(0, u - 1)) }
+    }
+  }
+  const dragProps = onUploadFile ? {
+    onDragOver: e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); setDragOver(true) } },
+    onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false) },
+    onDrop: onDropFiles,
+  } : {}
 
   // ONE create-type selector (replaces the old format chipset + quick bar).
   // Picking a type sets the studio format hint; the agent routes accordingly.
@@ -3598,7 +3618,8 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, onReg
 
   // Shared composer block (used in the empty hero and pinned under a thread).
   const composer = (
-    <div className="sc-composer">
+    <div className={'sc-composer' + (dragOver ? ' drag' : '')} {...dragProps}>
+      {dragOver && <div className="sc-drop"><Upload size={18} /> Drop media to attach</div>}
       <div className="sc-types">
         {TYPES.map(([k, l, Ic]) => (
           <button key={k} type="button" className={'sc-type' + (format === k ? ' on' : '')} onClick={() => selType(k)}>
@@ -3606,8 +3627,9 @@ function StudioComposer({ library = [], messages, busy, onSend, onResolve, onReg
           </button>
         ))}
       </div>
-      {attach.length > 0 && (
+      {(attach.length > 0 || uploading > 0) && (
         <div className="sc-attach-row">
+          {uploading > 0 && <span className="sc-attach"><Loader2 size={12} className="spin" /><span className="sc-attach-name">Uploading {uploading}…</span></span>}
           {attach.map(a => (
             <span className="sc-attach" key={a.id} title={a.filename}>
               {a.type === 'video' ? <LVideo size={12} /> : <img src={a.thumb_url || a.url} alt="" />}
@@ -4760,7 +4782,7 @@ function App({ session }) {
   }
   async function uploadMedia(file, albumId) {
     if (!file) return
-    if (file.size > 200 * 1024 * 1024) { setBanner('Files up to 200MB.'); return }
+    if (file.size > 6 * 1024 * 1024 * 1024) { setBanner('Files up to 6GB.'); return }
     let width, height
     if (file.type.startsWith('image')) { const d = await imageDims(file); width = d.w; height = d.h }
     const r = await authed('/api/media', { method: 'POST', body: JSON.stringify({ action: 'sign', filename: file.name, mime: file.type, size: file.size, album_id: albumId || null, width, height }) })
@@ -4770,6 +4792,7 @@ function App({ session }) {
     if (error) { setBanner('Upload failed — ' + error.message); return }
     await authed('/api/media', { method: 'POST', body: JSON.stringify({ action: 'uploaded', id: d.asset.id, width, height }) })
     loadMedia()
+    return d.asset // returned so drag-drop into the composer can attach it immediately
   }
   async function createAlbum(name) { const r = await authed('/api/media', { method: 'POST', body: JSON.stringify({ action: 'album', name }) }); const d = await r.json(); if (d.error) setBanner(d.error); else loadMedia(); return !d.error }
   async function deleteAlbum(id) { if (!await askConfirm({ title: 'Delete album?', body: 'The media inside is kept — just un-filed.', confirmLabel: 'Delete', danger: true })) return; await authed('/api/media', { method: 'DELETE', body: JSON.stringify({ albumId: id }) }); loadMedia() }
@@ -5295,7 +5318,7 @@ function App({ session }) {
               {tab === 'studio' && (
                 <StudioComposer library={mediaAssets} messages={messages} busy={loading} onSend={send} onResolve={resolveProposal} onRegenerate={regenerate}
                   authed={authed} socialAccounts={socialAccounts} connected={connected} xConns={xConns} hasPhotos={hasPhotos}
-                  refreshLive={refreshLive} defaultHour={defaultHour} scope={chatScope} onToggleScope={toggleScope} />
+                  refreshLive={refreshLive} defaultHour={defaultHour} scope={chatScope} onToggleScope={toggleScope} onUploadFile={uploadMedia} />
               )}
               {tab === 'projects' && (
                 <Projects slideshows={slideshows} clipJobs={clipJobs} videoJobs={videoJobs} socialAccounts={socialAccounts} authed={authed}
@@ -5978,7 +6001,9 @@ body { background: var(--bg); color: var(--ink); font-family: 'Inter', system-ui
 .sc-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; color: var(--accent-text); background: var(--accent-soft); border: 1px solid var(--accent-line); padding: 5px 11px; border-radius: 999px; margin-bottom: 16px; }
 .sc-title { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: var(--ink); margin: 0 0 8px; }
 .sc-sub { font-size: 13.5px; line-height: 1.6; color: var(--muted); margin: 0 0 22px; max-width: 460px; }
-.sc-composer { width: 100%; background: var(--surface); border: 1px solid var(--line2); border-radius: 16px; padding: 12px 12px 10px; box-shadow: 0 10px 34px -22px rgba(35,32,24,0.42); text-align: left; }
+.sc-composer { position: relative; width: 100%; background: var(--surface); border: 1px solid var(--line2); border-radius: 16px; padding: 12px 12px 10px; box-shadow: 0 10px 34px -22px rgba(35,32,24,0.42); text-align: left; transition: border-color .12s, box-shadow .12s; }
+.sc-composer.drag { border-color: var(--gold, #D4A017); box-shadow: 0 0 0 3px rgba(212,160,23,0.18); }
+.sc-drop { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 16px; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(2px); font-size: 13.5px; font-weight: 700; color: var(--ink); pointer-events: none; }
 .sc.has-thread .sc-composer { position: sticky; bottom: 0; margin-top: 4px; backdrop-filter: blur(6px); }
 .sc-input { width: 100%; border: none; background: none; outline: none; resize: none; font-family: inherit; font-size: 14px; line-height: 1.55; color: var(--ink); padding: 4px 6px 2px; max-height: 200px; }
 .sc-input::placeholder { color: var(--faint); }
