@@ -3,6 +3,20 @@
 import { admin, getUser } from '@/lib/supabase'
 import { connectUrl, syncAccounts, zernioEnabled, disconnectAccount } from '@/lib/zernio'
 
+// Guarantee exactly one active account per (user, platform). A freshly-synced
+// platform with no active account gets its earliest one promoted.
+async function ensureActivePerPlatform(userId, accounts) {
+  const byPlat = {}
+  for (const a of accounts || []) (byPlat[a.platform] ||= []).push(a)
+  for (const plat in byPlat) {
+    const list = byPlat[plat].sort((x, y) => new Date(x.created_at || 0) - new Date(y.created_at || 0))
+    if (!list.some(a => a.active)) {
+      await admin.from('social_accounts').update({ active: true }).eq('id', list[0].id).then(() => {}, () => {})
+      list[0].active = true
+    }
+  }
+}
+
 // GET /api/social            → cached connected accounts (+ whether posting is configured)
 // GET /api/social?sync=1     → re-pull from Zernio first
 export async function GET(req) {
@@ -22,6 +36,13 @@ export async function GET(req) {
     const { data } = await admin.from('social_accounts').select('*').eq('user_id', user.id)
     accounts = data || []
   }
+  // Make sure each platform has exactly one active account (a freshly-synced one
+  // may have none yet — pick the earliest), then tag each account with whether it
+  // has completed its own onboarding (per-account identity).
+  await ensureActivePerPlatform(user.id, accounts)
+  const { data: profs } = await admin.from('account_profiles').select('social_account_id, onboarded_at').eq('user_id', user.id)
+  const onboarded = new Set((profs || []).filter(p => p.onboarded_at && p.social_account_id).map(p => p.social_account_id))
+  accounts = (accounts || []).map(a => ({ ...a, onboarded: onboarded.has(a.id) }))
   return Response.json({ accounts, configured: zernioEnabled() })
 }
 
@@ -29,7 +50,21 @@ export async function GET(req) {
 export async function POST(req) {
   const user = await getUser(req)
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  const { action, platform } = await req.json().catch(() => ({}))
+  const { action, platform, id } = await req.json().catch(() => ({}))
+
+  // Switch the ACTIVE account for a platform (the social equivalent of X's
+  // "make primary"). One active per (user, platform); the client then re-scopes
+  // the whole app to this account. Returns whether it still needs onboarding.
+  if (action === 'set-active') {
+    if (!id) return Response.json({ error: 'id required' }, { status: 400 })
+    const { data: acct } = await admin.from('social_accounts').select('id, platform').eq('id', id).eq('user_id', user.id).single()
+    if (!acct) return Response.json({ error: 'Account not found.' }, { status: 404 })
+    // Only one active per (user, platform).
+    await admin.from('social_accounts').update({ active: false }).eq('user_id', user.id).eq('platform', acct.platform)
+    await admin.from('social_accounts').update({ active: true }).eq('id', id).eq('user_id', user.id)
+    const { data: prof } = await admin.from('account_profiles').select('onboarded_at').eq('social_account_id', id).maybeSingle()
+    return Response.json({ ok: true, onboarded: !!prof?.onboarded_at })
+  }
 
   if (action === 'connect') {
     if (!zernioEnabled()) return Response.json({ error: 'Connect a Zernio account first (set ZERNIO_API_KEY).' }, { status: 400 })
@@ -54,7 +89,7 @@ export async function DELETE(req) {
   if (!user) return Response.json({ error: 'Not authenticated' }, { status: 401 })
   const { id } = await req.json().catch(() => ({}))
   if (!id) return Response.json({ error: 'id required' }, { status: 400 })
-  const { data: acct } = await admin.from('social_accounts').select('zernio_account_id, platform').eq('id', id).eq('user_id', user.id).single()
+  const { data: acct } = await admin.from('social_accounts').select('zernio_account_id, platform, active').eq('id', id).eq('user_id', user.id).single()
   if (!acct) return Response.json({ deleted: true }) // already gone
   // 1) Unlink at the provider (best-effort).
   let unlinked = false
@@ -74,7 +109,15 @@ export async function DELETE(req) {
   if (acct.zernio_account_id) {
     await admin.from('social_replies').delete().eq('user_id', user.id).eq('account_id', acct.zernio_account_id).then(() => {}, () => {})
   }
-  // 4) Remove the local row (cascades to feeder agents bound to it).
+  // 4) Remove the local row (cascades to feeder agents + account_profiles bound to it).
   await admin.from('social_accounts').delete().eq('id', id).eq('user_id', user.id)
+  // 5) If we removed the ACTIVE account for this platform, promote the earliest
+  //    remaining one so the platform always has an active account.
+  if (acct.active) {
+    const { data: next } = await admin.from('social_accounts')
+      .select('id').eq('user_id', user.id).eq('platform', acct.platform)
+      .order('created_at', { ascending: true }).limit(1)
+    if (next?.[0]) await admin.from('social_accounts').update({ active: true }).eq('id', next[0].id).then(() => {}, () => {})
+  }
   return Response.json({ deleted: true, unlinked })
 }

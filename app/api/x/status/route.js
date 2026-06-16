@@ -12,7 +12,13 @@ export async function GET(req) {
     .eq('user_id', user.id)
     .order('created_at', { ascending: true })
 
-  return Response.json({ connections: data || [] })
+  // Tag each account with whether it has completed its OWN onboarding (per-account
+  // identity) so the client can prompt onboarding when switching to a fresh one.
+  const { data: profs } = await admin.from('account_profiles').select('x_connection_id, onboarded_at').eq('user_id', user.id)
+  const onboarded = new Set((profs || []).filter(p => p.onboarded_at && p.x_connection_id).map(p => p.x_connection_id))
+  const connections = (data || []).map(c => ({ ...c, onboarded: onboarded.has(c.id) }))
+
+  return Response.json({ connections })
 }
 
 // PATCH /api/x/status  { id, is_primary: true }  → make this account the primary
@@ -27,7 +33,10 @@ export async function PATCH(req) {
   await admin.from('x_connections').update({ is_primary: false }).eq('user_id', user.id).eq('is_primary', true)
   const { error } = await admin.from('x_connections').update({ is_primary: true }).eq('id', id).eq('user_id', user.id)
   if (error) return Response.json({ error: error.message }, { status: 500 })
-  return Response.json({ ok: true })
+  // Tell the client whether this newly-active account still needs onboarding (a
+  // different account is a different identity — persona/autopilot/etc).
+  const { data: prof } = await admin.from('account_profiles').select('onboarded_at').eq('x_connection_id', id).maybeSingle()
+  return Response.json({ ok: true, onboarded: !!prof?.onboarded_at })
 }
 
 // DELETE /api/x/status  { id }  → disconnect an X account
