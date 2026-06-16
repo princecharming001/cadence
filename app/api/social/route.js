@@ -70,7 +70,7 @@ export async function DELETE(req) {
   //    1 posted / 1 queued" bug) and orphaned pending posts don't clog the queue.
   //    Pending posts (can't fire without the account) go; posted history stays.
   await admin.from('posts').delete().eq('user_id', user.id).eq('social_account_id', id)
-    .in('status', ['draft', 'queued', 'posting', 'rendering']).then(() => {}, () => {})
+    .in('status', ['draft', 'queued', 'paused', 'posting', 'rendering', 'failed']).then(() => {}, () => {})
   if (acct.zernio_account_id) {
     await admin.from('social_replies').delete().eq('user_id', user.id).eq('account_id', acct.zernio_account_id).then(() => {}, () => {})
   }
