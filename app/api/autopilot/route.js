@@ -2,6 +2,7 @@
 import { admin, getUser } from '@/lib/supabase'
 import { runAutopilot, AUTOPILOT_PLATFORMS } from '@/lib/autopilot'
 import { autopilotGate } from '@/lib/onboarding-gate'
+import { activeAccount, markAccountOnboarded } from '@/lib/account-scope'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -84,6 +85,13 @@ export async function POST(req) {
 
   const { data, error } = await admin.from('autopilot').upsert(patch, { onConflict: 'user_id,platform' }).select().single()
   if (error) return Response.json({ error: error.message }, { status: 500 })
+
+  // Completing setup for a platform (the onboarding flows enable autopilot here)
+  // marks the ACTIVE account for that platform as onboarded — so switching to it
+  // later won't re-prompt, and switching to a DIFFERENT account still will.
+  if (b.enabled === true) {
+    try { await markAccountOnboarded(user.id, await activeAccount(user.id, b.platform)) } catch {}
+  }
 
   if (b.action === 'run') {
     const r = await runAutopilot({ ...data, running: false })

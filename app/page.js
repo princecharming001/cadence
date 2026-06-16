@@ -4432,7 +4432,32 @@ function App({ session }) {
   function connectX() { setXConnect(true) }
   async function startXConnect() { setXConnect(false); const r = await authed('/api/x/connect', { method: 'POST' }); const d = await r.json(); if (d.url) window.location.href = d.url; else setBanner(d.error || 'Could not start X connection.') }
   async function disconnectX(id) { const target = id || xConns[0]?.id; if (!target) return; if (!await askConfirm({ title: 'Disconnect this X account?', body: 'Its scheduled posts will stop publishing.', confirmLabel: 'Disconnect', danger: true })) return; await authed('/api/x/status', { method: 'DELETE', body: JSON.stringify({ id: target }) }); setBanner('Disconnected X account'); loadX() }
-  async function makePrimary(id) { await authed('/api/x/status', { method: 'PATCH', body: JSON.stringify({ id, is_primary: true }) }); setBanner('Primary account updated'); loadX() }
+  // Switching the active account is switching brand IDENTITY — the new account may
+  // be a completely different persona/autopilot/audience. Re-scope the WHOLE app to
+  // it, and if it hasn't been set up yet, run its onboarding; otherwise top up its
+  // queue so a freshly-switched-to account isn't left under-posted.
+  async function afterSwitch(platform, onboarded) {
+    refreshLive(); loadX(); loadXStats(); loadLinkedIn() // pull every account-scoped view for the new identity
+    if (onboarded === false) {
+      setBanner('New account — let’s set up its identity')
+      if (platform === 'instagram' || platform === 'tiktok') setSocialOnb(platform)
+      else setBrandOnb(platform || 'x')
+    } else {
+      setBanner('Switched account')
+      if (platform === 'x' || platform === 'linkedin') suggestPosts(platform).catch(() => {}) // refill the queue for this account
+    }
+  }
+  async function makePrimary(id) {
+    const r = await authed('/api/x/status', { method: 'PATCH', body: JSON.stringify({ id, is_primary: true }) })
+    const d = await r.json().catch(() => ({}))
+    await afterSwitch('x', d.onboarded)
+  }
+  async function setActiveSocial(id, platform) {
+    const r = await authed('/api/social', { method: 'POST', body: JSON.stringify({ action: 'set-active', id }) })
+    const d = await r.json().catch(() => ({}))
+    if (d.error) { setBanner(d.error); return }
+    await afterSwitch(platform, d.onboarded)
+  }
 
   // "Run now" — trigger one campaign/rule and poll its live status until it
   // finishes, so the user watches it work. The engine writes status_detail at
@@ -5310,8 +5335,11 @@ function App({ session }) {
             <FloatingAccounts glyph={<LIcon size={15} />} count={socialAccounts.filter(a => a.platform === 'linkedin').length} label="LinkedIn">
               <div className="conn-sec" style={{ marginTop: 0 }}>Your account</div>
               {socialAccounts.filter(a => a.platform === 'linkedin').map(a => (
-                <AccountRow key={a.id} platform="linkedin" title={a.username || 'LinkedIn'} subtitle="publishes your posts"
-                  actions={<button className="mini danger" onClick={() => disconnectSocial(a.id)}>Disconnect</button>} />
+                <AccountRow key={a.id} platform="linkedin" title={a.username || 'LinkedIn'} subtitle={a.active ? 'active — publishes your posts' : 'connected'}
+                  actions={<>
+                    {a.active ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Active</span> : <button className="mini" onClick={() => setActiveSocial(a.id, 'linkedin')}>Set active</button>}
+                    <button className="mini danger" onClick={() => disconnectSocial(a.id)}>Disconnect</button>
+                  </>} />
               ))}
               <ConnectBtn disabled={!socialConfigured} onClick={() => connectSocial('linkedin')} title={!socialConfigured ? 'Publishing not configured yet' : ''}>{liAccount ? 'Reconnect LinkedIn' : 'Connect LinkedIn'}</ConnectBtn>
               <div className="conn-sec">Your voice source <span className="muted tiny" style={{ fontWeight: 400 }}>· your own LinkedIn</span></div>
@@ -5328,8 +5356,11 @@ function App({ session }) {
                 <button className="mini" style={{ marginLeft: 'auto' }} onClick={syncSocial}><RefreshCw size={11} /> Refresh</button>
               </div>
               {socialAccounts.filter(a => a.platform === tab).map(a => (
-                <AccountRow key={a.id} platform={a.platform} title={a.username || a.platform} subtitle={a.followers != null ? `${fmtNum(a.followers)} followers` : 'publishes your posts'}
-                  actions={<button className="mini danger" onClick={() => disconnectSocial(a.id)}>Disconnect</button>} />
+                <AccountRow key={a.id} platform={a.platform} title={a.username || a.platform} subtitle={`${a.followers != null ? `${fmtNum(a.followers)} followers` : 'connected'}${a.active ? ' · active' : ''}`}
+                  actions={<>
+                    {a.active ? <span className="role-badge primary"><Star size={9} fill="currentColor" /> Active</span> : <button className="mini" onClick={() => setActiveSocial(a.id, tab)}>Set active</button>}
+                    <button className="mini danger" onClick={() => disconnectSocial(a.id)}>Disconnect</button>
+                  </>} />
               ))}
               <ConnectBtn disabled={!socialConfigured} onClick={() => connectSocial(tab)} title={!socialConfigured ? 'Publishing not configured yet' : ''}>Connect {tab === 'instagram' ? 'Instagram' : 'TikTok'}</ConnectBtn>
             </FloatingAccounts>
