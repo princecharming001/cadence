@@ -1746,6 +1746,11 @@ function SocialAutopilotOnboarding({ platform, initial, photos = [], missing, bu
   const toggleFmt = k => setP(s => ({ ...s, formats: s.formats.includes(k) ? s.formats.filter(x => x !== k) : [...s.formats, k] }))
   const toggleTone = t => setP(s => ({ ...s, tone: s.tone.includes(t) ? s.tone.filter(x => x !== t) : [...s.tone, t].slice(0, 4) }))
   const needsFace = p.formats.includes('ugc_face')
+  // Auto-pick the first face photo when talking-head is on and one isn't chosen,
+  // so the user is never silently stuck on a disabled Next (they can tap another).
+  useEffect(() => {
+    if (needsFace && !p.face_photo_url && photos.length) setP(s => ({ ...s, face_photo_url: photos[0].url }))
+  }, [needsFace, photos.length]) // eslint-disable-line
   function submit() {
     onSave({
       content_plan: { archetype: p.archetype, goal: p.goal, formats: p.formats, niche: p.niche.trim(), tone: p.tone, face_photo_url: p.face_photo_url },
@@ -1796,15 +1801,19 @@ function SocialAutopilotOnboarding({ platform, initial, photos = [], missing, bu
           </div>
           {needsFace && (
             <div style={{ marginTop: 12 }}>
-              <label className="onb-label">Your face for talking-head videos</label>
+              <label className="onb-label">Your face for talking-head videos <span className="muted tiny" style={{ fontWeight: 400 }}>· tap one to use on camera</span></label>
               {photos.length ? (
                 <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                  {photos.map(ph => (
-                    <button key={ph.id} type="button" onClick={() => set('face_photo_url', ph.url)} style={{ padding: 0, border: `2px solid ${p.face_photo_url === ph.url ? 'var(--ink,#111)' : 'transparent'}`, borderRadius: 10, cursor: 'pointer', lineHeight: 0 }}>
-                      <img src={ph.url} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8 }} />
-                    </button>
-                  ))}
-                  <label className="btn-ghost" style={{ width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 10 }}>
+                  {photos.map(ph => {
+                    const on = p.face_photo_url === ph.url
+                    return (
+                      <button key={ph.id} type="button" onClick={() => set('face_photo_url', ph.url)} style={{ position: 'relative', padding: 0, border: `2px solid ${on ? 'var(--ink,#111)' : 'rgba(0,0,0,0.12)'}`, borderRadius: 10, cursor: 'pointer', lineHeight: 0 }}>
+                        <img src={ph.url} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8, opacity: on ? 1 : 0.85 }} />
+                        {on && <span style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, borderRadius: 999, background: 'var(--ink,#111)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><LCheck size={11} strokeWidth={4} /></span>}
+                      </button>
+                    )
+                  })}
+                  <label className="btn-ghost" style={{ width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 10 }} title="Upload another">
                     <Plus size={16} /><input type="file" accept="image/*" hidden onChange={e => e.target.files?.[0] && onUploadPhoto?.(e.target.files[0])} />
                   </label>
                 </div>
@@ -1813,7 +1822,17 @@ function SocialAutopilotOnboarding({ platform, initial, photos = [], missing, bu
               )}
             </div>
           )}
-          <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}><button className="mini" onClick={() => setStep(1)}>← Back</button><button className="btn-primary btn-sm" disabled={!p.formats.length || (needsFace && !p.face_photo_url)} onClick={() => setStep(3)}>Next →</button></div>
+          {(() => {
+            const reason = !p.formats.length ? 'Pick at least one format to continue.'
+              : (needsFace && !p.face_photo_url) ? (photos.length ? 'Tap a face photo above for talking-head videos — or tap “Talking-head videos” again to drop it.' : 'Add a face photo for talking-head videos — or tap “Talking-head videos” again to drop it.')
+              : ''
+            return (
+              <>
+                {reason && <div className="muted tiny" style={{ marginTop: 10, color: '#8A6200' }}>{reason}</div>}
+                <div className="row" style={{ justifyContent: 'space-between', marginTop: 12 }}><button className="mini" onClick={() => setStep(1)}>← Back</button><button className="btn-primary btn-sm" disabled={!!reason} onClick={() => setStep(3)}>Next →</button></div>
+              </>
+            )
+          })()}
         </>)}
 
         {step === 3 && (<>
