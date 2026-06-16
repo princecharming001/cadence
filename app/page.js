@@ -4413,6 +4413,13 @@ function App({ session }) {
   }
   const primaryX = xConns.find(c => c.is_primary) || xConns[0]
   const liAccount = socialAccounts.find(a => a.platform === 'linkedin')
+  // The Queue/calendar/tiles for X show ONLY the active (primary) account's own
+  // posts. A post counts if it's non-X (handled by the platform filter), or it's
+  // an X post tied to the primary connection — or unstamped (it publishes as the
+  // primary). This keeps a previously-connected or feeder X account's posts out of
+  // the active account's view, and makes the view update the moment you switch
+  // primary (Make primary) — no stale cards from the old account.
+  const xOfPrimary = p => (p.platform || 'x') !== 'x' || !p.x_connection_id || p.x_connection_id === primaryX?.id
   const xCampTargets = primaryX ? [{ kind: 'x', id: primaryX.id, platform: 'x', label: '@' + primaryX.username }] : []
   const liCampTargets = liAccount ? [{ kind: 'social', id: liAccount.id, platform: 'linkedin', label: '@' + (liAccount.username || 'LinkedIn') }] : []
 
@@ -4947,7 +4954,7 @@ function App({ session }) {
             <motion.div key={tab} className="scroll" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
 
               {tab === 'queue' && (() => {
-                const matchP = it => qPlatform === 'all' || (it.platform || 'x') === qPlatform
+                const matchP = it => (qPlatform === 'all' || (it.platform || 'x') === qPlatform) && xOfPrimary(it)
                 const fQueue = queue.filter(matchP)
                 // Scheduled/posted carousels live in the slideshows table (Zernio
                 // publishes them on its own clock) — surface them in the queue +
@@ -5046,7 +5053,7 @@ function App({ session }) {
                     <StatTiles vertical tiles={[
                       { value: xStats?.newFollowers30d == null ? '—' : (xStats.newFollowers30d > 0 ? '+' : '') + fmtNum(xStats.newFollowers30d), label: 'New followers' },
                       { value: fmtNum(xStats?.impressions30d), label: 'Impressions · 30d' },
-                      { value: fmtNum(queue.filter(p => (p.platform || 'x') === 'x').length), label: 'Queued' },
+                      { value: fmtNum(queue.filter(p => (p.platform || 'x') === 'x' && xOfPrimary(p)).length), label: 'Queued' },
                     ]} />
                   </div>
                 ) : (<>
@@ -5058,7 +5065,7 @@ function App({ session }) {
                 {(() => {
                   const ap = apFor('x')
                   // LIVE count from the shared queue (never a stale snapshot string)
-                  const xQueued = posts.filter(p => (p.platform || 'x') === 'x' && ['queued', 'posting'].includes(p.status)).length
+                  const xQueued = posts.filter(p => (p.platform || 'x') === 'x' && ['queued', 'posting'].includes(p.status) && xOfPrimary(p)).length
                   const arOn = !!engSettings.find(s => s.platform === 'x')?.enabled
                   const engRule = engRules.find(r => r.active) || engRules[0]
                   const liveCamps = campsTouching(['x']).filter(c => c.active).length

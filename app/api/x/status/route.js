@@ -39,6 +39,13 @@ export async function DELETE(req) {
   const { data: gone } = await admin.from('x_connections')
     .delete().eq('id', id).eq('user_id', user.id).select('is_primary').single()
 
+  // Clean up the removed account's not-yet-published posts so they don't linger as
+  // orphans in the queue (the stuck "failed" cards that can never succeed because
+  // the account is gone). Posted history stays for attribution. Mirrors the social
+  // (Zernio) disconnect cleanup. Feeder agents on this connection cascade-delete.
+  await admin.from('posts').delete().eq('user_id', user.id).eq('x_connection_id', id)
+    .in('status', ['draft', 'queued', 'paused', 'posting', 'rendering', 'failed']).then(() => {}, () => {})
+
   // If we removed the primary, promote the earliest remaining account so the
   // user always has a primary.
   if (gone?.is_primary) {
